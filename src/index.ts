@@ -2414,7 +2414,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         const me = await bot.client.getMe()
         bot.id = me.id
         bot.username = me.username
-        logger.info(`dsh-telegram-connector: ${bot.label} connected as @${me.username ?? me.id}`)
+        // stderr, not the harness logger: this is what `docker compose logs` shows
+        stderr(`${bot.label} connected as @${me.username ?? me.id}`)
       } catch (error) {
         bot.disabled = true
         stderr(`${bot.label} token is unusable: ${String(error)}`)
@@ -2430,6 +2431,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
     }
 
+    const membership = new Map<string, { present: number; missing: number }>()
     for (const workspace of Object.values(bindings.workspaces)) {
       if (workspace.chatId === 0) continue
       for (const bot of botPool.bots) {
@@ -2440,6 +2442,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             || member.status === 'administrator'
             || member.status === 'creator'
           botPool.markMissing(bot, workspace.chatId, !present)
+          const stats = membership.get(bot.label) ?? { present: 0, missing: 0 }
+          if (present) stats.present += 1
+          else stats.missing += 1
+          membership.set(bot.label, stats)
           const key = `${workspace.chatId}:${bot.label}`
           if (present) {
             reportedMissing.delete(key)
@@ -2459,6 +2465,15 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         }
       }
     }
+
+    for (const bot of botPool.bots) {
+      if (bot.main || bot.disabled === true) continue
+      const stats = membership.get(bot.label)
+      if (stats === undefined) continue
+      const total = stats.present + stats.missing
+      if (total === 0) stderr(`${bot.label}: no bound groups yet`)
+      else stderr(`${bot.label}: member of ${stats.present}/${total} bound group(s)`)
+    }
   }
 
   const start = async (): Promise<void> => {
@@ -2469,6 +2484,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await outbox.start().catch((error: unknown) => stderr(`outbox recovery failed: ${String(error)}`))
     // start listening first: getMe only feeds the startgroup link, and waiting on
     // it (slow network at boot) used to leave the bot deaf for a minute
+    stderr(
+      botPool.bots.length > 1
+        ? `bots: main + ${botPool.bots.length - 1} publisher(s)`
+        : 'bots: main only (set DSH_TELEGRAM_PUBLISHER_TOKENS to add senders)',
+    )
     void pollLoop()
     void announceTrial()
     void flushBridgeTurns().catch((error: unknown) => stderr(`bridge flush failed: ${String(error)}`))
