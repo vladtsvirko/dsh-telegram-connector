@@ -70,6 +70,7 @@ export const Config = Schema.object({
   editIntervalMs: Schema.number().default(1200),
   pollTimeoutSeconds: Schema.number().default(25),
   reconcileIntervalSeconds: Schema.number().default(60),
+  agentPreset: Schema.string(),
 })
 
 export interface ConnectorConfig {
@@ -81,6 +82,14 @@ export interface ConnectorConfig {
   editIntervalMs?: number
   pollTimeoutSeconds?: number
   reconcileIntervalSeconds?: number
+  agentPreset?: string
+}
+
+/** The narrow surface of DSH's agentPresets service used by this plugin. */
+interface AgentPresetService {
+  readonly defaultId: string
+  resolve(id?: string): Promise<{ id: string; broken?: unknown }>
+  mount(ctx: Context, id: string): Promise<unknown>
 }
 
 interface WorkspaceView {
@@ -180,6 +189,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   if (config.botToken.length === 0) {
     ctx.logger.warn('dsh-telegram-connector: botToken is empty; the connector will not start')
     return
+  }
+
+  const agentPresetService = (): AgentPresetService | undefined => {
+    const get = (ctx as unknown as { get?: (name: string) => unknown }).get
+    return typeof get === 'function' ? (get.call(ctx, 'agentPresets') as AgentPresetService | undefined) : undefined
   }
 
   const client = new TelegramClient(config.botToken)
@@ -1332,9 +1346,25 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     // create() refuses those ("session … already exists"). Resume is the
     // counterpart: it loads the stored log and continues the conversation.
     const sessionId = SessionId(runtime.session.sessionId)
+    const presets = agentPresetService()
+    const preset = presets === undefined ? undefined : await presets.resolve(config.agentPreset)
     let handle: Awaited<ReturnType<typeof agents.create>>
     try {
-      handle = await agents.create({ sessionId, meta: { cwd: runtime.workspace.path }, agentOptions })
+      handle = await agents.create({
+        sessionId,
+        meta: {
+          cwd: runtime.workspace.path,
+          ...(preset === undefined ? {} : { agentPreset: preset.id }),
+        },
+        agentOptions,
+        ...(presets === undefined || preset === undefined
+          ? {}
+          : {
+              setup: async (agentCtx: Context) => {
+                await presets.mount(agentCtx, preset.id)
+              },
+            }),
+      })
     } catch (error) {
       if (/active write handle|already owned/i.test(String(error))) {
         throw new Error(
@@ -1343,7 +1373,26 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       if (!/already exists/i.test(String(error))) throw error
       stderr(`resuming persisted session ${runtime.session.sessionId}`)
-      handle = await agents.resume({ resumeSessionId: sessionId, agentOptions })
+      handle = await agents.resume({
+        resumeSessionId: sessionId,
+        agentOptions,
+        ...(presets === undefined
+          ? {}
+          : {
+              setup: async (agentCtx: Context, agent: Agent) => {
+                // a resumed session keeps the preset it was created with
+                const recorded = agent.session.header.agentPreset ?? config.agentPreset
+                let resolved
+                try {
+                  resolved = await presets.resolve(recorded)
+                } catch (error) {
+                  stderr(`preset "${recorded}" is unavailable; falling back to the default: ${String(error)}`)
+                  resolved = await presets.resolve(config.agentPreset)
+                }
+                await presets.mount(agentCtx, resolved.id)
+              },
+            }),
+      })
     }
     runtime.agent = handle.agent
     runtime.dispose = () => handle.dispose()

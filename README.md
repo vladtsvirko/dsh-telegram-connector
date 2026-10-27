@@ -116,6 +116,7 @@ Plugin row:
 | `editIntervalMs` | `1200` | minimum spacing between streaming edits |
 | `pollTimeoutSeconds` | `25` | long-poll timeout |
 | `reconcileIntervalSeconds` | `60` | UI → Telegram reconciliation period; `0` disables |
+| `agentPreset` | DSH default | preset mounted in new Telegram sessions (tools live there); existing sessions keep the preset recorded in their header |
 
 State lives in `$DSH_HOME/telegram-connector/bindings.json` (atomic writes).
 

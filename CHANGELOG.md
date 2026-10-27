@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Telegram sessions now mount a DSH **agent preset** (the default, or `agentPreset`
+  from the config) on create and the header's recorded preset on resume. Without
+  this they only had the base `working_directory` tool — no bash, files or network.
+
 ## 0.1.0-rc.1
 
 First release candidate for 0.1.0.
