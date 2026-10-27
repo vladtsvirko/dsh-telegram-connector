@@ -1,0 +1,10 @@
+- insert:
+    - id: dsh-telegram-connector
+      name: dsh-telegram-connector
+      config:
+        # secrets come from the environment, never from this file
+        botToken: !!js process.env.DSH_TELEGRAM_BOT_TOKEN ?? ''
+        allowedUserIds: []
+        provider: deepseek-official
+        model: deepseek-v4-flash
+        workspaceRoot: ''

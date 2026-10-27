@@ -1,0 +1,64 @@
+{
+  "name": "dsh-telegram-connector",
+  "version": "0.1.0-rc.1",
+  "description": "Telegram control plane for DeepSeek Harness \u2014 one group per workspace, one forum topic per session.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "COMPATIBILITY.md",
+    "docs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vladtsvirko/dsh-telegram-connector.git"
+  },
+  "homepage": "https://github.com/vladtsvirko/dsh-telegram-connector#readme",
+  "bugs": {
+    "url": "https://github.com/vladtsvirko/dsh-telegram-connector/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.6 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.6 <0.3.0-0",
+    "@deepseek-ai/dsh-session": ">=0.1.0-rc.6 <0.3.0-0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "telegram",
+    "bot"
+  ]
+}
