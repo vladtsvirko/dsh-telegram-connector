@@ -1348,6 +1348,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const sessionId = SessionId(runtime.session.sessionId)
     const presets = agentPresetService()
     const preset = presets === undefined ? undefined : await presets.resolve(config.agentPreset)
+    stderr(preset === undefined
+      ? 'agent preset: unavailable (agentPresets service not visible; session has base tools only)'
+      : `agent preset: ${preset.id}${config.agentPreset === undefined ? ' (default)' : ''}`)
     let handle: Awaited<ReturnType<typeof agents.create>>
     try {
       handle = await agents.create({
@@ -1389,6 +1392,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
                   stderr(`preset "${recorded}" is unavailable; falling back to the default: ${String(error)}`)
                   resolved = await presets.resolve(config.agentPreset)
                 }
+                stderr(`agent preset: resumed with ${resolved.id}`)
                 await presets.mount(agentCtx, resolved.id)
               },
             }),
