@@ -40,7 +40,7 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   `enable`/`disable`/`remove` work without opening a terminal.
 - **No SSH at all.** In the Docker image the runtime runs under a supervisor:
   every plugin confirmation opens a rollback window (live under HMR, or around a
-  restart), and `/update` reinstalls the connector itself the same way. The trial
+  restart), and `/system update connector` reinstalls the connector itself the same way. The trial
   comes with Commit / Roll back buttons; ignore it and it rolls back by itself.
 - **Durable.** Bindings survive restarts, sessions are resumed, not recreated.
 - **Allowlisted.** Only Telegram user ids you list can drive the bot.
@@ -162,11 +162,13 @@ session id, an id prefix, or the topic title.
 | `/plugin remove <name>` | uninstall a bundle (asks for confirmation) |
 | `/plugin confirm` · `/plugin cancel` | finish or drop a pending install/removal |
 | `/plugin approve` | allow the install scripts pnpm blocked, and retry |
-| `/restart` | restart into a trial: the new state is live, with a rollback window |
-| `/restart now` | restart without a trial; the current state becomes the rollback point |
-| `/update` | reinstall the connector from its configured ref, in a trial |
-| `/confirm` | commit the running trial (or press **Commit** on its message) |
-| `/rollback` | restore the last committed state and restart |
+| `/system restart` | restart into a trial: the new state is live, with a rollback window |
+| `/system restart now` | restart without a trial; the current state becomes the rollback point |
+| `/system update connector` | reinstall the pinned connector, in a trial |
+| `/system update connector now` | reinstall without a trial |
+| `/system update all` | check the host-side setup update (the container cannot rebuild itself) |
+| `/system confirm` | commit the running trial (or press **Commit**) |
+| `/system rollback` | restore the last committed state and restart |
 | `/timezone [zone]` | IANA zone used to read times you type (default `$DSH_TIMEZONE` or UTC) |
 | `/status` | runtime, workspace and session counts |
 | `/about` | connector and runtime versions, supported DSH range |
@@ -276,10 +278,12 @@ and offers no reorder method, so it can drift as topics see activity.
   every client renders them in its own zone; logs and stored state stay UTC.
   Times you type — schedules, later — are read in the bot's configured zone
   (`/timezone`, `$DSH_TIMEZONE`, default UTC).
-- **Self-update.** `/update` asks the supervisor to stop the runtime, run the
-  entrypoint's `reset-plugin` (the same path that installed the connector), and
-  start it again inside a trial. A failed reinstall restores the previous state
-  before the runtime comes back, so a bad update cannot strand the bot.
+- **Self-update.** `/system update connector` asks the supervisor to stop the
+  runtime, run the entrypoint's `reset-plugin` (the same path that installed the
+  connector), and start it again inside a trial. `now` skips the trial. A failed
+  reinstall restores the previous state before the runtime comes back, so a bad
+  update cannot strand the bot. Setup/image updates are host-side and only
+  checked from `/system update all`.
 - **Supervised restarts.** The Docker image runs the runtime under a supervisor
   that owns modifications to the profile and keeps a copy of it. It is the only
   process that does not load plugins, so a plugin that breaks startup cannot take
@@ -306,9 +310,9 @@ and offers no reorder method, so it can drift as topics see activity.
 | group title never follows a rename | bot lacks *Change Info* in that group |
 | `this runtime exposes no plugin manager` | the profile is not base-backed, or `@deepseek-ai/dsh-plugin-manager` is not mounted |
 | `/plugin add` says *already installed* | updates are a removal plus an install; use the host CLI, or remove first |
-| a plugin change says *restart required* | this runtime has no HMR — `/restart`, then `/confirm` if it works |
-| `/restart` says *not running under the supervisor* | the runtime was started directly (no container), so restart it from the host |
-| `/update` needs `DSH_TELEGRAM_PLUGIN` | the entrypoint uses that ref to reinstall; set it in `.env` (the example does) |
+| a plugin change says *restart required* | this runtime has no HMR — `/system restart`, then `/system confirm` if it works |
+| `/system restart` says *not running under the supervisor* | the runtime was started directly (no container), so restart it from the host |
+| `/system update connector` needs `DSH_TELEGRAM_PLUGIN` | the entrypoint uses that ref to reinstall; set it in `.env` (the example does) |
 
 ## Security
 

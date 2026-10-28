@@ -6,8 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.1.0-rc.1 | `0.2.1-rc.2` | tested | the release this repository describes; used by the Docker image |
-| 0.1.0-rc.1 | `>=0.1.0-rc.6 <0.3.0-0` | declared peer range | outside the tested version, expect drift |
+| 0.2.1-rc.2-0.0.1 | `0.2.1-rc.2` | tested | aligned release; the setup repo ships `v0.2.1-rc.2-0.0.1` |
+| 0.2.1-rc.2-0.0.1 | `>=0.1.0-rc.6 <0.3.0-0` | declared peer range | outside the tested version, expect drift |
 
 `/about` in the bot chat prints the connector version, the detected runtime
 version and the declared peer range.
@@ -19,6 +19,15 @@ The connector declares peer ranges against the harness packages
 package. That is the contract the loader enforces. The tested version is the one
 the release was exercised against; it is narrower than the peer range on
 purpose.
+
+## Version line
+
+Connector versions are `<dsh-version>-<major>.<minor>.<patch>`, for example
+`0.2.1-rc.2-0.0.1`, and match the setup repo tag. The product part starts at
+`0.0.0` for each new DSH alignment; `0.x` is the compatible line and a major
+bump (`1.0.0`) marks an incompatible change. Same-major updates may jump
+between releases; crossing a major or a DSH line needs the explicit
+`--i-know-versions-are-incompatible` flag in the setup updater.
 
 ## Policy
 

@@ -66,6 +66,9 @@ describe('supervisor client', () => {
     await client.update()
     expect(calls[0]?.url).toBe('/update')
     expect(calls[0]?.method).toBe('POST')
+    expect(JSON.parse(calls[0]?.body ?? '{}')).toEqual({ trial: true })
+    await client.update(false)
+    expect(JSON.parse(calls[1]?.body ?? '{}')).toEqual({ trial: false })
   })
 
   it('opens a live trial and can abandon it', async () => {

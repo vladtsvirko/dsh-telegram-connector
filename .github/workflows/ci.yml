@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 jobs:
@@ -23,3 +24,6 @@ jobs:
       - run: npm test
 
       - run: npm run build
+
+      - name: Validate release tag
+        run: node scripts/check-version.mjs

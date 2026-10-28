@@ -7,7 +7,7 @@ describe('help registry', () => {
     const index = indexText('control')
     expect(index).toContain('/plugins')
     expect(index).toContain('/plugin add <spec>')
-    expect(index).toContain('/restart [trial|now]')
+    expect(index).toContain('/system restart [now]')
     expect(index).not.toContain('`/sync` — ')
   })
 
@@ -24,7 +24,7 @@ describe('help registry', () => {
     expect(index).toContain('/help')
     expect(index).toContain('/man')
     expect(index).not.toContain('`/sync` — ')
-    expect(index).not.toContain('/restart')
+    expect(index).not.toContain('/system')
   })
 
   it('resolves a command, an alias and a --help spelling', () => {
@@ -35,7 +35,7 @@ describe('help registry', () => {
   })
 
   it('explains a command that belongs to another surface', () => {
-    const text = lookupText('restart', 'dashboard')
+    const text = lookupText('system restart', 'dashboard')
     expect(text).toContain('available in the bot chat')
   })
 

@@ -139,7 +139,7 @@ The confirmation gate is deliberate: a plugin runs in-process with the
 runtime's permissions, so the preview lists what the spec names and the
 confirmation is bound to the user who started it and expires after ten minutes.
 The preview also states what the change costs: without HMR it says the runtime
-will restart and that the new state only survives a `/confirm`; enabling and
+will restart and that the new state only survives a `/system confirm`; enabling and
 disabling a bundle goes through the same confirmation for that reason. When the
 manager reports `restart-required`, the connector does not hand the restart back
 to the user — it starts the trial itself, and the trial message is the second
@@ -281,7 +281,7 @@ deadline that survives the runtime.
 
 `$DSH_SUPERVISOR_STATE/state.json` holds one optional trial and the timestamp of
 the last committed snapshot; `state/stable/` is a copy of the profile directory.
-The snapshot is refreshed at boot, on `/restart`, and on `/confirm`. Everything
+The snapshot is refreshed at boot, on `/system restart`, and on `/system confirm`. Everything
 outside the profile — sessions, the workspace, `bindings.json` — is untouched by
 a rollback, which is what makes the swap cheap and safe.
 
@@ -289,15 +289,16 @@ a rollback, which is what makes the swap cheap and safe.
 
 | Step | Who | Effect |
 |---|---|---|
-| `/restart` (default) | connector → `POST /restart {trial:true}` | supervisor persists the trial, then restarts `dsh` |
-| `/restart now` | connector → `POST /restart {trial:false}` | supervisor snapshots the current profile, then restarts |
+| `/system restart` (default) | connector → `POST /restart {trial:true}` | supervisor persists the trial, then restarts `dsh` |
+| `/system restart now` | connector → `POST /restart {trial:false}` | supervisor snapshots the current profile, then restarts |
 | plugin confirmation | connector → `POST /trial/open` | trial opens *before* the change, without restarting |
 | change applied live | connector | keeps the trial; the message is the confirmation |
-| change needs a restart | connector → abandon + `/restart` | the live trial is closed and a restart trial opened |
-| `/update` | connector → `POST /update` | supervisor stops the runtime, runs `dsh-entrypoint reset-plugin`, starts a trial |
+| change needs a restart | connector → abandon + `/system restart` | the live trial is closed and a restart trial opened |
+| `/system update connector` | connector → `POST /update {trial:true}` | supervisor stops the runtime, runs `dsh-entrypoint reset-plugin`, starts a trial |
+| `/system update connector now` | connector → `POST /update {trial:false}` | same reset, then commit the new state and start |
 | connector boot | `GET /status`, `POST /trial/arm` | first arm sets the deadline; the connector announces it |
-| `/confirm`, **Commit** | `POST /trial/commit` | current profile becomes the stable snapshot |
-| `/rollback`, **Roll back**, crash, timeout | supervisor | stop, restore, start, notify |
+| `/system confirm`, **Commit** | `POST /trial/commit` | current profile becomes the stable snapshot |
+| `/system rollback`, **Roll back**, crash, timeout | supervisor | stop, restore, start, notify |
 
 The trial message carries an inline keyboard (`trial:commit:<id>` /
 `trial:rollback:<id>`), so the confirmation is a button press rather than a typed
@@ -339,7 +340,7 @@ and deadline.
   instead of the crash loop it would otherwise enter.
 - A container restart inside the window keeps the deadline; an expired deadline
   is restored before the runtime starts.
-- A failed `/update` restores the snapshot before restarting, so a registry
+- A failed `/system update connector` restores the snapshot before restarting, so a registry
   outage or a broken ref leaves the previous connector in place. An interrupted
   update (container restart mid-`reset-plugin`) leaves a half-wiped profile,
   which the open trial then rolls back.
@@ -350,7 +351,7 @@ and deadline.
   profile as it was, and the old directory is removed only after the new one is
   in place.
 - The trial message id is stored in `bindings.json`, so the next boot can retire
-  a keyboard left behind by a timeout or by a `/confirm` typed instead of
+  a keyboard left behind by a timeout or by a `/system confirm` typed instead of
   pressed.
 
 ### Limits

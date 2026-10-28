@@ -582,6 +582,47 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
+  const updateAll = async (message: TgMessage): Promise<void> => {
+    const runtime = runtimeVersion()
+    return reply(
+      message,
+      [
+        '**setup update is host-side** — this runtime cannot rebuild its own image.',
+        `connector: \`${connectorVersion()}\``,
+        `dsh: ${runtime === undefined ? 'unknown' : `\`${runtime}\``}`,
+        '',
+        'on the host:',
+        '`./update.sh --self-check` — latest compatible setup tag',
+        '`./update.sh --self` — apply it (health gate and rollback)',
+        '',
+        'same product major and DSH line may jump; crossing needs `--i-know-versions-are-incompatible`.',
+      ].join('\n'),
+    )
+  }
+
+  const handleSystem = async (message: TgMessage, args: readonly string[]): Promise<void> => {
+    const [sub, ...tail] = args
+    const mode = tail.join(' ').trim()
+    if (sub === undefined || sub === 'status') return reply(message, `**system**\n${await aboutText()}`)
+    if (sub === 'restart') return restartRuntime(message, mode)
+    if (sub === 'confirm') return confirmTrial(message)
+    if (sub === 'rollback') return rollbackTrial(message)
+    if (sub === 'update') {
+      const [target, ...extra] = tail
+      const now = extra.join(' ').trim() === 'now'
+      if (target === 'connector') {
+        if (extra.length > 0 && !now) return reply(message, 'usage: `/system update connector [now]`')
+        return updateConnector(message, now)
+      }
+      if (target === 'all') {
+        if (extra.length > 0) return reply(message, 'usage: `/system update all`')
+        return updateAll(message)
+      }
+      return reply(message, 'usage: `/system update <connector|all> [now]`')
+    }
+    return reply(message, 'usage: `/system <status|restart|update|confirm|rollback>`')
+  }
+
   const aboutText = async (): Promise<string> => {
     const runtime = runtimeVersion()
     const range = supportedRange()
@@ -645,7 +686,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   }
 
   /** Reinstall the connector itself: the supervisor stops the runtime, runs reset-plugin, opens a trial. */
-  const updateConnector = async (message: TgMessage): Promise<void> => {
+  const updateConnector = async (message: TgMessage, noTrial: boolean): Promise<void> => {
     if (supervisor === undefined) {
       return reply(
         message,
@@ -656,9 +697,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await flushOffset()
       await replyNow(
         message,
-        'reinstalling the connector from its configured ref — the bot will be away for a few minutes. The new version comes up in a trial: commit it, or it rolls back automatically.',
+        noTrial
+          ? 'reinstalling the connector — no trial; this restarted state becomes the rollback point.'
+          : 'reinstalling the connector from its configured ref — the bot will be away for a few minutes. The new version comes up in a trial: commit it, or it rolls back automatically.',
       )
-      await supervisor.update()
+      await supervisor.update(!noTrial)
     } catch (error) {
       return reply(message, `⚠️ ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -814,7 +857,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         status.lastEvent?.kind === 'update'
           ? '**update trial** — the connector is running the new version.'
           : '**trial running** — the new state is live.',
-        'commit it with the buttons below (or `/confirm`), or put the previous state back with `/rollback`.',
+        'commit it with the buttons below (or `/system confirm`), or put the previous state back with `/system rollback`.',
       ]
       if (typeof armed.deadline === 'number') {
         lines.push(`without confirmation it rolls back ${deadlineText(armed.deadline)}.`)
@@ -911,9 +954,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const status = await supervisorStatus()
     const minutes = Math.round((status?.trialSeconds ?? 300) / 60)
     if (serviceOf<unknown>(ctx, 'hmr') !== undefined) {
-      return `⚠️ HMR applies this live, and the change opens a trial: you then have ${minutes} minutes to \`/confirm\` it, or it rolls back automatically.`
+      return `⚠️ HMR applies this live, and the change opens a trial: you then have ${minutes} minutes to \`/system confirm\` it, or it rolls back automatically.`
     }
-    return `⚠️ this runtime has no HMR: confirming **restarts** it into a trial. You then have ${minutes} minutes to \`/confirm\` the new state, or it rolls back automatically.`
+    return `⚠️ this runtime has no HMR: confirming **restarts** it into a trial. You then have ${minutes} minutes to \`/system confirm\` the new state, or it rolls back automatically.`
   }
 
   /**
@@ -937,7 +980,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (kept && liveTrial !== undefined && bindings.controlChatId !== undefined) {
       const lines = [
         '**trial running** — the change is live.',
-        'commit it with the buttons below (or `/confirm`), or put the previous state back with `/rollback`.',
+        'commit it with the buttons below (or `/system confirm`), or put the previous state back with `/system rollback`.',
       ]
       if (typeof liveTrial.deadline === 'number') {
         lines.push(`without confirmation it rolls back ${deadlineText(liveTrial.deadline)}.`)
@@ -958,7 +1001,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return
     }
     try {
-      await replyNow(message, 'restarting into a **trial** — the bot will be right back, then `/confirm` or `/rollback`.')
+      await replyNow(message, 'restarting into a **trial** — the bot will be right back, then `/system confirm` or `/system rollback`.')
       await flushOffset()
       await supervisor.restart(true)
     } catch (error) {
@@ -1609,12 +1652,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     if (command === '/plugins') return pluginList(message)
     if (command === '/plugin') return handlePlugin(message, rest)
-    if (command === '/restart') return restartRuntime(message, argument)
-    if (command === '/update') return updateConnector(message)
+    if (command === '/system') return handleSystem(message, rest)
     if (command === '/timezone') return setTimeZone(message, argument)
     if (command === '/about') return reply(message, await aboutText())
-    if (command === '/confirm') return confirmTrial(message)
-    if (command === '/rollback') return rollbackTrial(message)
     if (command === '/schedules') return reply(message, '_automation surface lands in the next batch_')
 
     if (command === '/status') {
@@ -2077,8 +2117,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (command === '/plugins' || command === '/plugin') {
       return reply(message, 'plugins are profile-global — manage them in the private chat with the bot (`/plugins`).')
     }
-    if (command === '/restart' || command === '/confirm' || command === '/rollback' || command === '/update') {
-      return reply(message, 'restarts are profile-global — use the private chat with the bot (`/restart`).')
+    if (command === '/system') {
+      return reply(message, 'system commands are profile-global — use the private chat with the bot (`/system status`).')
     }
 
     return reply(message, 'this is the workspace dashboard — `/new` to start a session, or open one of the topics.')

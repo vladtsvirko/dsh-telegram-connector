@@ -23,7 +23,7 @@ export interface CommandDoc {
   aliases?: string[]
 }
 
-const GROUP_ORDER = ['start', 'workspace', 'sessions', 'plugins', 'runtime', 'time']
+const GROUP_ORDER = ['start', 'workspace', 'sessions', 'plugins', 'system', 'runtime', 'time']
 
 const ALIASES: Record<string, string> = {
   start: 'help',
@@ -51,7 +51,7 @@ const COMMANDS: CommandDoc[] = [
     summary: 'list the commands available in this chat',
     details:
       'With a command name it shows that command. `<command> --help` does the same. `/man` prints the full manual.',
-    examples: ['/help', '/help plugin add', '/restart --help'],
+    examples: ['/help', '/help plugin add', '/system restart --help'],
     surfaces: ['control', 'dashboard', 'session'],
     group: 'start',
   },
@@ -184,39 +184,67 @@ const COMMANDS: CommandDoc[] = [
     group: 'plugins',
   },
   {
-    path: 'restart',
-    usage: '/restart [trial|now]',
-    summary: 'restart the runtime; default is a trial with a rollback window',
+    path: 'system',
+    usage: '/system <status|restart|update|confirm|rollback>',
+    summary: 'runtime lifecycle: status, restarts, connector and setup updates',
     details:
-      '`trial` (or no argument) restarts into a window: commit with `/confirm`, revert with `/rollback`, or let it expire. `now` restarts and makes the current state the rollback point. Requires the container supervisor.',
-    examples: ['/restart', '/restart trial', '/restart now'],
+      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it; `update all` checks the host-side setup update; `confirm` and `rollback` close the current trial.',
+    examples: ['/system status', '/system restart now', '/system update connector'],
     surfaces: ['control'],
-    group: 'runtime',
+    group: 'system',
   },
   {
-    path: 'confirm',
-    usage: '/confirm',
+    path: 'system status',
+    usage: '/system status',
+    summary: 'connector, DSH and supervisor state',
+    details: 'Includes the open trial, its deadline and the agent preset/tool availability indirectly through `/about`.',
+    surfaces: ['control'],
+    group: 'system',
+  },
+  {
+    path: 'system restart',
+    usage: '/system restart [now]',
+    summary: 'restart the runtime; default is a trial with a rollback window',
+    details:
+      'With no argument it restarts into a trial: commit with `/system confirm`, revert with `/system rollback`, or let it expire. `now` restarts immediately and makes the current state the rollback point.',
+    examples: ['/system restart', '/system restart now'],
+    surfaces: ['control'],
+    group: 'system',
+  },
+  {
+    path: 'system update connector',
+    usage: '/system update connector [now]',
+    summary: 'reinstall the connector from its pinned ref',
+    details:
+      'The supervisor stops the runtime, runs the entrypoint reset-plugin (allow-builds and compatibility handling included), and starts it into a trial. `now` skips the trial and makes the new state the rollback point. A failed reinstall restores the previous state.',
+    examples: ['/system update connector', '/system update connector now'],
+    surfaces: ['control'],
+    group: 'system',
+  },
+  {
+    path: 'system update all',
+    usage: '/system update all',
+    summary: 'check the host-side setup update',
+    details:
+      'The container cannot rebuild its own image, so this reports the current versions and the host command. Apply it with `./update.sh --self-check` then `./update.sh --self`; crossing a product major or DSH line needs `--i-know-versions-are-incompatible`.',
+    surfaces: ['control'],
+    group: 'system',
+  },
+  {
+    path: 'system confirm',
+    usage: '/system confirm',
     summary: 'commit the open trial',
     details: 'The Commit button on the trial message does the same. The committed state becomes the new rollback point.',
     surfaces: ['control'],
-    group: 'runtime',
+    group: 'system',
   },
   {
-    path: 'rollback',
-    usage: '/rollback',
+    path: 'system rollback',
+    usage: '/system rollback',
     summary: 'restore the last committed state and restart',
-    details: 'Also available as the Roll back button on the trial message. Sessions and workspace files are untouched.',
+    details: 'Also available as the Roll back button. Sessions and workspace files are untouched.',
     surfaces: ['control'],
-    group: 'runtime',
-  },
-  {
-    path: 'update',
-    usage: '/update',
-    summary: 'reinstall the connector itself, with a trial',
-    details:
-      'The supervisor stops the runtime, runs the entrypoint\'s `reset-plugin` (allow-builds and compatibility handling included), and starts it into a trial. A failed reinstall restores the previous state.',
-    surfaces: ['control'],
-    group: 'runtime',
+    group: 'system',
   },
   {
     path: 'timezone',

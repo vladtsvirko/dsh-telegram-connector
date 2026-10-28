@@ -71,8 +71,8 @@ export class SupervisorClient {
   }
 
   /** Reinstall the connector: the supervisor stops the runtime, runs reset-plugin, starts a trial. */
-  update(): Promise<{ ok: boolean }> {
-    return this.request('/update', {})
+  update(trial = true): Promise<{ ok: boolean }> {
+    return this.request('/update', { trial })
   }
 
   /** Open a trial that does not restart: HMR applied the change, the window is still owed. */

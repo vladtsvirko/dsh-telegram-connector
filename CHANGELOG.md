@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.2.1-rc.2-0.0.1
+
+First DSH-aligned release. The DSH part matches the tested runtime; the product
+part (`0.0.1`) tracks our own fixes. Same-major updates may jump; crossing a
+major or a DSH line requires the explicit flag in the setup updater.
+
+- `/system` namespace: `status`, `restart [now]`, `update connector [now]`,
+  `update all` (host-side check), `confirm`, `rollback`. The old `/update`,
+  `/restart`, `/confirm` and `/rollback` commands are removed.
+- `/system update connector now` reinstalls without a trial.
+- Telegram sessions mount the DSH agent preset (the earlier fix, now in a tagged
+  release).
+
 
 - Telegram sessions now mount a DSH **agent preset** (the default, or `agentPreset`
   from the config) on create and the header's recorded preset on resume. Without

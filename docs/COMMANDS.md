@@ -59,25 +59,32 @@ the pending action expires after ten minutes and is bound to its author.
 
 Every confirmed plugin action opens a **trial** first: under HMR the change is
 applied live with a rollback window, otherwise the runtime restarts into it.
-Commit with `/confirm`, revert with `/rollback`, or let the window expire. A
+Commit with `/system confirm`, revert with `/system rollback`, or let the window expire. A
 failed install/removal closes the trial without touching the profile. The
 connector refuses to disable or remove itself.
 
-### Runtime
+### System
 
 | Command | What it does |
 |---|---|
-| `/restart` | restart into a trial (default) |
-| `/restart now` | restart without a trial; the current state becomes the rollback point |
-| `/confirm` | commit the open trial (also the **Commit** button) |
-| `/rollback` | restore the last committed state and restart (also **Roll back**) |
-| `/update` | reinstall the connector itself, in a trial |
+| `/system status` | connector and runtime versions, supervisor, open trial |
+| `/system restart` | restart into a trial (default) |
+| `/system restart now` | restart without a trial; the current state becomes the rollback point |
+| `/system update connector` | reinstall the pinned connector, in a trial |
+| `/system update connector now` | reinstall without a trial |
+| `/system update all` | check the host-side setup update; it cannot rebuild the image from here |
+| `/system confirm` | commit the open trial (also the **Commit** button) |
+| `/system rollback` | restore the last committed state and restart (also **Roll back**) |
 | `/status` | model route, workspace/session counts, poller, timezone, supervisor |
 | `/about` | connector version, runtime version, supported DSH range |
 
-`/update` runs the entrypoint's `reset-plugin` with the runtime stopped: the
-same allow-builds and version-compatibility logic that installed the connector.
-A failed reinstall restores the previous state before the runtime comes back.
+`/system update connector` runs the entrypoint's `reset-plugin` with the runtime
+stopped: the same allow-builds and version-compatibility logic that installed the
+connector. A failed reinstall restores the previous state before the runtime comes
+back. `now` skips the trial and makes the restarted state the rollback point.
+
+`/system update all` is a check: setup/image updates run on the host with
+`./update.sh --self-check` and `./update.sh --self`.
 
 ### Time
 
@@ -159,9 +166,9 @@ A topic created by hand becomes a session on its first message.
 # install a plugin safely
 /plugin add github:owner/repo             (bot chat)
 /plugin confirm                           → trial or live window
-/confirm                                  (or the Commit button)
+/system confirm                          (or the Commit button)
 # ship a new connector
-/update                                   → reinstall → trial → /confirm
+/system update connector                   → reinstall → trial → /system confirm
 ```
 
 See [DESIGN.md](DESIGN.md) for the mapping rules and the supervisor, and
