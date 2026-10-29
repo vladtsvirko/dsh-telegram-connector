@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.2
+
+Maintenance target for the next setup-updater validation. No connector behavior
+change.
+
 ## 0.2.1-rc.2-0.1.1
 
 Maintenance release used as the first live target for the setup updater. No
