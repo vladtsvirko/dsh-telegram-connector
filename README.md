@@ -220,7 +220,10 @@ DSH state is the truth; Telegram follows it.
 - A workspace deleted in the UI → notice in the control chat; the group is left
   alone, since only a human can delete a group.
 - Conversations you drive in the web UI are mirrored into the bound topic
-  (one-way) while the connector is not driving that topic.
+  (one-way) while the connector is not driving that topic. Only your prompts and
+  the assistant's answers are posted — harness-injected context (time readings,
+  runtime context, skill catalogs) is not, and the prompt/answer pair keeps its
+  order even when Telegram is rate-limiting.
 
 `/sync` is the explicit adoption step. For every session in the workspace it
 decides once: archived → skip; bound → probe the topic with a message send and

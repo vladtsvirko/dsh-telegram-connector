@@ -41,6 +41,7 @@ import { connectorVersion, runtimeVersion } from './about.js'
 import { BotPool, type BotHandle } from './bots.js'
 import { Outbox, type ItemPriority, type OutboxItem } from './outbox.js'
 import { SessionBridge, type TurnRecord } from './bridge.js'
+import { MirrorQueue, messageText, promptText } from './mirror.js'
 import {
   bindingsPath,
   findWorkspace,
@@ -2034,22 +2035,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * Replay the last few turns of an adopted session into its new topic. Live
    * events never re-fire, so without this a synced topic starts empty.
    */
-  /**
-   * Whether a stored message is harness-injected context rather than something the
-   * user typed. These are appended per turn and carry no conversational content.
-   */
-  const isInjected = (text: string): boolean => {
-    const head = text.slice(0, 200)
-    return (
-      /Current runtime context/i.test(head) ||
-      /runtime-context snapshot/i.test(head) ||
-      /^Time sampled while preparing/i.test(head) ||
-      /Browser time zone for this request/i.test(head) ||
-      /Elapsed since the preceding model-visible message/i.test(head) ||
-      /preparing turn \d+, step \d+/i.test(head)
-    )
-  }
-
   const backfill = async (
     chatId: number,
     threadId: number,
@@ -2079,23 +2064,28 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     type Block = { type: string; text?: string }
-    type Ev = { type?: string; data?: { message?: { content?: readonly Block[] }; content?: readonly Block[] } }
+    type Ev = {
+      type?: string
+      data?: {
+        message?: { content?: readonly Block[] }
+        content?: readonly Block[]
+        source?: { kind?: string }
+      }
+    }
+    const quote = (text: string): string => text.split('\n').map((line) => `> ${line}`).join('\n')
     const lines: string[] = []
     for (const raw of events) {
       const ev = raw as Ev
-      const blocks = ev.data?.message?.content ?? ev.data?.content ?? []
-      const text = blocks.map((b) => (b.type === 'text' ? (b.text ?? '') : '')).filter(Boolean).join('\n').trim()
-      if (text.length === 0) continue
-      // harness plumbing is not conversation: runtime context, per-turn time stamps
-      if (isInjected(text)) continue
       if (ev.type === 'user/message') {
-        const quoted = text.split('\n').map((line) => `> ${line}`).join('\n')
-        lines.push(`👤 **you (web)**\n\n${quoted}`)
+        const text = promptText(ev.data)?.trim()
+        if (text === undefined || text.length === 0) continue
+        lines.push(`👤 **you (web)**\n\n${quote(text)}`)
       } else if (ev.type === 'assistant/message') {
+        const text = messageText(ev.data?.message).trim()
+        if (text.length === 0) continue
         // quote both sides: a transcript where only one speaker is indented reads
         // like two different kinds of content
-        const quoted = text.split('\n').map((line) => `> ${line}`).join('\n')
-        lines.push(`🤖 **assistant**\n\n${quoted}`)
+        lines.push(`🤖 **assistant**\n\n${quote(text)}`)
       }
     }
     const tail = lines.slice(-20)
@@ -2994,13 +2984,32 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return undefined
   }
 
-  /** Mirror a conversation driven elsewhere (the web UI) into its topic. */
+  /**
+   * Mirror a conversation driven elsewhere (the web UI) into its topic.
+   *
+   * Events arrive in log order but each send is asynchronous; a per-topic queue
+   * keeps the prompt ahead of the answer it produced. The topic is checked again
+   * when the task runs, because a Telegram turn may have claimed the session
+   * while an earlier mirror was still being written to the outbox.
+   */
+  const mirrorQueue = new MirrorQueue((error: unknown) => {
+    stderr(`mirror: ${String(error)}`)
+  })
   const mirror = (sessionId: string, text: string, fromUser: boolean): void => {
     const found = bindingForSession(sessionId)
     if (found === undefined) return
-    if (Array.from(runtimes.values()).some((candidate) => candidate.threadId === found.threadId)) return
+    // Thread ids are only unique inside one group; matching on the thread alone
+    // would drop a General-topic mirror whenever another group has one.
+    const claimed = (): boolean => [...runtimes.values()]
+      .some((candidate) => candidate.chatId === found.chatId && candidate.threadId === found.threadId)
+    if (claimed()) return
     const name = bindings.workspaces[found.bound.workspaceId]?.title ?? 'workspace'
-    void sendTo(found.chatId, found.threadId, fromUser ? `💬 **you (web)** · ${name}\n${text}` : text)
+    const markdown = fromUser ? `💬 **you (web)** · ${name}\n${text}` : text
+    const key = `${found.chatId}:${found.threadId}`
+    void mirrorQueue.enqueue(key, async () => {
+      if (claimed()) return
+      await sendTo(found.chatId, found.threadId, markdown)
+    })
   }
 
   ctx.on('session/event', (session, event: SessionEvent) => {
@@ -3014,14 +3023,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           injected.delete(sessionId)
           return
         }
-        const blocks = ((event.data as unknown) as { content?: readonly { type: string; text?: string }[] }).content ?? []
-        const text = blocks.map((b) => (b.type === 'text' ? (b.text ?? '') : '')).filter(Boolean).join('\n')
-        if (text.length > 0) mirror(sessionId, text, true)
+        // Only a human prompt is mirrored. DSH also records injected model
+        // context (time readings, skill content, notices) as user/message.
+        const text = promptText(event.data)
+        if (text !== undefined) mirror(sessionId, text, true)
         return
       }
       if (event.type === 'assistant/message') {
-        const blocks = ((event.data as unknown) as { content?: readonly { type: string; text?: string }[] }).content ?? []
-        const text = blocks.map((b) => (b.type === 'text' ? (b.text ?? '') : '')).filter(Boolean).join('\n')
+        const text = messageText(event.data.message)
         if (text.length > 0) mirror(sessionId, text, false)
       }
       return

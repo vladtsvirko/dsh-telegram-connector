@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.9
+
+- Mirror web-UI prompts and answers in log order; the answer used to read the
+  event envelope instead of `event.data.message` and was never posted.
+- Do not mirror harness-injected `user/message` context (time readings, runtime
+  context, skill catalogs) as if the user had typed it.
+- Match the claimed topic by group and thread, not thread id alone.
+
 ## 0.2.1-rc.2-0.1.8
 
 Maintenance target for the web-UI drain/cancel test. No behavior change.

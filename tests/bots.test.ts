@@ -24,7 +24,7 @@ describe('BotPool', () => {
     expect(pool.pick(-1001)?.label).toBe('main')
   })
 
-  it('skips blocked and missing bots', () => {
+  it('skips blocked and missing bots', async () => {
     const time = clock()
     const [main, pub] = [handle('main', true), handle('pub1')]
     const pool = new BotPool([main, pub], { intervalMs: 1000, now: time.now, sleep: time.sleep })
@@ -34,7 +34,7 @@ describe('BotPool', () => {
     expect(pool.pick(-1001)).toBeUndefined()
     // the only eligible bot is blocked for 5s, so the wait is the block, not "no bot"
     expect(pool.nextWait(-1001)).toBe(5000)
-    expect(pool.reserve(-1001, 10)).resolves.toBeUndefined()
+    await expect(pool.reserve(-1001, 10)).resolves.toBeUndefined()
   })
 
   it('waits out a 429 block instead of dropping the chat', () => {
