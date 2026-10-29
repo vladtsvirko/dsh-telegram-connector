@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.4
+
+Maintenance release for the self-reloading updater. No connector behavior change.
+
 ## 0.2.1-rc.2-0.1.3
 
 - Editable setup-update card: target, live drain blockers, and a Cancel button.
