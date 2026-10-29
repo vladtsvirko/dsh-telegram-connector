@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.1
+
+Maintenance release used as the first live target for the setup updater. No
+connector behavior change.
+
 ## 0.2.1-rc.2-0.1.0
 
 First DSH-aligned release with the updater sidecar. The DSH part matches the
