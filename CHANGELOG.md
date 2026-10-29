@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.8
+
+Maintenance target for the web-UI drain/cancel test. No behavior change.
+
 ## 0.2.1-rc.2-0.1.7
 
 - Boot fallback waits for a terminal update state instead of reading `applying`.
