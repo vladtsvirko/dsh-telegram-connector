@@ -14,7 +14,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { randomUUID } from 'node:crypto'
-import { mkdir, open, readFile, rename, stat } from 'node:fs/promises'
+import { mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -655,25 +655,49 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await persist()
   }
 
-  /** Fallback report if the updater could not reach Telegram itself. */
-  const reportStoredUpdate = async (): Promise<void> => {
-    if (bindings.controlChatId === undefined) return
-    try {
-      const result = JSON.parse(
-        await readFile(resolve(dshHome, '..', 'update', 'result.json'), 'utf8'),
-      ) as { state?: string; from?: string; target?: string; logTail?: string }
+  /** Fallback report/card close if the updater could not reach Telegram itself. */
+  const reportStoredUpdate = async (pending: NonNullable<typeof bindings.update>): Promise<void> => {
+    const file = resolve(dshHome, '..', 'update', 'result.json')
+    for (let attempt = 0; attempt < 18; attempt += 1) {
+      await pause(attempt === 0 ? 5000 : 3000)
+      let result: {
+        state?: string; from?: string; target?: string; logTail?: string
+        reporting?: boolean; reported?: boolean
+      }
+      try {
+        result = JSON.parse(await readFile(file, 'utf8'))
+      } catch {
+        return // no persisted result; the updater reported directly
+      }
+      if (result.from !== pending.from || result.target !== pending.target) continue
+      if (result.state !== 'done' && result.state !== 'rolled-back' && result.state !== 'failed') continue
+      if (result.reporting === true && attempt < 17) continue
+
       const from = result.from ?? 'previous'
       const target = result.target ?? 'new setup'
-      const tail = (result.logTail ?? '').split('\n').slice(-20).join('\n')
       const dsh = target.includes('-') ? target.slice(1, target.lastIndexOf('-')) : 'unknown'
-      const text = result.state === 'done'
+      const clean = (result.logTail ?? '').split('\n').slice(-20).join('\n')
+      const report = result.state === 'done'
         ? `✅ setup update finished: ${from} → ${target} (DSH ${dsh}).`
         : result.state === 'rolled-back'
-          ? `⚠️ setup update failed and rolled back to ${from}.\n\n${tail}`
-          : `⚠️ setup update failed (${result.state ?? 'unknown'}).\n\n${tail}`
-      await sendTo(bindings.controlChatId, 0, text, 'control')
-    } catch {
-      // no persisted result (the updater reported directly), or it is unreadable
+          ? `⚠️ setup update failed and rolled back to ${from}.\n\n${clean}`
+          : `⚠️ setup update failed (${result.state}).\n\n${clean}`
+      const card = result.state === 'done'
+        ? `✅ setup update finished: ${from} → ${target}.`
+        : result.state === 'rolled-back'
+          ? `⚠️ setup update failed and rolled back to ${from}.`
+          : '⚠️ setup update failed.'
+
+      if (bindings.controlChatId !== undefined && result.reported !== true) {
+        await sendTo(bindings.controlChatId, 0, report, 'control')
+      }
+      if (pending.messageId !== undefined) {
+        await client.editMessageText(pending.chatId, pending.messageId, card, {
+          replyMarkup: { inline_keyboard: [] },
+        }).catch((error: unknown) => logger.warn(`dsh-telegram-connector: cannot close update card: ${String(error)}`))
+      }
+      await unlink(file).catch(() => undefined)
+      return
     }
   }
 
@@ -2890,14 +2914,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       stderr('setup update completed; the first queued batch will be rejected')
       // The updater normally reports directly; if its Bot API call failed, it
       // leaves result.json behind for this boot to report.
-      setTimeout(() => { void reportStoredUpdate() }, 5000)
+      setTimeout(() => { void reportStoredUpdate(pending) }, 5000)
       const pendingMessageId = pending.messageId
       if (pendingMessageId !== undefined) {
         void botPool.waitEdit(botPool.main, pending.chatId)
           .then(() => client.editMessageText(
             pending.chatId,
             pendingMessageId,
-            'setup update ended — see the updater report.',
+            'setup update restarted — waiting for the updater result.',
             { replyMarkup: { inline_keyboard: [] } },
           ))
           .catch(() => undefined)

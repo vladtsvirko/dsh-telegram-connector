@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.7
+
+- Boot fallback waits for a terminal update state instead of reading `applying`.
+- Updater marks `reporting`/`reported`; the connector reports only if the updater
+  could not, and closes the update card with the final result.
+
 ## 0.2.1-rc.2-0.1.6
 
 - Fix the updater’s Telegram report (`fetch` option shadowed global `fetch`).
