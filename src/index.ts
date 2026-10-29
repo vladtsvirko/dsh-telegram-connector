@@ -655,6 +655,28 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await persist()
   }
 
+  /** Fallback report if the updater could not reach Telegram itself. */
+  const reportStoredUpdate = async (): Promise<void> => {
+    if (bindings.controlChatId === undefined) return
+    try {
+      const result = JSON.parse(
+        await readFile(resolve(dshHome, '..', 'update', 'result.json'), 'utf8'),
+      ) as { state?: string; from?: string; target?: string; logTail?: string }
+      const from = result.from ?? 'previous'
+      const target = result.target ?? 'new setup'
+      const tail = (result.logTail ?? '').split('\n').slice(-20).join('\n')
+      const dsh = target.includes('-') ? target.slice(1, target.lastIndexOf('-')) : 'unknown'
+      const text = result.state === 'done'
+        ? `✅ setup update finished: ${from} → ${target} (DSH ${dsh}).`
+        : result.state === 'rolled-back'
+          ? `⚠️ setup update failed and rolled back to ${from}.\n\n${tail}`
+          : `⚠️ setup update failed (${result.state ?? 'unknown'}).\n\n${tail}`
+      await sendTo(bindings.controlChatId, 0, text, 'control')
+    } catch {
+      // no persisted result (the updater reported directly), or it is unreadable
+    }
+  }
+
   const finishUpdateStatus = async (text: string): Promise<void> => {
     const update = bindings.update
     if (update !== undefined && update.messageId !== undefined) {
@@ -2866,6 +2888,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       drainState = undefined
       await persist()
       stderr('setup update completed; the first queued batch will be rejected')
+      // The updater normally reports directly; if its Bot API call failed, it
+      // leaves result.json behind for this boot to report.
+      setTimeout(() => { void reportStoredUpdate() }, 5000)
       const pendingMessageId = pending.messageId
       if (pendingMessageId !== undefined) {
         void botPool.waitEdit(botPool.main, pending.chatId)

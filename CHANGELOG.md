@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.6
+
+- Fix the updater’s Telegram report (`fetch` option shadowed global `fetch`).
+- If the updater cannot report, the booting connector sends the persisted result after 5s.
+- Updater result files are written atomically.
+- `/about` continues to show updater status.
+
 ## 0.2.1-rc.2-0.1.5
 
 - `/about` reports updater status (`ready`, `unreachable`, `disabled`, or `apply unavailable`) and the checkout tag.
