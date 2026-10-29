@@ -223,10 +223,10 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system update all',
-    usage: '/system update all',
-    summary: 'check the host-side setup update',
+    usage: '/system update all [--i-know-versions-are-incompatible]',
+    summary: 'drain sessions, then update setup through the updater sidecar',
     details:
-      'The container cannot rebuild its own image, so this reports the current versions and the host command. Apply it with `./update.sh --self-check` then `./update.sh --self`; crossing a product major or DSH line needs `--i-know-versions-are-incompatible`.',
+      'Blocks new requests, waits until every agent (web UI and Telegram) is idle, then asks the updater to apply the latest compatible setup tag. Crossing a product major or DSH line requires the explicit flag. If the updater token is empty, this only prints the host commands.',
     surfaces: ['control'],
     group: 'system',
   },

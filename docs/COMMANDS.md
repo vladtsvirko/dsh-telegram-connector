@@ -72,7 +72,7 @@ connector refuses to disable or remove itself.
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
 | `/system update connector` | reinstall the pinned connector, in a trial |
 | `/system update connector now` | reinstall without a trial |
-| `/system update all` | check the host-side setup update; it cannot rebuild the image from here |
+| `/system update all [--i-know-versions-are-incompatible]` | drain, then update setup through the updater sidecar; the flag permits a major/DSH jump |
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
 | `/status` | model route, workspace/session counts, poller, timezone, supervisor |
@@ -83,8 +83,11 @@ stopped: the same allow-builds and version-compatibility logic that installed th
 connector. A failed reinstall restores the previous state before the runtime comes
 back. `now` skips the trial and makes the restarted state the rollback point.
 
-`/system update all` is a check: setup/image updates run on the host with
-`./update.sh --self-check` and `./update.sh --self`.
+`/system update all` blocks new prompts, waits until every agent (web UI and
+Telegram) is idle, then asks the updater sidecar to apply the latest compatible
+setup tag. If `DSH_UPDATER_TOKEN` is empty it falls back to printing the host
+commands. The updater reports the result directly to the control chat; queued
+messages from the downtime are answered once and never executed.
 
 ### Time
 

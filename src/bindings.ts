@@ -40,6 +40,12 @@ export interface SessionBinding {
   title?: string
 }
 
+/** A setup update that was requested and has not finished booting yet. */
+export interface UpdateBinding {
+  startedAt: number
+  mode: 'compatible' | 'available'
+}
+
 /** The trial message that owns the Commit / Roll back buttons, so a later boot can retire it. */
 export interface TrialMessageBinding {
   chatId: number
@@ -55,6 +61,8 @@ export interface Bindings {
   lastUpdateId?: number
   /** The message whose buttons belong to the current trial, if one was announced. */
   trialMessage?: TrialMessageBinding
+  /** Present while a setup update is draining/applying; cleared on the next boot. */
+  update?: UpdateBinding
   /** IANA zone used to interpret user-typed times; display uses Telegram's own rendering. */
   timezone?: string
   /** workspaceId → group */
@@ -64,6 +72,13 @@ export interface Bindings {
 }
 
 const EMPTY: Bindings = { version: 2, workspaces: {}, sessions: {} }
+
+function isUpdate(value: unknown): value is UpdateBinding {
+  if (value === null || typeof value !== 'object') return false
+  const candidate = value as { startedAt?: unknown; mode?: unknown }
+  return typeof candidate.startedAt === 'number'
+    && (candidate.mode === 'compatible' || candidate.mode === 'available')
+}
 
 function isTrialMessage(value: unknown): value is TrialMessageBinding {
   if (value === null || typeof value !== 'object') return false
@@ -90,6 +105,7 @@ export async function loadBindings(file: string): Promise<Bindings> {
       ...(typeof parsed.controlChatId === 'number' ? { controlChatId: parsed.controlChatId } : {}),
       ...(typeof parsed.lastUpdateId === 'number' ? { lastUpdateId: parsed.lastUpdateId } : {}),
       ...(isTrialMessage(parsed.trialMessage) ? { trialMessage: parsed.trialMessage } : {}),
+      ...(isUpdate(parsed.update) ? { update: parsed.update } : {}),
       ...(typeof parsed.timezone === 'string' ? { timezone: parsed.timezone } : {}),
       workspaces: parsed.workspaces ?? {},
       sessions: parsed.sessions ?? {},

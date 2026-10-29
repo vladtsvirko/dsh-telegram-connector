@@ -247,6 +247,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   let botUsername: string | undefined
   let topicOpsBlocked = false
   const reminded = new Set<string>()
+  let staleUpdateBatch = false
+  const staleUpdateNotified = new Set<number>()
+  let drainState: { mode: 'compatible' | 'available'; startedAt: number; blockers: string[] } | undefined
+  const blockedNotified = new Map<number, number>()
+  const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+  const updaterToken = process.env.DSH_UPDATER_TOKEN ?? ''
+  const updaterUrl = (process.env.DSH_UPDATER_URL ?? 'http://updater:8787').replace(/\/+$/, '')
 
   if (config.allowedUserIds.length === 0) {
     logger.warn('dsh-telegram-connector: allowedUserIds is empty; every message will be refused')
@@ -582,28 +589,161 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
-  const updateAll = async (message: TgMessage): Promise<void> => {
-    const runtime = runtimeVersion()
-    return reply(
+  const updaterFetch = async (path: string, body?: unknown): Promise<Response> => {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 10_000)
+    try {
+      return await fetch(`${updaterUrl}${path}`, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: {
+          authorization: `Bearer ${updaterToken}`,
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  const describeBlockingAgent = (agent: Agent): string => {
+    const sessionId = agent.session.header.id
+    const found = bindingForSession(String(sessionId))
+    if (found === undefined) return String(sessionId)
+    const workspace = bindings.workspaces[found.bound.workspaceId]
+    const topic = found.bound.title ?? `topic ${String(found.threadId)}`
+    return workspace === undefined ? topic : `${workspace.title} / ${topic}`
+  }
+
+  const waitForDrain = async (): Promise<void> => {
+    for (;;) {
+      if (bindings.update === undefined) return
+      const running = agents.list().filter((agent) => agent.status === 'running')
+      if (drainState !== undefined) drainState.blockers = running.map(describeBlockingAgent)
+      if (running.length === 0) return
+      await pause(1000)
+    }
+  }
+
+  const clearUpdate = async (): Promise<void> => {
+    delete bindings.update
+    drainState = undefined
+    blockedNotified.clear()
+    await persist()
+  }
+
+  const watchUpdate = async (jobId: string): Promise<void> => {
+    for (;;) {
+      await pause(2000)
+      if (bindings.update === undefined) return
+      try {
+        const response = await updaterFetch('/status')
+        if (!response.ok) continue
+        const status = await response.json() as { job?: { id?: string; state?: string } | null }
+        const job = status.job
+        if (job === null || job === undefined || job.id !== jobId) continue
+        if (job.state === 'done') {
+          await clearUpdate()
+          return
+        }
+        if (job.state === 'failed' || job.state === 'rolled-back') {
+          // The updater reported the failure itself; unblock this still-running
+          // connector if the runtime was never stopped.
+          await clearUpdate()
+          return
+        }
+      } catch {
+        // updater temporary unavailable; keep waiting
+      }
+    }
+  }
+
+  const runSetupUpdate = async (mode: 'compatible' | 'available'): Promise<void> => {
+    try {
+      await waitForDrain()
+      if (bindings.update === undefined) return
+      const response = await updaterFetch('/update', { mode })
+      if (response.status !== 202) {
+        const detail = await response.text().catch(() => '')
+        await clearUpdate()
+        if (bindings.controlChatId !== undefined) {
+          await sendTo(bindings.controlChatId, 0, `⚠️ setup update was not accepted: ${detail.slice(0, 300)}`, 'control')
+        }
+        return
+      }
+      const accepted = await response.json() as { job?: string; from?: string; target?: string }
+      if (accepted.job !== undefined) void watchUpdate(accepted.job)
+      if (bindings.controlChatId !== undefined) {
+        await sendTo(
+          bindings.controlChatId,
+          0,
+          `setup update accepted: ${accepted.from ?? '?'} → ${accepted.target ?? '?'}. The updater will report the result.`,
+          'control',
+        )
+      }
+    } catch (error) {
+      await clearUpdate()
+      if (bindings.controlChatId !== undefined) {
+        await sendTo(bindings.controlChatId, 0, `⚠️ setup update failed: ${String(error)}`, 'control')
+      }
+    }
+  }
+
+  const updateAll = async (message: TgMessage, mode: 'compatible' | 'available'): Promise<void> => {
+    if (updaterToken.length === 0) {
+      return reply(
+        message,
+        [
+          '**setup updates are not wired here** — `DSH_UPDATER_TOKEN` is empty.',
+          '',
+          'on the host:',
+          '`./update.sh --self-check` — latest compatible setup tag',
+          '`./update.sh --self` — apply it (health gate and rollback)',
+        ].join('\n'),
+      )
+    }
+    if (bindings.update !== undefined) {
+      return reply(message, 'a setup update is already in progress — `/system status` shows what it is waiting for.')
+    }
+    let health: { canApply?: boolean; tag?: string | null } | undefined
+    try {
+      const response = await updaterFetch('/health')
+      if (!response.ok) throw new Error(`updater answered ${String(response.status)}`)
+      health = await response.json() as { canApply?: boolean; tag?: string | null }
+    } catch (error) {
+      return reply(message, `⚠️ updater is not reachable: ${String(error)}`)
+    }
+    if (health.canApply !== true) {
+      return reply(message, 'the updater is running but cannot apply yet — check `docker compose logs updater`.')
+    }
+
+    bindings.update = { startedAt: Date.now(), mode }
+    drainState = { mode, startedAt: bindings.update.startedAt, blockers: [] }
+    await persist()
+    await reply(
       message,
       [
-        '**setup update is host-side** — this runtime cannot rebuild its own image.',
-        `connector: \`${connectorVersion()}\``,
-        `dsh: ${runtime === undefined ? 'unknown' : `\`${runtime}\``}`,
-        '',
-        'on the host:',
-        '`./update.sh --self-check` — latest compatible setup tag',
-        '`./update.sh --self` — apply it (health gate and rollback)',
-        '',
-        'same product major and DSH line may jump; crossing needs `--i-know-versions-are-incompatible`.',
+        `setup update (${mode}) requested — draining sessions before stopping the runtime.`,
+        'new requests are blocked until the update finishes.',
+        '`/system status` shows the sessions still working.',
       ].join('\n'),
     )
+    void runSetupUpdate(mode)
   }
 
   const handleSystem = async (message: TgMessage, args: readonly string[]): Promise<void> => {
     const [sub, ...tail] = args
     const mode = tail.join(' ').trim()
-    if (sub === undefined || sub === 'status') return reply(message, `**system**\n${await aboutText()}`)
+    if (sub === undefined || sub === 'status') {
+      const lines = [`**system**`, await aboutText()]
+      if (bindings.update !== undefined && drainState !== undefined) {
+        lines.push('', `updating: ${drainState.mode} · waiting for ${String(drainState.blockers.length)} session(s)`)
+        for (const blocker of drainState.blockers.slice(0, 10)) lines.push(`· ${blocker}`)
+        if (drainState.blockers.length > 10) lines.push(`· … and ${String(drainState.blockers.length - 10)} more`)
+      }
+      return reply(message, lines.join('\n'))
+    }
     if (sub === 'restart') return restartRuntime(message, mode)
     if (sub === 'confirm') return confirmTrial(message)
     if (sub === 'rollback') return rollbackTrial(message)
@@ -615,8 +755,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         return updateConnector(message, now)
       }
       if (target === 'all') {
-        if (extra.length > 0) return reply(message, 'usage: `/system update all`')
-        return updateAll(message)
+        const incompatible = extra.length === 1 && extra[0] === '--i-know-versions-are-incompatible'
+        if (extra.length > 0 && !incompatible) {
+          return reply(message, 'usage: `/system update all [--i-know-versions-are-incompatible]`')
+        }
+        return updateAll(message, incompatible ? 'available' : 'compatible')
       }
       return reply(message, 'usage: `/system update <connector|all> [now]`')
     }
@@ -2199,6 +2342,18 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const handleMessage = async (message: TgMessage): Promise<void> => {
     // Publisher bots post, they do not talk; ignore any bot-originated message.
     if (message.from?.is_bot === true) return
+    if (bindings.update !== undefined) {
+      const command = message.text?.trim() ?? ''
+      if (!/^\/system\s+status\b/.test(command)) {
+        const now = Date.now()
+        const last = blockedNotified.get(message.chat.id) ?? 0
+        if (now - last > 60_000) {
+          blockedNotified.set(message.chat.id, now)
+          await reply(message, '⏳ system update pending — new requests are blocked; send this again after the update finishes.')
+        }
+        return
+      }
+    }
     const text = message.text
 
     if (message.chat.type === 'private') {
@@ -2377,6 +2532,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           if (message === undefined) {
             const query = update.callback_query
             if (query === undefined) continue
+            if (staleUpdateBatch) {
+              await client.answerCallbackQuery(query.id, 'update finished — send your request again').catch(() => undefined)
+              continue
+            }
+            if (bindings.update !== undefined) {
+              await client.answerCallbackQuery(query.id, 'system update pending').catch(() => undefined)
+              continue
+            }
             if (!isAllowed(query.from?.id)) {
               await client.answerCallbackQuery(query.id, 'not authorized').catch(() => undefined)
               continue
@@ -2404,7 +2567,18 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             }
             continue
           }
+          if (staleUpdateBatch) {
+            if (message.text !== undefined && !staleUpdateNotified.has(message.chat.id)) {
+              staleUpdateNotified.add(message.chat.id)
+              await reply(message, '✅ the update finished — this request was not executed; send it again.').catch(() => undefined)
+            }
+            continue
+          }
           await handleMessage(message)
+        }
+        if (staleUpdateBatch) {
+          staleUpdateBatch = false
+          staleUpdateNotified.clear()
         }
         if (offset !== bindings.lastUpdateId) {
           bindings.lastUpdateId = offset
@@ -2572,6 +2746,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const start = async (): Promise<void> => {
     bindings = await loadBindings(file)
     offset = bindings.lastUpdateId ?? 0
+    if (bindings.update !== undefined) {
+      // The runtime was restarted by the updater. The first poll batch is what
+      // arrived while dsh was down: answer it once, do not execute it.
+      staleUpdateBatch = true
+      delete bindings.update
+      await persist()
+      stderr('setup update completed; the first queued batch will be rejected')
+    }
     await loadRateStats()
     await bridge.start().catch((error: unknown) => stderr(`bridge recovery failed: ${String(error)}`))
     await outbox.start().catch((error: unknown) => stderr(`outbox recovery failed: ${String(error)}`))

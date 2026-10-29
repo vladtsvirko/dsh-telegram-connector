@@ -166,7 +166,7 @@ session id, an id prefix, or the topic title.
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
 | `/system update connector` | reinstall the pinned connector, in a trial |
 | `/system update connector now` | reinstall without a trial |
-| `/system update all` | check the host-side setup update (the container cannot rebuild itself) |
+| `/system update all [--i-know-versions-are-incompatible]` | drain sessions, then update setup through the updater sidecar |
 | `/system confirm` | commit the running trial (or press **Commit**) |
 | `/system rollback` | restore the last committed state and restart |
 | `/timezone [zone]` | IANA zone used to read times you type (default `$DSH_TIMEZONE` or UTC) |

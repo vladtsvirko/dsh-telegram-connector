@@ -3,7 +3,7 @@
 Versions are aligned with DSH and carry our own product line:
 
 ```
-<dsh-version>-<major>.<minor>.<patch>      v0.2.1-rc.2-0.0.1
+<dsh-version>-<major>.<minor>.<patch>      v0.2.1-rc.2-0.1.0
 ```
 
 - **DSH part** is exactly the DSH release this connector was tested against.
