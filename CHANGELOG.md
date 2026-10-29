@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.10
+
+Maintenance release aligned with the setup fix for the web UI bind address. No
+connector behavior change.
+
 ## 0.2.1-rc.2-0.1.9
 
 - Mirror web-UI prompts and answers in log order; the answer used to read the
