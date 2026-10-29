@@ -42,8 +42,16 @@ export interface SessionBinding {
 
 /** A setup update that was requested and has not finished booting yet. */
 export interface UpdateBinding {
+  /** Short id carried by the Cancel button. */
+  id: string
   startedAt: number
   mode: 'compatible' | 'available'
+  phase: 'draining' | 'accepted'
+  from: string
+  target: string
+  /** Control chat and the editable status message. */
+  chatId: number
+  messageId?: number
 }
 
 /** The trial message that owns the Commit / Roll back buttons, so a later boot can retire it. */
@@ -75,9 +83,18 @@ const EMPTY: Bindings = { version: 2, workspaces: {}, sessions: {} }
 
 function isUpdate(value: unknown): value is UpdateBinding {
   if (value === null || typeof value !== 'object') return false
-  const candidate = value as { startedAt?: unknown; mode?: unknown }
-  return typeof candidate.startedAt === 'number'
+  const candidate = value as {
+    id?: unknown; startedAt?: unknown; mode?: unknown; phase?: unknown
+    from?: unknown; target?: unknown; chatId?: unknown; messageId?: unknown
+  }
+  return typeof candidate.id === 'string'
+    && typeof candidate.startedAt === 'number'
     && (candidate.mode === 'compatible' || candidate.mode === 'available')
+    && (candidate.phase === 'draining' || candidate.phase === 'accepted')
+    && typeof candidate.from === 'string'
+    && typeof candidate.target === 'string'
+    && typeof candidate.chatId === 'number'
+    && (candidate.messageId === undefined || typeof candidate.messageId === 'number')
 }
 
 function isTrialMessage(value: unknown): value is TrialMessageBinding {

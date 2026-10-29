@@ -268,8 +268,8 @@ const COMMANDS: CommandDoc[] = [
   {
     path: 'about',
     usage: '/about',
-    summary: 'versions and the DSH compatibility range',
-    details: 'Connector version, runtime version when detectable, and which DSH releases this connector supports.',
+    summary: 'connector and runtime versions, supervisor state',
+    details: 'The connector version, the detected DSH runtime version, supervisor/trial state, plugin manager and bot count. Compatibility lives in the repository COMPATIBILITY.md, not in chat.',
     surfaces: ['control'],
     group: 'runtime',
   },

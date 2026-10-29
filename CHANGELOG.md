@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.3
+
+- Editable setup-update card: target, live drain blockers, and a Cancel button.
+- Cancel is removed once the updater accepts; callbacks after that are refused.
+- `/about`, `/help`, `/man` and `/system status` stay available while draining.
+- Updater sends a “dsh is down” notice and strips ANSI from report logs.
+- `/about` no longer prints the old peer-range line.
+
 ## 0.2.1-rc.2-0.1.2
 
 Maintenance target for the next setup-updater validation. No connector behavior

@@ -76,7 +76,7 @@ connector refuses to disable or remove itself.
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
 | `/status` | model route, workspace/session counts, poller, timezone, supervisor |
-| `/about` | connector version, runtime version, supported DSH range |
+| `/about` | connector version, runtime version, supervisor state |
 
 `/system update connector` runs the entrypoint's `reset-plugin` with the runtime
 stopped: the same allow-builds and version-compatibility logic that installed the

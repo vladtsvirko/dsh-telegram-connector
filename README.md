@@ -171,7 +171,7 @@ session id, an id prefix, or the topic title.
 | `/system rollback` | restore the last committed state and restart |
 | `/timezone [zone]` | IANA zone used to read times you type (default `$DSH_TIMEZONE` or UTC) |
 | `/status` | runtime, workspace and session counts |
-| `/about` | connector and runtime versions, supported DSH range |
+| `/about` | connector and runtime versions, supervisor state |
 | `/help` · `/man` | index, or the full manual |
 
 Plugin commands run in the private chat because they change the whole profile,

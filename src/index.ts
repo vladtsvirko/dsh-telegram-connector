@@ -37,7 +37,7 @@ import {
 import { SupervisorClient, deadlineText, parseTrialCallback, trialCallbackData, type SupervisorStatus } from './supervisor.js'
 import { hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag, unknownHelp, type Surface } from './help.js'
 import { resolveTimeZone, validTimeZone } from './time.js'
-import { PEER_PACKAGE, connectorVersion, runtimeVersion, supportedRange } from './about.js'
+import { connectorVersion, runtimeVersion } from './about.js'
 import { BotPool, type BotHandle } from './bots.js'
 import { Outbox, type ItemPriority, type OutboxItem } from './outbox.js'
 import { SessionBridge, type TurnRecord } from './bridge.js'
@@ -616,14 +616,36 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return workspace === undefined ? topic : `${workspace.title} / ${topic}`
   }
 
-  const waitForDrain = async (): Promise<void> => {
-    for (;;) {
-      if (bindings.update === undefined) return
-      const running = agents.list().filter((agent) => agent.status === 'running')
-      if (drainState !== undefined) drainState.blockers = running.map(describeBlockingAgent)
-      if (running.length === 0) return
-      await pause(1000)
+  const updateKeyboard = (id: string) => ({
+    inline_keyboard: [[{ text: '✖ Cancel update', callback_data: `upd:cancel:${id}` }]],
+  })
+
+  const updateStatusText = (update: NonNullable<typeof bindings.update>): string => {
+    const blockers = drainState?.blockers ?? []
+    const lines = [`🔄 **setup update** \`${update.from} → ${update.target}\``]
+    if (update.phase === 'accepted') {
+      lines.push('🚀 updater accepted — cancelling is no longer possible.', 'the bot will restart; the updater reports the result.')
+      return lines.join('\n')
     }
+    lines.push(
+      blockers.length === 0
+        ? 'draining: waiting for the last turns to finish'
+        : `draining: ${String(blockers.length)} session(s) still working`,
+    )
+    for (const blocker of blockers.slice(0, 8)) lines.push(`· ${blocker}`)
+    if (blockers.length > 8) lines.push(`· … and ${String(blockers.length - 8)} more`)
+    lines.push('_Cancel is available until the updater takes over._')
+    return lines.join('\n')
+  }
+
+  const editUpdateStatus = async (keyboard: boolean): Promise<void> => {
+    const update = bindings.update
+    if (update === undefined || update.messageId === undefined) return
+    await botPool.waitEdit(botPool.main, update.chatId)
+    await client.editMessageText(update.chatId, update.messageId, toTelegramHtml(updateStatusText(update)), {
+      parseMode: 'HTML',
+      replyMarkup: keyboard ? updateKeyboard(update.id) : { inline_keyboard: [] },
+    })
   }
 
   const clearUpdate = async (): Promise<void> => {
@@ -631,6 +653,63 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     drainState = undefined
     blockedNotified.clear()
     await persist()
+  }
+
+  const finishUpdateStatus = async (text: string): Promise<void> => {
+    const update = bindings.update
+    if (update !== undefined && update.messageId !== undefined) {
+      await client.editMessageText(update.chatId, update.messageId, text, { replyMarkup: { inline_keyboard: [] } })
+        .catch((error: unknown) => logger.warn(`dsh-telegram-connector: cannot edit update status: ${String(error)}`))
+    }
+    await clearUpdate()
+  }
+
+  const cancelUpdate = async (query: TgCallbackQuery): Promise<void> => {
+    if (!isAllowed(query.from?.id)) {
+      await client.answerCallbackQuery(query.id, 'not authorized').catch(() => undefined)
+      return
+    }
+    const id = query.data?.split(':')[2]
+    const update = bindings.update
+    if (update === undefined || id === undefined || update.id !== id || update.phase !== 'draining') {
+      await client.answerCallbackQuery(query.id, 'update already started or finished').catch(() => undefined)
+      if (query.message !== undefined) {
+        await client.editMessageText(
+          query.message.chat.id,
+          query.message.message_id,
+          'this update is no longer cancellable.',
+          { replyMarkup: { inline_keyboard: [] } },
+        ).catch(() => undefined)
+      }
+      return
+    }
+    const chatId = update.chatId
+    const messageId = update.messageId
+    await clearUpdate()
+    if (messageId !== undefined) {
+      await client.editMessageText(chatId, messageId, '❌ setup update cancelled.', { replyMarkup: { inline_keyboard: [] } })
+        .catch((error: unknown) => logger.warn(`dsh-telegram-connector: cannot edit cancelled status: ${String(error)}`))
+    }
+    await client.answerCallbackQuery(query.id, 'setup update cancelled').catch(() => undefined)
+  }
+
+  const waitForDrain = async (): Promise<void> => {
+    let signature = ''
+    for (;;) {
+      if (bindings.update === undefined) return
+      const running = agents.list().filter((agent) => agent.status === 'running')
+      const blockers = running.map(describeBlockingAgent)
+      if (drainState !== undefined) drainState.blockers = blockers
+      const next = blockers.join('\n')
+      if (next !== signature) {
+        signature = next
+        await editUpdateStatus(true).catch((error: unknown) => {
+          logger.warn(`dsh-telegram-connector: cannot update drain status: ${String(error)}`)
+        })
+      }
+      if (running.length === 0) return
+      await pause(2000)
+    }
   }
 
   const watchUpdate = async (jobId: string): Promise<void> => {
@@ -643,18 +722,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         const status = await response.json() as { job?: { id?: string; state?: string } | null }
         const job = status.job
         if (job === null || job === undefined || job.id !== jobId) continue
-        if (job.state === 'done') {
-          await clearUpdate()
-          return
-        }
-        if (job.state === 'failed' || job.state === 'rolled-back') {
-          // The updater reported the failure itself; unblock this still-running
-          // connector if the runtime was never stopped.
-          await clearUpdate()
+        if (job.state === 'done' || job.state === 'failed' || job.state === 'rolled-back') {
+          // The updater is the reporter; this only retires the editable card if
+          // the connector survived a pre-stop failure.
+          await finishUpdateStatus('setup update ended — see the updater report.')
           return
         }
       } catch {
-        // updater temporary unavailable; keep waiting
+        // updater temporarily unavailable; keep waiting
       }
     }
   }
@@ -666,27 +741,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const response = await updaterFetch('/update', { mode })
       if (response.status !== 202) {
         const detail = await response.text().catch(() => '')
-        await clearUpdate()
-        if (bindings.controlChatId !== undefined) {
-          await sendTo(bindings.controlChatId, 0, `⚠️ setup update was not accepted: ${detail.slice(0, 300)}`, 'control')
-        }
+        await finishUpdateStatus(`❌ setup update was not accepted: ${detail.slice(0, 300)}`)
         return
       }
       const accepted = await response.json() as { job?: string; from?: string; target?: string }
+      if (accepted.from !== undefined) bindings.update.from = accepted.from
+      if (accepted.target !== undefined) bindings.update.target = accepted.target
+      bindings.update.phase = 'accepted'
+      await persist()
+      await editUpdateStatus(false).catch((error: unknown) => {
+        logger.warn(`dsh-telegram-connector: cannot edit accepted status: ${String(error)}`)
+      })
       if (accepted.job !== undefined) void watchUpdate(accepted.job)
-      if (bindings.controlChatId !== undefined) {
-        await sendTo(
-          bindings.controlChatId,
-          0,
-          `setup update accepted: ${accepted.from ?? '?'} → ${accepted.target ?? '?'}. The updater will report the result.`,
-          'control',
-        )
-      }
     } catch (error) {
-      await clearUpdate()
-      if (bindings.controlChatId !== undefined) {
-        await sendTo(bindings.controlChatId, 0, `⚠️ setup update failed: ${String(error)}`, 'control')
-      }
+      await finishUpdateStatus(`❌ setup update failed: ${String(error)}`)
     }
   }
 
@@ -707,28 +775,55 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, 'a setup update is already in progress — `/system status` shows what it is waiting for.')
     }
     let health: { canApply?: boolean; tag?: string | null } | undefined
+    let resolved: { from?: string; target?: string } | undefined
     try {
       const response = await updaterFetch('/health')
       if (!response.ok) throw new Error(`updater answered ${String(response.status)}`)
       health = await response.json() as { canApply?: boolean; tag?: string | null }
+      if (health.canApply !== true) {
+        return reply(message, 'the updater is running but cannot apply yet — check `docker compose logs updater`.')
+      }
+      const target = await updaterFetch('/target', { mode })
+      if (target.status === 404) {
+        // Older updater without /target: /update still resolves the target.
+        resolved = { from: health.tag ?? 'current', target: 'next compatible' }
+      } else if (!target.ok) {
+        const detail = await target.text().catch(() => '')
+        return reply(message, `⚠️ no setup update target: ${detail.slice(0, 300)}`)
+      } else {
+        resolved = await target.json() as { from?: string; target?: string }
+      }
     } catch (error) {
       return reply(message, `⚠️ updater is not reachable: ${String(error)}`)
     }
-    if (health.canApply !== true) {
-      return reply(message, 'the updater is running but cannot apply yet — check `docker compose logs updater`.')
+    if (resolved?.from === undefined || resolved.target === undefined) {
+      return reply(message, 'the updater returned no target.')
     }
 
-    bindings.update = { startedAt: Date.now(), mode }
+    const id = randomUUID().slice(0, 8)
+    bindings.update = {
+      id,
+      startedAt: Date.now(),
+      mode,
+      phase: 'draining',
+      from: resolved.from,
+      target: resolved.target,
+      chatId: message.chat.id,
+    }
     drainState = { mode, startedAt: bindings.update.startedAt, blockers: [] }
     await persist()
-    await reply(
-      message,
-      [
-        `setup update (${mode}) requested — draining sessions before stopping the runtime.`,
-        'new requests are blocked until the update finishes.',
-        '`/system status` shows the sessions still working.',
-      ].join('\n'),
-    )
+    try {
+      await botPool.takeMain(message.chat.id)
+      const sent = await client.sendMessage(message.chat.id, toTelegramHtml(updateStatusText(bindings.update)), {
+        parseMode: 'HTML',
+        replyMarkup: updateKeyboard(id),
+      })
+      bindings.update.messageId = sent.message_id
+      await persist()
+    } catch (error) {
+      await clearUpdate()
+      return reply(message, `⚠️ cannot post the update status: ${String(error)}`)
+    }
     void runSetupUpdate(mode)
   }
 
@@ -768,13 +863,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   const aboutText = async (): Promise<string> => {
     const runtime = runtimeVersion()
-    const range = supportedRange()
     const status = await supervisorStatus()
     const trialMinutes = status?.trialSeconds === undefined ? undefined : Math.round(status.trialSeconds / 60)
     return [
       `**dsh-telegram-connector** ${connectorVersion()}`,
       `dsh runtime: ${runtime === undefined ? 'unknown' : `\`${runtime}\``}`,
-      `supported: ${range === undefined ? 'unknown' : `\`${PEER_PACKAGE} ${range}\``}`,
       `supervisor: ${status === undefined ? 'none' : `present · trial ${String(trialMinutes ?? 0)} min`}`,
       `plugin manager: ${pluginManager() === undefined ? 'none' : 'present'}`,
       `bots: main + ${botPool.bots.filter((bot) => !bot.main).length} publisher(s)`,
@@ -2344,7 +2437,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (message.from?.is_bot === true) return
     if (bindings.update !== undefined) {
       const command = message.text?.trim() ?? ''
-      if (!/^\/system\s+status\b/.test(command)) {
+      if (!/^\/(?:system\s+status|about|help|man|start)\b/.test(command)) {
         const now = Date.now()
         const last = blockedNotified.get(message.chat.id) ?? 0
         if (now - last > 60_000) {
@@ -2532,6 +2625,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           if (message === undefined) {
             const query = update.callback_query
             if (query === undefined) continue
+            if (query.data?.startsWith('upd:cancel:')) {
+              await cancelUpdate(query)
+              continue
+            }
             if (staleUpdateBatch) {
               await client.answerCallbackQuery(query.id, 'update finished — send your request again').catch(() => undefined)
               continue
@@ -2749,10 +2846,23 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (bindings.update !== undefined) {
       // The runtime was restarted by the updater. The first poll batch is what
       // arrived while dsh was down: answer it once, do not execute it.
+      const pending = bindings.update
       staleUpdateBatch = true
       delete bindings.update
+      drainState = undefined
       await persist()
       stderr('setup update completed; the first queued batch will be rejected')
+      const pendingMessageId = pending.messageId
+      if (pendingMessageId !== undefined) {
+        void botPool.waitEdit(botPool.main, pending.chatId)
+          .then(() => client.editMessageText(
+            pending.chatId,
+            pendingMessageId,
+            'setup update ended — see the updater report.',
+            { replyMarkup: { inline_keyboard: [] } },
+          ))
+          .catch(() => undefined)
+      }
     }
     await loadRateStats()
     await bridge.start().catch((error: unknown) => stderr(`bridge recovery failed: ${String(error)}`))
