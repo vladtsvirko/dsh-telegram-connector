@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.5
+
+- `/about` reports updater status (`ready`, `unreachable`, `disabled`, or `apply unavailable`) and the checkout tag.
+
 ## 0.2.1-rc.2-0.1.4
 
 Maintenance release for the self-reloading updater. No connector behavior change.

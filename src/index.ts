@@ -861,6 +861,19 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return reply(message, 'usage: `/system <status|restart|update|confirm|rollback>`')
   }
 
+  const updaterLine = async (): Promise<string> => {
+    if (updaterToken.length === 0) return 'disabled (DSH_UPDATER_TOKEN empty)'
+    try {
+      const response = await updaterFetch('/health')
+      if (!response.ok) return `error ${String(response.status)}`
+      const health = await response.json() as { canApply?: boolean; tag?: string | null }
+      if (health.canApply !== true) return 'reachable · apply unavailable'
+      return `ready · ${health.tag ?? 'unknown tag'}`
+    } catch {
+      return 'unreachable'
+    }
+  }
+
   const aboutText = async (): Promise<string> => {
     const runtime = runtimeVersion()
     const status = await supervisorStatus()
@@ -868,6 +881,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return [
       `**dsh-telegram-connector** ${connectorVersion()}`,
       `dsh runtime: ${runtime === undefined ? 'unknown' : `\`${runtime}\``}`,
+      `updater: ${await updaterLine()}`,
       `supervisor: ${status === undefined ? 'none' : `present · trial ${String(trialMinutes ?? 0)} min`}`,
       `plugin manager: ${pluginManager() === undefined ? 'none' : 'present'}`,
       `bots: main + ${botPool.bots.filter((bot) => !bot.main).length} publisher(s)`,
