@@ -230,6 +230,11 @@ update → allowlist → private? control
   400 falls back to plain text, never to raw Markdown.
 - Splitting is fence-aware and table-aware, ~3800 chars. A split inside a table
   repeats its header and separator, so each chunk still renders as a table.
+- Agent context: every Telegram session gets the `telegram-surface` system
+  prompt section, and the connector registers the `telegram-rich-text` runtime
+  skill from `skills/telegram-rich-text/SKILL.md`. The section tells the model
+  that the reader is in Telegram; the skill carries the full syntax cheat sheet
+  and is loaded on demand instead of inflating every prompt.
 - Reactions: the main bot sets the **read** reaction on an authorized prompt as
   soon as the connector reads it. A streamed reply gets the **streaming**
   reaction on every part that may still be edited; the reaction is removed after

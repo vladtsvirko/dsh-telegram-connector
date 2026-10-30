@@ -39,6 +39,10 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   it, and ✍ to a reply while it is still being edited; the streaming reaction is
   removed when the turn settles. Change either emoji online with `/reactions`
   (Telegram's fixed reaction set is validated).
+- **Telegram-native formatting.** Every Telegram session gets a system-prompt
+  section that tells the model to use Telegram rich Markdown; the full cheat
+  sheet is a runtime skill (`telegram-rich-text`). Tables, headings, lists,
+  details, math, footnotes and `<tg-time>` render natively.
 - **Commands live in one place.** A dashboard topic holds `/new`, `/sync`,
   `/close`, `/rename`, `/model` and friends; session topics accept plain text.
 - **Plugins from the chat.** `/plugins` lists the profile's bundles, `/plugin add`
@@ -65,6 +69,7 @@ bindings and the plugin surface, `tsc --noEmit` clean.
 |---|---|
 | Bot API client (`src/telegram.ts`) | done — topics, titles, close/reopen, deletes |
 | Rendering (`src/render.ts`) | done — rich Markdown with native tables, HTML/plain fallbacks, fence- and table-aware split |
+| Telegram agent context (`src/telegram-prompt.ts`) | done — per-session prompt section + `telegram-rich-text` skill |
 | Bindings (`src/bindings.ts`) | done — atomic JSON, v2 schema |
 | Control plane, groups, topics, streaming | done |
 | Sync: workspace ⇄ group, session ⇄ topic, archive ⇄ close | done |

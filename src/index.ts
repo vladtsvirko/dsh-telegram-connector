@@ -22,6 +22,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 
 import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgMessage } from './telegram.js'
 import { splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
+import { installTelegramPrompt, registerTelegramSkill } from './telegram-prompt.js'
 import {
   allowedReactionsText,
   describeReactions,
@@ -288,6 +289,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   /** Diagnostics go to stderr: the harness logger is not visible in container logs. */
   const stderr = (line: string): void => {
     process.stderr.write(`[dsh-telegram-connector] ${line}\n`)
+  }
+
+  // One global runtime skill; the per-agent prompt section is installed in
+  // ensureAgent's setup callback.
+  if (!registerTelegramSkill(ctx)) {
+    stderr('telegram rich-text skill: not registered (skills service unavailable or skill file missing)')
   }
 
   // Serialize bindings writes: saves are snapshots taken when the write runs,
@@ -1917,13 +1924,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           ...(preset === undefined ? {} : { agentPreset: preset.id }),
         },
         agentOptions,
-        ...(presets === undefined || preset === undefined
-          ? {}
-          : {
-              setup: async (agentCtx: Context) => {
-                await presets.mount(agentCtx, preset.id)
-              },
-            }),
+        setup: async (agentCtx: Context) => {
+          installTelegramPrompt(agentCtx)
+          if (presets !== undefined && preset !== undefined) await presets.mount(agentCtx, preset.id)
+        },
       })
     } catch (error) {
       if (/active write handle|already owned/i.test(String(error))) {
@@ -1936,23 +1940,21 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       handle = await agents.resume({
         resumeSessionId: sessionId,
         agentOptions,
-        ...(presets === undefined
-          ? {}
-          : {
-              setup: async (agentCtx: Context, agent: Agent) => {
-                // a resumed session keeps the preset it was created with
-                const recorded = agent.session.header.agentPreset ?? config.agentPreset
-                let resolved
-                try {
-                  resolved = await presets.resolve(recorded)
-                } catch (error) {
-                  stderr(`preset "${recorded}" is unavailable; falling back to the default: ${String(error)}`)
-                  resolved = await presets.resolve(config.agentPreset)
-                }
-                stderr(`agent preset: resumed with ${resolved.id}`)
-                await presets.mount(agentCtx, resolved.id)
-              },
-            }),
+        setup: async (agentCtx: Context, agent: Agent) => {
+          installTelegramPrompt(agentCtx)
+          if (presets === undefined) return
+          // a resumed session keeps the preset it was created with
+          const recorded = agent.session.header.agentPreset ?? config.agentPreset
+          let resolved
+          try {
+            resolved = await presets.resolve(recorded)
+          } catch (error) {
+            stderr(`preset "${recorded}" is unavailable; falling back to the default: ${String(error)}`)
+            resolved = await presets.resolve(config.agentPreset)
+          }
+          stderr(`agent preset: resumed with ${resolved.id}`)
+          await presets.mount(agentCtx, resolved.id)
+        },
       })
     }
     runtime.agent = handle.agent

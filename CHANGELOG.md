@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.13
+
+- Every Telegram session gets a `telegram-surface` system-prompt section that
+  tells the model the user is reading in Telegram and that replies are sent as
+  rich messages. It asks for headings, lists, narrow tables, fenced code,
+  details, math and `<tg-time>`, and warns against MarkdownV2 escaping and
+  wrapping the whole answer in a code fence.
+- The full formatting cheat sheet ships as `skills/telegram-rich-text/SKILL.md`
+  and is registered as the `telegram-rich-text` runtime skill, so it is loadable
+  on demand instead of inflating every prompt.
+- The prompt section is installed on both newly created and resumed Telegram
+  agents, including sessions adopted from the web UI.
+
 ## 0.2.1-rc.2-0.1.12
 
 - Agent replies are sent as Telegram rich messages (Bot API 10.1+), so Markdown
