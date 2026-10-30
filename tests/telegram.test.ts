@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { TelegramClient } from '../src/telegram.js'
+import { TelegramApiError, TelegramClient, isRichRejected } from '../src/telegram.js'
 
 const calls: { url: string; body: Record<string, unknown> }[] = []
 
@@ -42,5 +42,48 @@ describe('telegram client', () => {
     expect(calls[0]?.body.reply_markup).toEqual(markup)
     expect(calls[1]?.body.reply_markup).toEqual({ inline_keyboard: [] })
     expect(calls[1]?.body.message_id).toBe(9)
+  })
+
+  it('sends and edits rich messages through the rich_message field', async () => {
+    stubTelegram({ message_id: 5 })
+    const client = new TelegramClient('tok')
+    await client.sendRichMessage(-100, '| A | B |\n|---|---|\n| 1 | 2 |', { threadId: 7 })
+    await client.editRichMessageText(-100, 5, '| A | B |\n|---|---|\n| 1 | 3 |')
+    expect(calls[0]?.url).toContain('/sendRichMessage')
+    expect(calls[0]?.body.rich_message).toEqual({ markdown: '| A | B |\n|---|---|\n| 1 | 2 |' })
+    expect(calls[0]?.body.message_thread_id).toBe(7)
+    expect(calls[0]?.body.parse_mode).toBeUndefined()
+    expect(calls[1]?.url).toContain('/editMessageText')
+    expect(calls[1]?.body.rich_message).toEqual({ markdown: '| A | B |\n|---|---|\n| 1 | 3 |' })
+    expect(calls[1]?.body.text).toBeUndefined()
+  })
+
+  it('sets and clears a reaction', async () => {
+    stubTelegram(true)
+    const client = new TelegramClient('tok')
+    await client.setMessageReaction(-100, 8, ['👀'])
+    await client.setMessageReaction(-100, 8, [])
+    expect(calls[0]?.url).toContain('/setMessageReaction')
+    expect(calls[0]?.body).toEqual({
+      chat_id: -100,
+      message_id: 8,
+      reaction: [{ type: 'emoji', emoji: '👀' }],
+      is_big: false,
+    })
+    expect(calls[1]?.body.reaction).toEqual([])
+  })
+})
+
+describe('isRichRejected', () => {
+  it('classifies unsupported or malformed rich content as a fallback case', () => {
+    expect(isRichRejected(new TelegramApiError('sendRichMessage', 'Not Found', 404))).toBe(true)
+    expect(isRichRejected(new TelegramApiError('sendRichMessage', "can't parse entities", 400))).toBe(true)
+    expect(isRichRejected(new TelegramApiError('sendRichMessage', 'message is too long', 400))).toBe(true)
+  })
+
+  it('does not hide rate limits, membership failures or transport errors', () => {
+    expect(isRichRejected(new TelegramApiError('sendRichMessage', 'Too Many Requests', 429, 3))).toBe(false)
+    expect(isRichRejected(new TelegramApiError('sendRichMessage', 'chat not found', 400))).toBe(false)
+    expect(isRichRejected(new TypeError('fetch failed'))).toBe(false)
   })
 })

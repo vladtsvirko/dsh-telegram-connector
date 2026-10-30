@@ -137,4 +137,63 @@ describe('Outbox', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  it('sends a Markdown table as a rich message', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'outbox-'))
+    const rich: string[] = []
+    const plain: string[] = []
+    const bot: BotHandle = {
+      label: 'main',
+      main: true,
+      client: {
+        sendRichMessage: async (_chatId: number, markdown: string) => {
+          rich.push(markdown)
+          return { message_id: 1 }
+        },
+        sendMessage: async (_chatId: number, text: string) => {
+          plain.push(text)
+          return { message_id: 2 }
+        },
+      } as unknown as TelegramClient,
+    }
+    const outbox = new Outbox({ dir, pool: poolFor(bot) })
+    try {
+      await outbox.enqueue(item(6, '| A | B |\n|---|---|\n| one | two |'))
+      await outbox.flush()
+      expect(rich).toHaveLength(1)
+      expect(plain).toHaveLength(0)
+    } finally {
+      await outbox.stop()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to the HTML table when rich messages are rejected', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'outbox-'))
+    const plain: string[] = []
+    const bot: BotHandle = {
+      label: 'main',
+      main: true,
+      client: {
+        sendRichMessage: async () => {
+          throw new TelegramApiError('sendRichMessage', 'Not Found', 404)
+        },
+        sendMessage: async (_chatId: number, text: string) => {
+          plain.push(text)
+          return { message_id: 2 }
+        },
+      } as unknown as TelegramClient,
+    }
+    const outbox = new Outbox({ dir, pool: poolFor(bot) })
+    try {
+      await outbox.enqueue(item(7, '| A | B |\n|---|---|\n| one | two |'))
+      await outbox.flush()
+      expect(plain).toHaveLength(1)
+      expect(plain[0]).toContain('<pre>')
+      expect(plain[0]).not.toContain('|---|---|')
+    } finally {
+      await outbox.stop()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })

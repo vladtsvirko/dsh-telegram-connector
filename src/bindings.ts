@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import type { StoredReactions } from './reactions.js'
 
 export interface ModelChoice {
   provider?: string
@@ -73,6 +74,8 @@ export interface Bindings {
   update?: UpdateBinding
   /** IANA zone used to interpret user-typed times; display uses Telegram's own rendering. */
   timezone?: string
+  /** Online overrides for the prompt/streaming reactions; config supplies defaults. */
+  reactions?: StoredReactions
   /** workspaceId → group */
   workspaces: Record<string, WorkspaceBinding>
   /** `${chatId}:${threadId}` → session */
@@ -105,6 +108,14 @@ function isTrialMessage(value: unknown): value is TrialMessageBinding {
     && typeof candidate.trialId === 'string'
 }
 
+function isReactions(value: unknown): value is StoredReactions {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const candidate = value as { enabled?: unknown; read?: unknown; streaming?: unknown }
+  return (candidate.enabled === undefined || typeof candidate.enabled === 'boolean')
+    && (candidate.read === undefined || typeof candidate.read === 'string')
+    && (candidate.streaming === undefined || typeof candidate.streaming === 'string')
+}
+
 export function sessionKey(chatId: number, threadId: number): string {
   return `${chatId}:${threadId}`
 }
@@ -124,6 +135,7 @@ export async function loadBindings(file: string): Promise<Bindings> {
       ...(isTrialMessage(parsed.trialMessage) ? { trialMessage: parsed.trialMessage } : {}),
       ...(isUpdate(parsed.update) ? { update: parsed.update } : {}),
       ...(typeof parsed.timezone === 'string' ? { timezone: parsed.timezone } : {}),
+      ...(isReactions(parsed.reactions) ? { reactions: parsed.reactions } : {}),
       workspaces: parsed.workspaces ?? {},
       sessions: parsed.sessions ?? {},
     }

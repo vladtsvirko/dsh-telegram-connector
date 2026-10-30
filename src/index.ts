@@ -20,8 +20,15 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 
-import { TelegramClient, TelegramApiError, type TgCallbackQuery, type TgMessage } from './telegram.js'
-import { splitMessage, toTelegramHtml } from './render.js'
+import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgMessage } from './telegram.js'
+import { splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
+import {
+  allowedReactionsText,
+  describeReactions,
+  parseReactionValue,
+  resolveReactions,
+  type ReactionSettings,
+} from './reactions.js'
 import { createTopicWorkspace } from './sessions.js'
 import {
   describeBundle,
@@ -72,6 +79,9 @@ export const Config = Schema.object({
   pollTimeoutSeconds: Schema.number().default(25),
   reconcileIntervalSeconds: Schema.number().default(60),
   agentPreset: Schema.string(),
+  reactionsEnabled: Schema.boolean().default(true),
+  readReaction: Schema.string().default('👀'),
+  streamingReaction: Schema.string().default('✍'),
 })
 
 export interface ConnectorConfig {
@@ -84,6 +94,9 @@ export interface ConnectorConfig {
   pollTimeoutSeconds?: number
   reconcileIntervalSeconds?: number
   agentPreset?: string
+  reactionsEnabled?: boolean
+  readReaction?: string
+  streamingReaction?: string
 }
 
 /** The narrow surface of DSH's agentPresets service used by this plugin. */
@@ -168,6 +181,16 @@ interface TopicRuntime {
   dispose?: () => Promise<void>
   buffer: string
   parts: number[]
+  /** Parallel to `parts`: whether that message was sent as a rich message. */
+  partRich: boolean[]
+  /** Sticky transport choice for this stream; once rich fails, stay on HTML. */
+  richMode?: 'rich' | 'html'
+  /** Messages carrying the streaming reaction; cleared when the turn settles. */
+  reactionParts: Map<number, { bot: BotHandle; pending: Promise<void> }>
+  /** Serializes flushes so a timer and a turn end cannot send the same chunk twice. */
+  flushChain?: Promise<void>
+  /** Last buffer that was delivered completely; avoids a redundant final edit. */
+  lastFlushed?: string
   flushTimer?: NodeJS.Timeout
   /** Whether the session has been attached to its workspace. */
   attached?: boolean
@@ -279,6 +302,68 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
     })
     return persistChain
+  }
+
+  // --- reactions -----------------------------------------------------------
+
+  /** Durable `/reactions` overrides win over the plugin row. */
+  const reactionSettings = (): ReactionSettings => resolveReactions(bindings.reactions, {
+    enabled: config.reactionsEnabled,
+    read: config.readReaction,
+    streaming: config.streamingReaction,
+  })
+
+  const reactionWarned = new Set<string>()
+  const react = async (
+    bot: BotHandle,
+    chatId: number,
+    messageId: number,
+    emoji: string,
+  ): Promise<void> => {
+    try {
+      await bot.client.setMessageReaction(chatId, messageId, emoji.length === 0 ? [] : [emoji])
+    } catch (error) {
+      // Cosmetic: a group where the bot cannot react must not break delivery.
+      const key = `${chatId}:${bot.label}`
+      if (reactionWarned.has(key)) return
+      reactionWarned.add(key)
+      logger.warn(`dsh-telegram-connector: cannot set reactions in chat ${chatId} (${bot.label}): ${String(error)}`)
+    }
+  }
+
+  /** Telegram redelivers unconfirmed updates; react to a prompt at most once. */
+  const reactedMessages = new Set<string>()
+  const markPromptRead = async (message: TgMessage): Promise<void> => {
+    const settings = reactionSettings()
+    if (!settings.enabled || settings.read.length === 0) return
+    const key = `${message.chat.id}:${message.message_id}`
+    if (reactedMessages.has(key)) return
+    reactedMessages.add(key)
+    if (reactedMessages.size > 2000) reactedMessages.clear()
+    await react(botPool.main, message.chat.id, message.message_id, settings.read)
+  }
+
+  /** The message will be edited as the turn streams; mark it until it settles. */
+  const markStreamingReaction = (runtime: TopicRuntime, bot: BotHandle, messageId: number): void => {
+    const settings = reactionSettings()
+    if (!settings.enabled || settings.streaming.length === 0) return
+    if (runtime.reactionParts.has(messageId)) return
+    // Keep the in-flight set call: a very short turn can finish before it lands,
+    // and the clear must run after it or the reaction would be left behind.
+    runtime.reactionParts.set(messageId, {
+      bot,
+      pending: react(bot, runtime.chatId, messageId, settings.streaming),
+    })
+  }
+
+  const clearStreamReactions = async (runtime: TopicRuntime): Promise<void> => {
+    if (runtime.reactionParts.size === 0) return
+    const entries = [...runtime.reactionParts.entries()]
+    runtime.reactionParts.clear()
+    await Promise.all(entries.map(async ([messageId, entry]) => {
+      await entry.pending
+      await react(entry.bot, runtime.chatId, messageId, '')
+    }))
   }
 
   // --- outbox, queue status and saturation stats ---------------------------
@@ -493,7 +578,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return await bot.client.sendMessage(chatId, html, { threadId, parseMode: 'HTML' })
     } catch (error) {
       if (error instanceof TelegramApiError && error.errorCode === 400) {
-        return bot.client.sendMessage(chatId, markdown, { threadId })
+        // Never resend Markdown source: a table would arrive as raw pipes.
+        return bot.client.sendMessage(chatId, toPlainText(markdown), { threadId })
       }
       throw error
     }
@@ -955,6 +1041,41 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     bindings.timezone = zone
     await persist()
     return reply(message, `timezone set to \`${zone}\`.`)
+  }
+
+  /** `/reactions`: live overrides for the prompt and streaming reactions. */
+  const handleReactions = async (message: TgMessage, rest: string[]): Promise<void> => {
+    const [rawSlot, ...tail] = rest
+    const slot = rawSlot?.toLowerCase()
+    const argument = tail.join(' ').trim()
+
+    if (slot === undefined) return reply(message, describeReactions(reactionSettings()))
+    if (slot === 'allowed') return reply(message, allowedReactionsText())
+    if (slot === 'on' || slot === 'off') {
+      bindings.reactions = { ...bindings.reactions, enabled: slot === 'on' }
+      await persist()
+      if (slot === 'off') {
+        // retire spinners already on screen; the next turn will not set new ones
+        for (const runtime of runtimes.values()) void clearStreamReactions(runtime)
+      }
+      return reply(message, `reactions ${slot}.`)
+    }
+    if (slot === 'reset') {
+      delete bindings.reactions
+      await persist()
+      return reply(message, `reactions reset to defaults.\n\n${describeReactions(reactionSettings())}`)
+    }
+    if (slot === 'read' || slot === 'streaming') {
+      if (argument.length === 0) {
+        return reply(message, `usage: \`/reactions ${slot} <emoji>\` — or \`/reactions ${slot} off\``)
+      }
+      const parsed = parseReactionValue(argument)
+      if ('error' in parsed) return reply(message, `⚠️ ${parsed.error}`)
+      bindings.reactions = { ...bindings.reactions, [slot]: parsed.value }
+      await persist()
+      return reply(message, `${slot} reaction set to ${parsed.value.length === 0 ? '_off_' : parsed.value}.`)
+    }
+    return reply(message, 'usage: `/reactions [read|streaming|on|off|reset|allowed] [emoji]`')
   }
 
   const confirmTrial = async (message: TgMessage): Promise<void> => {
@@ -1607,13 +1728,80 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       session,
       buffer: '',
       parts: [],
+      partRich: [],
+      reactionParts: new Map(),
     }
     runtimes.set(key, created)
     return created
   }
 
-  const flush = async (runtime: TopicRuntime): Promise<void> => {
-    if (runtime.buffer.trim().length === 0) return
+  /** Send one streamed chunk, preferring Telegram's native rich Markdown. */
+  const sendStreamChunk = async (
+    bot: BotHandle,
+    runtime: TopicRuntime,
+    chunk: string,
+    index: number,
+  ): Promise<TgMessage> => {
+    if (runtime.richMode !== 'html') {
+      try {
+        const sent = await bot.client.sendRichMessage(runtime.chatId, toRichMarkdown(chunk), {
+          threadId: runtime.threadId,
+        })
+        runtime.richMode = 'rich'
+        runtime.partRich[index] = true
+        return sent
+      } catch (error) {
+        if (!isRichRejected(error)) throw error
+        runtime.richMode = 'html'
+        logger.warn(`dsh-telegram-connector: rich messages rejected; using HTML: ${String(error)}`)
+      }
+    }
+    const sent = await sendChunkVia(bot, runtime.chatId, runtime.threadId, chunk)
+    runtime.partRich[index] = false
+    return sent
+  }
+
+  /** Edit a streamed chunk in the mode it was sent in, with a plain-text last resort. */
+  const editStreamChunk = async (
+    bot: BotHandle,
+    runtime: TopicRuntime,
+    messageId: number,
+    chunk: string,
+    index: number,
+  ): Promise<void> => {
+    if (runtime.richMode !== 'html' && runtime.partRich[index] !== false) {
+      try {
+        await botPool.waitEdit(bot, runtime.chatId)
+        await bot.client.editRichMessageText(runtime.chatId, messageId, toRichMarkdown(chunk))
+        runtime.partRich[index] = true
+        return
+      } catch (error) {
+        if (!isRichRejected(error)) throw error
+        runtime.richMode = 'html'
+        runtime.partRich[index] = false
+        logger.warn(`dsh-telegram-connector: rich edit rejected; using HTML: ${String(error)}`)
+      }
+    }
+
+    await botPool.waitEdit(bot, runtime.chatId)
+    try {
+      await bot.client.editMessageText(runtime.chatId, messageId, toTelegramHtml(chunk), { parseMode: 'HTML' })
+    } catch (error) {
+      if (error instanceof TelegramApiError && error.errorCode === 400) {
+        await bot.client.editMessageText(runtime.chatId, messageId, toPlainText(chunk))
+        return
+      }
+      throw error
+    }
+  }
+
+  const isNotModified = (error: unknown): boolean =>
+    error instanceof TelegramApiError && /message is not modified/i.test(error.description)
+
+  const flushNow = async (runtime: TopicRuntime): Promise<void> => {
+    const text = runtime.buffer
+    if (text.trim().length === 0) return
+    if (runtime.lastFlushed === text) return
     if (runtime.bot === undefined) {
       const bot = await botPool.reserve(runtime.chatId)
       if (bot === undefined) {
@@ -1623,26 +1811,39 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       runtime.bot = bot
     }
     const bot = runtime.bot
-    const chunks = splitMessage(runtime.buffer)
+    const chunks = splitMessage(text)
+    let failed = false
     for (const [index, chunk] of chunks.entries()) {
       const existing = runtime.parts[index]
       try {
         if (existing === undefined) {
-          const sent = await sendChunkVia(bot, runtime.chatId, runtime.threadId, chunk)
+          const sent = await sendStreamChunk(bot, runtime, chunk, index)
           runtime.parts[index] = sent.message_id
+          markStreamingReaction(runtime, bot, sent.message_id)
           if (index === 0 && runtime.pendingTurnId !== undefined) {
             const id = runtime.pendingTurnId
             runtime.pendingTurnId = undefined
             void bridge.completeTurn(id)
           }
         } else {
-          await botPool.waitEdit(bot, runtime.chatId)
-          await bot.client.editMessageText(runtime.chatId, existing, toTelegramHtml(chunk), { parseMode: 'HTML' })
+          await editStreamChunk(bot, runtime, existing, chunk, index)
         }
       } catch (error) {
         if (!(error instanceof TelegramApiError)) logger.warn(`dsh-telegram-connector: flush failed: ${String(error)}`)
+        if (!isNotModified(error)) failed = true
       }
     }
+    if (!failed) runtime.lastFlushed = text
+  }
+
+  /** A timer and a turn end must never send the same chunk twice. */
+  const flush = (runtime: TopicRuntime): Promise<void> => {
+    runtime.flushChain = (runtime.flushChain ?? Promise.resolve())
+      .then(() => flushNow(runtime))
+      .catch((error: unknown) => {
+        logger.warn(`dsh-telegram-connector: flush failed: ${String(error)}`)
+      })
+    return runtime.flushChain
   }
 
   const scheduleFlush = (runtime: TopicRuntime): void => {
@@ -1653,10 +1854,24 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }, editIntervalMs)
   }
 
+  /** Flush the tail of a turn and retire the streaming reaction. */
+  const finishStream = async (runtime: TopicRuntime): Promise<void> => {
+    if (runtime.flushTimer !== undefined) {
+      clearTimeout(runtime.flushTimer)
+      runtime.flushTimer = undefined
+    }
+    await flush(runtime)
+    await clearStreamReactions(runtime)
+  }
+
   const resetStream = (runtime: TopicRuntime): void => {
+    void clearStreamReactions(runtime)
     runtime.buffer = ''
     runtime.parts = []
+    runtime.partRich = []
     runtime.bot = undefined
+    runtime.richMode = undefined
+    runtime.lastFlushed = undefined
     if (runtime.flushTimer !== undefined) {
       clearTimeout(runtime.flushTimer)
       runtime.flushTimer = undefined
@@ -1776,6 +1991,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const disposeRuntime = async (runtime: TopicRuntime): Promise<void> => {
     if (runtime.flushTimer !== undefined) clearTimeout(runtime.flushTimer)
     await flush(runtime)
+    await clearStreamReactions(runtime)
     await runtime.dispose?.()
     runtime.agent = undefined
     runtime.dispose = undefined
@@ -1953,6 +2169,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (command === '/plugin') return handlePlugin(message, rest)
     if (command === '/system') return handleSystem(message, rest)
     if (command === '/timezone') return setTimeZone(message, argument)
+    if (command === '/reactions') return handleReactions(message, rest)
     if (command === '/about') return reply(message, await aboutText())
     if (command === '/schedules') return reply(message, '_automation surface lands in the next batch_')
 
@@ -2479,6 +2696,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     try {
       const agent = await ensureAgent(runtime)
+      await finishStream(runtime)
       resetStream(runtime)
       runtime.lastPrompt = text
       void client.setTyping(message.chat.id, threadId)
@@ -2513,6 +2731,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
     }
     const text = message.text
+
+    // A prompt is "read" as soon as it passes authorization and the update gate.
+    // The reaction is cosmetic and never blocks routing.
+    if (text !== undefined) void markPromptRead(message)
 
     if (message.chat.type === 'private') {
       if (text === undefined) return
@@ -2819,6 +3041,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const runtime = runtimeFor(pseudo, workspace, found.bound)
       try {
         const agent = await ensureAgent(runtime)
+        await finishStream(runtime)
         resetStream(runtime)
         runtime.lastPrompt = input.text
         injected.set(input.sessionId, Date.now())
@@ -3069,6 +3292,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             })
             .catch((error: unknown) => stderr(`bridge: cannot record turn: ${String(error)}`))
         }
+        // The final assistant chunk may still be waiting for the edit timer.
+        // Flush it and only then retire the streaming reaction.
+        void finishStream(owner)
       }
       if ((event as { type: string }).type !== 'turn/end' || owner.attached === true) return
       const registry = registryOf(ctx)
@@ -3094,6 +3320,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   ctx.on('agent/error', (payload: { agent: Agent; error: unknown }) => {
     const runtime = [...runtimes.values()].find((candidate) => candidate.agent === payload.agent)
     if (runtime === undefined) return
+    void finishStream(runtime)
     const message = payload.error instanceof Error ? payload.error.message : String(payload.error)
     void sendTo(runtime.chatId, runtime.threadId, `⚠️ Agent error: ${message}`)
   })

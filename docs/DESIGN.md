@@ -222,9 +222,20 @@ update → allowlist → private? control
 ```
 
 - One message per turn, edited in place, throttle `editIntervalMs` (1.2 s).
-- Rendering: escape → tiny Markdown subset → Telegram HTML, with a plain-text
-  retry if Telegram rejects the entities.
-- Splitting is fence-aware, ~3800 chars, closing and reopening ```` ``` ````.
+- Rendering prefers Telegram **rich messages** (Bot API 10.1+): the agent's
+  Markdown is passed to Telegram's own parser, so headings, lists and tables
+  render natively. If the API or the content rejects a rich message, the
+  connector falls back to the classic HTML subset, where a table becomes a
+  monospaced `<pre>` table (or a key/value list when it is too wide). A final
+  400 falls back to plain text, never to raw Markdown.
+- Splitting is fence-aware and table-aware, ~3800 chars. A split inside a table
+  repeats its header and separator, so each chunk still renders as a table.
+- Reactions: the main bot sets the **read** reaction on an authorized prompt as
+  soon as the connector reads it. A streamed reply gets the **streaming**
+  reaction on every part that may still be edited; the reaction is removed after
+  the final flush at `turn/end`, on `agent/error`, and on shutdown. Both emoji
+  are stored in the bindings and changed online with `/reactions`; Telegram's
+  fixed reaction set is validated first.
 - `agent/error` is reported in the same topic.
 - Conversations driven from the web UI are mirrored one-way into the bound
   topic while the connector is not driving that topic.
@@ -256,8 +267,12 @@ and directories.
   topics, and rename groups with *Change Info*.
 - No method lists topics or history, and a bot never receives its own messages;
   deletion is invisible.
-- Topic names ≤ 128 chars, no threads inside topics, 4096 chars per message,
-  ~20 messages/minute per group, ~1 edit/s per chat.
+- Topic names ≤ 128 chars, no threads inside topics, 4096 chars per classic
+  message, ~20 messages/minute per group, ~1 edit/s per chat. Rich messages
+  allow 32768 chars, 500 blocks and 20 table columns; the connector still splits
+  at ~3800 so the HTML fallback always fits.
+- Reactions are a fixed emoji set, one per bot per message; a bot without the
+  right to react simply gets no reaction (the failure is logged once per chat).
 - Deleting a topic destroys its history; closing preserves it read-only.
 - Service messages from the bot's own actions arrive with the bot's id and are
   dropped by the allowlist; commands therefore perform their archive/bookkeeping

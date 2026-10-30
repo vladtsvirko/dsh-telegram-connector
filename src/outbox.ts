@@ -16,8 +16,8 @@
 import { mkdir, open, readdir, readFile, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { BotPool, type BotHandle } from './bots.js'
-import { toTelegramHtml } from './render.js'
-import { TelegramApiError } from './telegram.js'
+import { hasTable, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
+import { TelegramApiError, isRichRejected } from './telegram.js'
 
 export type ItemPriority = 'control' | 'normal'
 
@@ -267,13 +267,26 @@ export class Outbox {
   }
 
   private async send(bot: BotHandle, item: OutboxItem): Promise<void> {
+    // Rich messages are the only way to get native tables out of Telegram.
+    // Anything the API rejects falls back to the HTML subset, and a rejected
+    // HTML payload falls back to plain text rather than raw Markdown.
+    if (hasTable(item.text)) {
+      try {
+        await bot.client.sendRichMessage(item.chatId, toRichMarkdown(item.text), { threadId: item.threadId })
+        return
+      } catch (error) {
+        if (!isRichRejected(error)) throw error
+        this.logger(`outbox: rich message rejected, falling back to HTML: ${String(error)}`)
+      }
+    }
+
     const html = toTelegramHtml(item.text)
     try {
       await bot.client.sendMessage(item.chatId, html, { threadId: item.threadId, parseMode: 'HTML' })
     } catch (error) {
       // Same fallback as the direct sender: bad entities become plain text once.
       if (error instanceof TelegramApiError && error.errorCode === 400 && !this.isMembershipError(error)) {
-        await bot.client.sendMessage(item.chatId, item.text, { threadId: item.threadId })
+        await bot.client.sendMessage(item.chatId, toPlainText(item.text), { threadId: item.threadId })
         return
       }
       throw error

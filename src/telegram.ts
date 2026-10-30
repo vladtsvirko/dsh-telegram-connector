@@ -78,6 +78,12 @@ export interface TgInlineKeyboard {
   inline_keyboard: TgInlineButton[][]
 }
 
+/** Telegram accepts a fixed emoji set for reactions; see reactions.ts. */
+export interface TgReaction {
+  type: 'emoji'
+  emoji: string
+}
+
 interface TgEnvelope<T> {
   ok: boolean
   result?: T
@@ -107,6 +113,30 @@ export interface SendOptions {
   disablePreview?: boolean
   /** Buttons under the message; an empty keyboard removes them on edit. */
   replyMarkup?: TgInlineKeyboard
+}
+
+/** Rich messages have no parse mode and no link-preview switch. */
+export interface RichSendOptions {
+  threadId?: number
+  replyMarkup?: TgInlineKeyboard
+}
+
+/**
+ * True when Telegram rejected a rich message because the API or the content
+ * does not support it. Callers then fall back to the plain HTML subset; a 429,
+ * 5xx or transport failure must be retried instead.
+ */
+export function isRichRejected(error: unknown): boolean {
+  if (!(error instanceof TelegramApiError)) return false
+  if (error.errorCode === 404 || error.errorCode === 405 || error.errorCode === 501) return true
+  if (error.errorCode !== 400) return false
+  const description = error.description.toLowerCase()
+  return description.includes('rich')
+    || description.includes('parse')
+    || description.includes('entity')
+    || description.includes('too long')
+    || description.includes('unsupported')
+    || description.includes('unknown method')
 }
 
 export class TelegramClient {
@@ -159,6 +189,54 @@ export class TelegramClient {
       ...(options.parseMode === undefined ? {} : { parse_mode: options.parseMode }),
       ...(options.disablePreview === false ? {} : { link_preview_options: { is_disabled: true } }),
       ...(options.replyMarkup === undefined ? {} : { reply_markup: options.replyMarkup }),
+    })
+  }
+
+  /**
+   * Send a rich message (Bot API 10.1+). Markdown is passed through to
+   * Telegram's own parser, which renders headings, lists and tables natively.
+   * Callers must fall back to `sendMessage` when `isRichRejected` says so.
+   */
+  sendRichMessage(chatId: number, markdown: string, options: RichSendOptions = {}): Promise<TgMessage> {
+    return this.call<TgMessage>('sendRichMessage', {
+      chat_id: chatId,
+      rich_message: { markdown },
+      ...(options.threadId === undefined ? {} : { message_thread_id: options.threadId }),
+      ...(options.replyMarkup === undefined ? {} : { reply_markup: options.replyMarkup }),
+    })
+  }
+
+  /** Edit a rich message in place; the counterpart of `sendRichMessage`. */
+  editRichMessageText(
+    chatId: number,
+    messageId: number,
+    markdown: string,
+    options: RichSendOptions = {},
+  ): Promise<TgMessage | boolean> {
+    return this.call<TgMessage | boolean>('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      rich_message: { markdown },
+      ...(options.replyMarkup === undefined ? {} : { reply_markup: options.replyMarkup }),
+    })
+  }
+
+  /**
+   * Set or clear a reaction on a message. Bots may use one reaction per message
+   * and only Telegram's fixed emoji set; an empty list removes the bot's own
+   * reaction. Failures are cosmetic and left to the caller to ignore.
+   */
+  setMessageReaction(
+    chatId: number,
+    messageId: number,
+    emojis: readonly string[],
+    isBig = false,
+  ): Promise<boolean> {
+    return this.call<boolean>('setMessageReaction', {
+      chat_id: chatId,
+      message_id: messageId,
+      reaction: emojis.map((emoji): TgReaction => ({ type: 'emoji', emoji })),
+      is_big: isBig,
     })
   }
 

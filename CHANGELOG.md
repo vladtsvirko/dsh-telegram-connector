@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.12
+
+- Agent replies are sent as Telegram rich messages (Bot API 10.1+), so Markdown
+  tables, headings and lists render natively instead of arriving as raw source.
+  A rich message rejected by the API falls back to the HTML subset (a table
+  becomes a monospaced block or a key/value list) and finally to plain text.
+- Message splitting is table-aware: a table split across messages repeats its
+  header and separator, so every chunk still renders as a table.
+- The main bot sets a **read** reaction on an authorized prompt and a
+  **streaming** reaction on each reply part that may still be edited; the
+  streaming reaction is removed after the final flush, on agent error, and on
+  shutdown. Both emoji are configurable online with `/reactions` and persisted
+  in the bindings. Telegram's fixed reaction set is validated (`✓`, `✅` and
+  `⏳` are not allowed; defaults are 👀 and ✍).
+- A rejected HTML payload now falls back to rendered plain text instead of
+  resending the Markdown source.
+
 ## 0.2.1-rc.2-0.1.11
 
 - A failed topic operation no longer latches topic management off for the rest

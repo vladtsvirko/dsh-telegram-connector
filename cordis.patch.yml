@@ -8,3 +8,7 @@
         provider: deepseek-official
         model: deepseek-v4-flash
         workspaceRoot: ''
+        # Reactions are changed online with /reactions; these are the defaults.
+        # reactionsEnabled: true
+        # readReaction: 👀
+        # streamingReaction: ✍

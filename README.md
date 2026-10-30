@@ -31,8 +31,14 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   creates a topic for each and replays the tail of the conversation. Renaming,
   archiving and unarchiving round-trip in both directions.
 - **Streaming replies.** One message per turn, edited in place as the model
-  writes, fence-aware splitting for long answers, plain-text fallback when
-  Telegram rejects the HTML.
+  writes. Telegram rich messages render Markdown tables, headings and lists
+  natively; if the API rejects them, the connector falls back to an HTML table
+  (or a key/value list) and finally to plain text. Splitting is fence- and
+  table-aware.
+- **Read and streaming reactions.** The bot reacts 👀 to a prompt when it reads
+  it, and ✍ to a reply while it is still being edited; the streaming reaction is
+  removed when the turn settles. Change either emoji online with `/reactions`
+  (Telegram's fixed reaction set is validated).
 - **Commands live in one place.** A dashboard topic holds `/new`, `/sync`,
   `/close`, `/rename`, `/model` and friends; session topics accept plain text.
 - **Plugins from the chat.** `/plugins` lists the profile's bundles, `/plugin add`
@@ -52,13 +58,13 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 ## Status
 
-Built and tested against DSH `0.2.1-rc.2`; unit tests for rendering, bindings
-and the plugin surface, `tsc --noEmit` clean.
+Built and tested against DSH `0.2.1-rc.2`; unit tests for rendering, reactions,
+bindings and the plugin surface, `tsc --noEmit` clean.
 
 | Part | State |
 |---|---|
 | Bot API client (`src/telegram.ts`) | done — topics, titles, close/reopen, deletes |
-| Rendering (`src/render.ts`) | done — Markdown subset → HTML, fence-aware split |
+| Rendering (`src/render.ts`) | done — rich Markdown with native tables, HTML/plain fallbacks, fence- and table-aware split |
 | Bindings (`src/bindings.ts`) | done — atomic JSON, v2 schema |
 | Control plane, groups, topics, streaming | done |
 | Sync: workspace ⇄ group, session ⇄ topic, archive ⇄ close | done |
@@ -122,8 +128,14 @@ Plugin row:
 | `pollTimeoutSeconds` | `25` | long-poll timeout |
 | `reconcileIntervalSeconds` | `60` | UI → Telegram reconciliation period; `0` disables |
 | `agentPreset` | DSH default | preset mounted in new Telegram sessions (tools live there); existing sessions keep the preset recorded in their header |
+| `reactionsEnabled` | `true` | master switch for read/streaming reactions |
+| `readReaction` | `👀` | emoji set on a prompt when the bot reads it; `""` disables it |
+| `streamingReaction` | `✍` | emoji set on a reply while it is being edited; `""` disables it |
 
 State lives in `$DSH_HOME/telegram-connector/bindings.json` (atomic writes).
+`/reactions` writes the same file, so an online change survives a restart and
+takes precedence over the plugin row. Telegram only accepts its own reaction
+emoji — `/reactions allowed` lists them; `✓`, `✅` and `⏳` are not accepted.
 
 Set at least `allowedUserIds` in the mounted plugin row — the default refuses
 everyone, including you. The bot replies with the sender's numeric id to any
@@ -274,9 +286,11 @@ and offers no reorder method, so it can drift as topics see activity.
   a member (the Bot API cannot do that for you). The main bot checks membership
   every six hours and reports a missing publisher in that group's system topic.
   Publisher messages are ignored as input, so they never feed the agent.
-- **Rendering.** A small Markdown subset (bold, italic, code, links, lists,
-  quotes) becomes Telegram HTML; a rejected entity falls back to plain text.
-  Answers over ~3800 characters are split on fences.
+- **Rendering.** Agent Markdown is sent as a Telegram rich message, so tables,
+  headings and lists render natively. If the API rejects rich content, a small
+  HTML subset takes over: tables become a monospaced block or a key/value list,
+  and a rejected entity falls back to plain text. Answers over ~3800 characters
+  are split on fences and tables (a split table repeats its header).
 - **More than one bot.** Optional publisher bots multiply the group ceiling
   (20 messages/minute per bot). The main bot polls and owns buttons; publishers
   post, and the switcher picks whichever has headroom. One outbox per group keeps
