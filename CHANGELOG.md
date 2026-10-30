@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.11
+
+- A failed topic operation no longer latches topic management off for the rest
+  of the process. A transient 400/403 used to block `/new`, `/sync` and
+  `/unarchive` even after the permission or topic was fixed.
+- `/new` now reports Telegram's actual error instead of only guessing that
+  `can_manage_topics` is missing.
+
 ## 0.2.1-rc.2-0.1.10
 
 Maintenance release aligned with the setup fix for the web UI bind address. No

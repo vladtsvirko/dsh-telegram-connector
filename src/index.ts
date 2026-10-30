@@ -246,7 +246,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   let reconcileTimer: NodeJS.Timeout | undefined
   let reconciling = false
   let botUsername: string | undefined
-  let topicOpsBlocked = false
   const reminded = new Set<string>()
   let staleUpdateBatch = false
   const staleUpdateNotified = new Set<number>()
@@ -1526,36 +1525,40 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   // --- topic helpers -------------------------------------------------------
 
-  const noteTopicFailure = (error: unknown, action: string): void => {
-    if (error instanceof TelegramApiError && (error.errorCode === 400 || error.errorCode === 403)) {
-      topicOpsBlocked = true
-      logger.warn(
-        `dsh-telegram-connector: cannot ${action} (${error.description}); is the bot an admin with can_manage_topics?`,
-      )
-      return
+  interface TopicCreation {
+    threadId?: number
+    error?: string
+  }
+
+  /** Telegram's own explanation, not a generic guess: the bot may have to show it. */
+  const topicFailureText = (error: unknown): string => {
+    if (error instanceof TelegramApiError) {
+      return error.description.length === 0 ? `Telegram error ${String(error.errorCode ?? '')}` : error.description
     }
-    logger.warn(`dsh-telegram-connector: ${action} failed: ${String(error)}`)
+    return error instanceof Error ? error.message : String(error)
+  }
+
+  const noteTopicFailure = (error: unknown, action: string): void => {
+    logger.warn(`dsh-telegram-connector: cannot ${action}: ${topicFailureText(error)}`)
   }
 
   const createTopic = async (
     chatId: number,
     title: string,
     rethrowRateLimit = false,
-  ): Promise<number | undefined> => {
-    if (topicOpsBlocked) return undefined
+  ): Promise<TopicCreation> => {
     try {
       const topic = await client.createForumTopic(chatId, truncate(title, 128))
-      return topic.message_thread_id
+      return { threadId: topic.message_thread_id }
     } catch (error) {
       // /sync retries 429s itself; every other caller degrades as before.
       if (rethrowRateLimit && error instanceof TelegramApiError && error.errorCode === 429) throw error
       noteTopicFailure(error, 'create a topic')
-      return undefined
+      return { error: topicFailureText(error) }
     }
   }
 
   const renameTopic = async (chatId: number, threadId: number, title: string): Promise<void> => {
-    if (topicOpsBlocked) return
     try {
       await client.editForumTopic(chatId, threadId, truncate(title, 128))
     } catch (error) {
@@ -1564,7 +1567,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   }
 
   const deleteTopic = async (chatId: number, threadId: number): Promise<void> => {
-    if (topicOpsBlocked) return
     try {
       await client.deleteForumTopic(chatId, threadId)
     } catch (error) {
@@ -2176,8 +2178,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           if (known.has(id)) continue
           const base = (await sessionTitleOf(id)) ?? `session ${id.slice(-6)}`
           const title = uniqueTitle(message.chat.id, base.slice(0, 120))
-          const threadId = await createTopic(message.chat.id, title)
-          if (threadId === undefined) break
+          const topic = await createTopic(message.chat.id, title)
+          if (topic.threadId === undefined) break
+          const threadId = topic.threadId
           setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId: id, title })
           await persist()
           await backfill(message.chat.id, threadId, id)
@@ -2193,8 +2196,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       } catch (error) {
         return reply(message, `cannot unarchive: ${String(error)}`)
       }
-      const threadId = await createTopic(message.chat.id, `session ${match.slice(-6)}`)
-      if (threadId === undefined) return reply(message, 'restored, but the topic could not be created')
+      const topic = await createTopic(message.chat.id, `session ${match.slice(-6)}`)
+      if (topic.threadId === undefined) {
+        return reply(message, `restored, but the topic could not be created: ${topic.error ?? 'unknown error'}`)
+      }
+      const threadId = topic.threadId
       setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId: match, title: `session ${match.slice(-6)}` })
       await persist()
       await backfill(message.chat.id, threadId, match)
@@ -2349,16 +2355,17 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         if (stored === undefined) provisional += 1
         const base = stored ?? `session ${sessionId.slice(-6)}`
         const title = uniqueTitle(message.chat.id, base.slice(0, 120))
-        let threadId: number | undefined
+        let topic: TopicCreation | undefined
         try {
-          threadId = await paced(() => createTopic(message.chat.id, title, true))
+          topic = await paced(() => createTopic(message.chat.id, title, true))
         } catch (error) {
           return reply(
             message,
             `⚠️ sync stopped while waiting for Telegram: ${error instanceof Error ? error.message : String(error)}`,
           )
         }
-        if (threadId === undefined) break
+        if (topic?.threadId === undefined) break
+        const threadId = topic.threadId
         setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId, title })
         await persist()
         await backfill(message.chat.id, threadId, sessionId)
@@ -2383,10 +2390,18 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (command === '/new') {
       const sessionId = String(SessionId(randomUUID()))
       const title = argument.length > 0 ? argument : `session ${sessionId.slice(-6)}`
-      const threadId = await createTopic(message.chat.id, title)
-      if (threadId === undefined) {
-        return reply(message, 'could not create the session topic — is the bot an admin with `can_manage_topics`?')
+      const topic = await createTopic(message.chat.id, title)
+      if (topic.threadId === undefined) {
+        return reply(
+          message,
+          [
+            'could not create the session topic.',
+            topic.error === undefined ? '' : `Telegram: ${topic.error}`,
+            'Check that the bot is an admin with `can_manage_topics` in this group, then try `/new` again.',
+          ].filter((line) => line.length > 0).join('\n\n'),
+        )
       }
+      const threadId = topic.threadId
       setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId, title })
       await persist()
       await sendTo(message.chat.id, threadId, `session \`${sessionId}\` ready — send a message to begin.`)
