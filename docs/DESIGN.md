@@ -356,13 +356,16 @@ and deadline.
 
 ### Limits
 
-- The supervisor covers the profile. Image updates and changes made directly in
-  `$DSH_HOME` before the container starts are outside any trial.
+- The supervisor covers the profile. Changes made directly in `$DSH_HOME` before
+  the container starts are outside any trial. Image updates are handled by the
+  separate setup updater, with its own image/snapshot rollback, not by a
+  supervisor trial.
 - The snapshot is a full copy of the profile directory, including
   `node_modules`; a commit costs one copy. That is the price of an offline,
   package-manager-free rollback.
 - If the supervisor itself cannot start (bad image, unwritable `/data`), nothing
-  here helps; that is what the container healthcheck and the host are for.
+  here helps; that is what the container healthcheck and the host are for. If the
+  container, updater or Docker cannot start, Telegram cannot recover it.
 
 ## 13. Time
 

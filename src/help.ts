@@ -188,7 +188,7 @@ const COMMANDS: CommandDoc[] = [
     usage: '/system <status|restart|update|confirm|rollback>',
     summary: 'runtime lifecycle: status, restarts, connector and setup updates',
     details:
-      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it; `update all` checks the host-side setup update; `confirm` and `rollback` close the current trial.',
+      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update all` drains agents and moves the setup image through the updater sidecar. `confirm` and `rollback` close the profile trial; rollback does not move the image.',
     examples: ['/system status', '/system restart now', '/system update connector'],
     surfaces: ['control'],
     group: 'system',
@@ -216,7 +216,7 @@ const COMMANDS: CommandDoc[] = [
     usage: '/system update connector [now]',
     summary: 'reinstall the connector from its pinned ref',
     details:
-      'The supervisor stops the runtime, runs the entrypoint reset-plugin (allow-builds and compatibility handling included), and starts it into a trial. `now` skips the trial and makes the new state the rollback point. A failed reinstall restores the previous state.',
+      'The supervisor stops the runtime, runs the entrypoint reset-plugin (allow-builds and compatibility handling included), and starts it into a trial. It reinstalls the connector pinned to the current setup version; it cannot move to a different setup tag. `now` skips the trial and makes the new state the rollback point. A failed reinstall restores the previous state.',
     examples: ['/system update connector', '/system update connector now'],
     surfaces: ['control'],
     group: 'system',
@@ -226,7 +226,7 @@ const COMMANDS: CommandDoc[] = [
     usage: '/system update all [--i-know-versions-are-incompatible]',
     summary: 'drain sessions, then update setup through the updater sidecar',
     details:
-      'Blocks new requests, waits until every agent (web UI and Telegram) is idle, then asks the updater to apply the latest compatible setup tag. Crossing a product major or DSH line requires the explicit flag. If the updater token is empty, this only prints the host commands.',
+      'Blocks new requests, waits until every agent (web UI and Telegram) is idle, then asks the updater to apply the latest compatible setup tag, rebuild the image, and install the matching connector. Crossing a product major or DSH line requires the explicit flag. Once accepted there is no Cancel; a failed health gate rolls back automatically. If the updater token is empty, this only prints the host commands.',
     surfaces: ['control'],
     group: 'system',
   },

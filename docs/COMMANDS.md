@@ -80,14 +80,26 @@ connector refuses to disable or remove itself.
 
 `/system update connector` runs the entrypoint's `reset-plugin` with the runtime
 stopped: the same allow-builds and version-compatibility logic that installed the
-connector. A failed reinstall restores the previous state before the runtime comes
-back. `now` skips the trial and makes the restarted state the rollback point.
+connector. It reinstalls the connector **pinned to the current setup version**;
+it cannot move to a different setup tag. A failed reinstall restores the previous
+state before the runtime comes back. `now` skips the trial and makes the
+restarted state the rollback point.
 
 `/system update all` blocks new prompts, waits until every agent (web UI and
 Telegram) is idle, then asks the updater sidecar to apply the latest compatible
-setup tag. If `DSH_UPDATER_TOKEN` is empty it falls back to printing the host
-commands. The updater reports the result directly to the control chat; queued
-messages from the downtime are answered once and never executed.
+setup tag and rebuild the image. The new entrypoint installs the connector tag
+derived from that setup version. If `DSH_UPDATER_TOKEN` is empty it falls back to
+printing the host commands. The updater reports the result directly to the
+control chat; queued messages from the downtime are answered once and never
+executed.
+
+The two commands cover different scopes: `update connector` changes only the
+profile; `update all` changes the setup checkout, image and connector pin.
+`/system rollback` restores the profile, **not** the image or the setup tag. Once
+the updater accepts an `update all` job there is no Cancel button and no timeout;
+the button exists only while the editable card is still draining. The scopes and the
+host-only recovery paths are in the setup repo's
+[LIMITS.md](https://github.com/vladtsvirko/dsh-tg-docker-setup/blob/main/docs/LIMITS.md).
 
 ### Time
 

@@ -38,10 +38,15 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 - **Plugins from the chat.** `/plugins` lists the profile's bundles, `/plugin add`
   inspects a spec before anything runs and asks for a confirmation, and
   `enable`/`disable`/`remove` work without opening a terminal.
-- **No SSH at all.** In the Docker image the runtime runs under a supervisor:
-  every plugin confirmation opens a rollback window (live under HMR, or around a
-  restart), and `/system update connector` reinstalls the connector itself the same way. The trial
-  comes with Commit / Roll back buttons; ignore it and it rolls back by itself.
+- **Host-free after install.** In the Docker image the runtime runs under a
+  supervisor: every plugin confirmation opens a rollback window (live under HMR,
+  or around a restart), and `/system update connector` reinstalls the pinned
+  connector the same way. `/system update all` drains agents and moves the whole
+  setup through the updater sidecar. The trial comes with Commit / Roll back
+  buttons; ignore it and it rolls back by itself. A dead runtime, a dead updater,
+  a broken `.env` or Docker itself still needs the host — that boundary is
+  documented in the setup repo's
+  [LIMITS.md](https://github.com/vladtsvirko/dsh-tg-docker-setup/blob/main/docs/LIMITS.md).
 - **Durable.** Bindings survive restarts, sessions are resumed, not recreated.
 - **Allowlisted.** Only Telegram user ids you list can drive the bot.
 
@@ -285,8 +290,10 @@ and offers no reorder method, so it can drift as topics see activity.
   runtime, run the entrypoint's `reset-plugin` (the same path that installed the
   connector), and start it again inside a trial. `now` skips the trial. A failed
   reinstall restores the previous state before the runtime comes back, so a bad
-  update cannot strand the bot. Setup/image updates are host-side and only
-  checked from `/system update all`.
+  profile update cannot strand the bot. It reinstalls the **pinned** connector;
+  moving the setup/image tag is `/system update all`, which drains agents and
+  uses the updater sidecar. `/system rollback` restores the profile, not the
+  image.
 - **Supervised restarts.** The Docker image runs the runtime under a supervisor
   that owns modifications to the profile and keeps a copy of it. It is the only
   process that does not load plugins, so a plugin that breaks startup cannot take
