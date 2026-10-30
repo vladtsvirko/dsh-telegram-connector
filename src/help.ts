@@ -275,14 +275,15 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'reactions',
-    usage: '/reactions [read|streaming|on|off|reset|allowed] [emoji]',
-    summary: 'read and streaming reactions on Telegram messages',
+    usage: '/reactions [read|streaming|staged|on|off|reset|allowed] [emoji]',
+    summary: 'read, streaming and staged-media reactions on Telegram messages',
     details:
-      'The read reaction is set on your prompt once the bot reads it; the streaming reaction is set on a reply while it is still being edited and removed when the turn ends. Values are saved in the bindings and apply without a restart. Telegram only accepts its own reaction emoji — `/reactions allowed` lists them; `off` disables one slot.',
+      'The read reaction is set on your prompt once the bot reads it; the streaming reaction is set on a reply while it is still being edited and removed when the turn ends; the staged reaction marks media waiting for a caption or text prompt and is removed once used. Values are saved in the bindings and apply without a restart. Telegram only accepts its own reaction emoji — `/reactions allowed` lists them; `off` disables one slot.',
     examples: [
       '/reactions',
       '/reactions read 👀',
       '/reactions streaming ✍',
+      '/reactions staged 🙉',
       '/reactions off',
       '/reactions reset',
     ],

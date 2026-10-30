@@ -24,6 +24,15 @@ import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery,
 import { splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
 import { installTelegramPrompt, registerTelegramSkill } from './telegram-prompt.js'
 import {
+  attachmentPlaceholder,
+  formatBytes,
+  isImageMediaType,
+  MAX_TELEGRAM_DOWNLOAD,
+  mediaDescriptor,
+  stagedKey,
+  type MediaDescriptor,
+} from './media.js'
+import {
   allowedReactionsText,
   describeReactions,
   parseReactionValue,
@@ -83,6 +92,7 @@ export const Config = Schema.object({
   reactionsEnabled: Schema.boolean().default(true),
   readReaction: Schema.string().default('👀'),
   streamingReaction: Schema.string().default('✍'),
+  stagedReaction: Schema.string().default('🙉'),
 })
 
 export interface ConnectorConfig {
@@ -98,6 +108,7 @@ export interface ConnectorConfig {
   reactionsEnabled?: boolean
   readReaction?: string
   streamingReaction?: string
+  stagedReaction?: string
 }
 
 /** The narrow surface of DSH's agentPresets service used by this plugin. */
@@ -201,6 +212,36 @@ interface TopicRuntime {
   lastPrompt?: string
   /** Journaled turn waiting for its first message to be acknowledged. */
   pendingTurnId?: string
+}
+
+/** One media message waiting for a caption or a following text prompt. */
+interface StagedMedia extends MediaDescriptor {
+  chatId: number
+  threadId: number
+  userId: number
+  messageId: number
+  createdAt: number
+}
+
+interface PendingGroupItem {
+  message: TgMessage
+  media: MediaDescriptor
+}
+
+interface PendingMediaGroup {
+  key: string
+  chatId: number
+  threadId: number
+  userId: number
+  groupId: string
+  items: PendingGroupItem[]
+  timer?: NodeJS.Timeout
+}
+
+/** The narrow surface of DSH's attachment service used for Telegram media. */
+interface AttachmentStoreLike {
+  saveImage(input: { data: Uint8Array; mediaType: string; name?: string }): Promise<unknown>
+  saveFile(input: { data: Uint8Array; name?: string }): Promise<unknown>
 }
 
 const STARTGROUP_PREFIX = 'workspace_'
@@ -318,6 +359,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     enabled: config.reactionsEnabled,
     read: config.readReaction,
     streaming: config.streamingReaction,
+    staged: config.stagedReaction,
   })
 
   const reactionWarned = new Set<string>()
@@ -371,6 +413,111 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await entry.pending
       await react(entry.bot, runtime.chatId, messageId, '')
     }))
+  }
+
+  // --- staged media --------------------------------------------------------
+
+  /** Media that arrived without a caption, keyed by chat:topic:user. */
+  const stagedMedia = new Map<string, StagedMedia[]>()
+  /** Albums are several updates; collect them before deciding stage vs prompt. */
+  const pendingGroups = new Map<string, PendingMediaGroup>()
+  const STAGED_TTL_MS = 15 * 60 * 1000
+  const MEDIA_GROUP_WINDOW_MS = 1000
+  let stagedSweep: NodeJS.Timeout | undefined
+
+  const toStaged = (message: TgMessage, media: MediaDescriptor): StagedMedia => ({
+    ...media,
+    chatId: message.chat.id,
+    threadId: message.message_thread_id ?? 0,
+    userId: message.from?.id ?? 0,
+    messageId: message.message_id,
+    createdAt: Date.now(),
+  })
+
+  const markStaged = (items: readonly StagedMedia[]): void => {
+    const settings = reactionSettings()
+    if (!settings.enabled || settings.staged.length === 0) return
+    for (const item of items) void react(botPool.main, item.chatId, item.messageId, settings.staged)
+  }
+
+  const unmarkStaged = (items: readonly StagedMedia[]): void => {
+    for (const item of items) void react(botPool.main, item.chatId, item.messageId, '')
+  }
+
+  const addStaged = (items: readonly StagedMedia[]): void => {
+    if (items.length === 0) return
+    const first = items[0]
+    if (first === undefined) return
+    const key = stagedKey(first.chatId, first.threadId, first.userId)
+    const list = stagedMedia.get(key) ?? []
+    list.push(...items)
+    stagedMedia.set(key, list)
+    markStaged(items)
+  }
+
+  const takeStaged = (key: string): StagedMedia[] => {
+    const items = stagedMedia.get(key) ?? []
+    stagedMedia.delete(key)
+    unmarkStaged(items)
+    return items
+  }
+
+  const clearPendingGroupsForTopic = (chatId: number, threadId: number): void => {
+    for (const [key, group] of pendingGroups) {
+      if (group.chatId !== chatId || group.threadId !== threadId) continue
+      if (group.timer !== undefined) clearTimeout(group.timer)
+      pendingGroups.delete(key)
+    }
+  }
+
+  const clearPendingGroupsForChat = (chatId: number): void => {
+    for (const [key, group] of pendingGroups) {
+      if (group.chatId !== chatId) continue
+      if (group.timer !== undefined) clearTimeout(group.timer)
+      pendingGroups.delete(key)
+    }
+  }
+
+  const clearStagedForTopic = (chatId: number, threadId: number): void => {
+    clearPendingGroupsForTopic(chatId, threadId)
+    for (const [key, items] of stagedMedia) {
+      const first = items[0]
+      if (first === undefined || first.chatId !== chatId || first.threadId !== threadId) continue
+      stagedMedia.delete(key)
+      unmarkStaged(items)
+    }
+  }
+
+  const clearStagedForChat = (chatId: number): void => {
+    clearPendingGroupsForChat(chatId)
+    for (const [key, items] of stagedMedia) {
+      const first = items[0]
+      if (first === undefined || first.chatId !== chatId) continue
+      stagedMedia.delete(key)
+      unmarkStaged(items)
+    }
+  }
+
+  const sweepStaged = (): void => {
+    const now = Date.now()
+    for (const [key, items] of stagedMedia) {
+      const expired = items.filter((item) => now - item.createdAt >= STAGED_TTL_MS)
+      if (expired.length === 0) continue
+      unmarkStaged(expired)
+      const fresh = items.filter((item) => now - item.createdAt < STAGED_TTL_MS)
+      if (fresh.length === 0) stagedMedia.delete(key)
+      else stagedMedia.set(key, fresh)
+    }
+  }
+
+  const startStagedSweep = (): void => {
+    if (stagedSweep !== undefined) return
+    stagedSweep = setInterval(sweepStaged, 60_000)
+  }
+
+  const stopStagedSweep = (): void => {
+    if (stagedSweep !== undefined) clearInterval(stagedSweep)
+    stagedSweep = undefined
   }
 
   // --- outbox, queue status and saturation stats ---------------------------
@@ -1072,7 +1219,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await persist()
       return reply(message, `reactions reset to defaults.\n\n${describeReactions(reactionSettings())}`)
     }
-    if (slot === 'read' || slot === 'streaming') {
+    if (slot === 'read' || slot === 'streaming' || slot === 'staged') {
       if (argument.length === 0) {
         return reply(message, `usage: \`/reactions ${slot} <emoji>\` — or \`/reactions ${slot} off\``)
       }
@@ -1082,7 +1229,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await persist()
       return reply(message, `${slot} reaction set to ${parsed.value.length === 0 ? '_off_' : parsed.value}.`)
     }
-    return reply(message, 'usage: `/reactions [read|streaming|on|off|reset|allowed] [emoji]`')
+    return reply(message, 'usage: `/reactions [read|streaming|staged|on|off|reset|allowed] [emoji]`')
   }
 
   const confirmTrial = async (message: TgMessage): Promise<void> => {
@@ -2008,6 +2155,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       : `https://t.me/${botUsername}?startgroup=${STARTGROUP_PREFIX}${workspaceId}`
 
   const clearChatSessions = async (chatId: number): Promise<void> => {
+    clearStagedForChat(chatId)
     for (const [threadId] of sessionsOfChat(bindings, chatId)) {
       await deleteTopic(chatId, threadId)
       removeSession(bindings, chatId, threadId)
@@ -2448,6 +2596,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
       if (command === '/forget') {
         if (runtime !== undefined) await disposeRuntime(runtime)
+        clearStagedForTopic(message.chat.id, threadId)
         runtimes.delete(runtimeKey(message.chat.id, threadId))
         removeSession(bindings, message.chat.id, threadId)
         await persist()
@@ -2471,6 +2620,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         if (command === '/close') {
           await registry?.archiveSession(bound.sessionId, { stopActivity: true })
           await closeTopic(message.chat.id, threadId)
+          clearStagedForTopic(message.chat.id, threadId)
         } else {
           await registry?.unarchiveSession(bound.sessionId)
           await client.reopenForumTopic(message.chat.id, threadId).catch(() => undefined)
@@ -2685,6 +2835,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     workspace: WorkspaceBinding,
     threadId: number,
     text: string,
+    content?: readonly unknown[],
   ): Promise<void> => {
     // any topic without a session becomes one, so creating topics by hand works
     const existing = sessionFor(bindings, message.chat.id, threadId)
@@ -2707,12 +2858,163 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         stderr(`bridge: cannot journal prompt: ${String(error)}`)
         return undefined
       })
-      agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
+      const blocks = content ?? [{ type: 'text', text }]
+      agent.followup(createUserMessage({ content: blocks as never, source: { kind: 'user' } }))
       if (input !== undefined) await bridge.completeInput(input.id)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       await reply(message, `⚠️ ${detail}`)
     }
+  }
+
+  // --- inbound media -------------------------------------------------------
+
+  const attachmentStore = (): AttachmentStoreLike | undefined =>
+    serviceOf<AttachmentStoreLike>(ctx, 'attachments')
+
+  /** Download every item and hand the agent one message with text + DSH blocks. */
+  const processMediaPrompt = async (
+    message: TgMessage,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+    threadId: number,
+    items: readonly StagedMedia[],
+    text: string,
+  ): Promise<void> => {
+    void markPromptRead(message)
+    const attachments = attachmentStore()
+    if (attachments === undefined) {
+      await reply(message, '⚠️ image/file attachments are not available in this runtime')
+      return
+    }
+
+    const prompt = text.trim().length > 0 ? text.trim() : attachmentPlaceholder(items)
+    const blocks: unknown[] = [{ type: 'text', text: prompt }]
+    for (const item of items) {
+      if (item.size !== undefined && item.size > MAX_TELEGRAM_DOWNLOAD) {
+        blocks.push({
+          type: 'text',
+          text: `[attachment too large to download: ${item.name} (${formatBytes(item.size)})]`,
+        })
+        continue
+      }
+      try {
+        const data = await client.downloadFile(item.fileId)
+        if (item.kind === 'image' && isImageMediaType(item.mediaType)) {
+          const ref = await attachments.saveImage({ data, mediaType: item.mediaType, name: item.name })
+          blocks.push({ type: 'image', attachment: ref })
+        } else {
+          const ref = await attachments.saveFile({ data, name: item.name })
+          blocks.push({ type: 'file', attachment: ref })
+        }
+      } catch (error) {
+        blocks.push({
+          type: 'text',
+          text: `[could not download ${item.name}: ${error instanceof Error ? error.message : String(error)}]`,
+        })
+      }
+    }
+    await handleSession(message, workspaceId, workspace, threadId, prompt, blocks)
+  }
+
+  const takePendingGroupsFor = (chatId: number, threadId: number, userId: number): StagedMedia[] => {
+    const items: StagedMedia[] = []
+    for (const [key, group] of pendingGroups) {
+      if (group.chatId !== chatId || group.threadId !== threadId || group.userId !== userId) continue
+      if (group.timer !== undefined) clearTimeout(group.timer)
+      pendingGroups.delete(key)
+      items.push(...group.items.map(({ message, media }) => toStaged(message, media)))
+    }
+    return items
+  }
+
+  const flushMediaGroup = async (key: string): Promise<void> => {
+    const group = pendingGroups.get(key)
+    if (group === undefined) return
+    pendingGroups.delete(key)
+    if (group.timer !== undefined) clearTimeout(group.timer)
+
+    const first = group.items[0]?.message
+    if (first === undefined) return
+    const workspaceId = workspaceIdByChat(bindings, group.chatId)
+    if (workspaceId === undefined) {
+      await reply(
+        first,
+        'this group is not attached to a workspace.\n`/bind <workspace id or title>` — or create one from the bot chat.',
+      )
+      return
+    }
+    const workspace = bindings.workspaces[workspaceId]
+    if (workspace === undefined) return
+    if (group.threadId === (workspace.systemThreadId ?? 0)) {
+      await reply(first, 'attachments belong in a session topic — open one and send them there.')
+      return
+    }
+
+    const captionItem = group.items.find((entry) => entry.media.caption.trim().length > 0)
+    if (captionItem !== undefined) {
+      const staged = takeStaged(stagedKey(group.chatId, group.threadId, group.userId))
+      const items = [
+        ...staged,
+        ...group.items.map(({ message, media }) => toStaged(message, media)),
+      ]
+      await processMediaPrompt(
+        captionItem.message,
+        workspaceId,
+        workspace,
+        group.threadId,
+        items,
+        captionItem.media.caption,
+      )
+      return
+    }
+
+    addStaged(group.items.map(({ message, media }) => toStaged(message, media)))
+  }
+
+  const queueMediaGroup = (message: TgMessage, media: MediaDescriptor): void => {
+    const groupId = media.groupId
+    if (groupId === undefined) return
+    const userId = message.from?.id ?? 0
+    const chatId = message.chat.id
+    const threadId = message.message_thread_id ?? 0
+    const key = `${chatId}:${threadId}:${userId}:${groupId}`
+    let group = pendingGroups.get(key)
+    if (group === undefined) {
+      group = { key, chatId, threadId, userId, groupId, items: [] }
+    }
+    if (group.timer !== undefined) clearTimeout(group.timer)
+    group.items.push({ message, media })
+    group.timer = setTimeout(() => { void flushMediaGroup(key) }, MEDIA_GROUP_WINDOW_MS)
+    pendingGroups.set(key, group)
+  }
+
+  const handleMediaMessage = async (
+    message: TgMessage,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+    threadId: number,
+    media: MediaDescriptor,
+  ): Promise<void> => {
+    const userId = message.from?.id ?? 0
+    if (media.groupId !== undefined) {
+      queueMediaGroup(message, media)
+      return
+    }
+    if (media.caption.trim().length > 0) {
+      const pending = takePendingGroupsFor(message.chat.id, threadId, userId)
+      const staged = takeStaged(stagedKey(message.chat.id, threadId, userId))
+      await processMediaPrompt(
+        message,
+        workspaceId,
+        workspace,
+        threadId,
+        [...staged, ...pending, toStaged(message, media)],
+        media.caption,
+      )
+      return
+    }
+    addStaged([toStaged(message, media)])
   }
 
   // --- routing -------------------------------------------------------------
@@ -2733,12 +3035,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
     }
     const text = message.text
+    const media = mediaDescriptor(message)
 
     // A prompt is "read" as soon as it passes authorization and the update gate.
     // The reaction is cosmetic and never blocks routing.
     if (text !== undefined) void markPromptRead(message)
 
     if (message.chat.type === 'private') {
+      if (media !== undefined) {
+        return reply(message, 'attachments are supported in session topics, not in this control chat.')
+      }
       if (text === undefined) return
       return handleControl(message, text)
     }
@@ -2754,6 +3060,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         try {
           if (message.forum_topic_closed !== undefined) {
             await registry.archiveSession(bound.sessionId, { stopActivity: true })
+            clearStagedForTopic(message.chat.id, threadId)
           } else {
             await registry.unarchiveSession(bound.sessionId)
           }
@@ -2803,10 +3110,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return
     }
 
-    if (text === undefined) return
+    if (text === undefined && media === undefined) return
 
     if (workspaceId === undefined) {
-      if (text.startsWith('/bind')) {
+      if (text !== undefined && text.startsWith('/bind')) {
         const argument = text.trim().split(/\s+/).slice(1).join(' ').trim()
         const found = findWorkspace(bindings, argument)
         if (found === undefined) {
@@ -2840,9 +3147,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (threadId !== 0) await rememberThread(workspaceId, workspace, threadId)
 
     const systemThread = workspace.systemThreadId ?? 0
-    if (threadId === systemThread) return handleDashboard(message, workspaceId, workspace)
+    if (threadId === systemThread) {
+      if (media !== undefined) {
+        return reply(message, 'attachments belong in a session topic — open one and send them there.')
+      }
+      return handleDashboard(message, workspaceId, workspace)
+    }
 
-    if (text.startsWith('/')) {
+    if (text !== undefined && text.startsWith('/')) {
       // bootstrap: a topic that holds no conversation may claim itself as the
       // system topic, otherwise there is no way to create one off General
       if (/^\/setsystem\b/.test(text) && sessionFor(bindings, message.chat.id, threadId) === undefined) {
@@ -2861,6 +3173,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         message,
         `this is a session topic — commands live in the system topic${systemThread === 0 ? ' (General, until you run /setsystem elsewhere)' : ''}.`,
       )
+    }
+    if (media !== undefined) {
+      return handleMediaMessage(message, workspaceId, workspace, threadId, media)
+    }
+    if (text === undefined) return
+
+    // A text prompt consumes anything the user staged before it. Flush a media
+    // group that may still be waiting for its debounce first.
+    const userId = message.from?.id ?? 0
+    const pending = takePendingGroupsFor(message.chat.id, threadId, userId)
+    const staged = takeStaged(stagedKey(message.chat.id, threadId, userId))
+    const attachments = [...staged, ...pending]
+    if (attachments.length > 0) {
+      return processMediaPrompt(message, workspaceId, workspace, threadId, attachments, text)
     }
     return handleSession(message, workspaceId, workspace, threadId, text)
   }
@@ -2935,6 +3261,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           }
           if (
             message.text === undefined &&
+            mediaDescriptor(message) === undefined &&
             message.forum_topic_edited === undefined &&
             message.new_chat_title === undefined &&
             message.forum_topic_created === undefined &&
@@ -3132,6 +3459,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   const start = async (): Promise<void> => {
     bindings = await loadBindings(file)
+    startStagedSweep()
     offset = bindings.lastUpdateId ?? 0
     if (bindings.update !== undefined) {
       // The runtime was restarted by the updater. The first poll batch is what
@@ -3201,6 +3529,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   const stop = async (): Promise<void> => {
     stopped = true
+    stopStagedSweep()
+    for (const group of pendingGroups.values()) {
+      if (group.timer !== undefined) clearTimeout(group.timer)
+    }
+    pendingGroups.clear()
+    for (const items of stagedMedia.values()) unmarkStaged(items)
+    stagedMedia.clear()
     if (reconcileTimer !== undefined) clearInterval(reconcileTimer)
     if (publisherTimer !== undefined) clearInterval(publisherTimer)
     for (const timer of queueStatusTimers.values()) clearTimeout(timer)

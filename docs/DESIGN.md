@@ -241,6 +241,14 @@ update → allowlist → private? control
   the final flush at `turn/end`, on `agent/error`, and on shutdown. Both emoji
   are stored in the bindings and changed online with `/reactions`; Telegram's
   fixed reaction set is validated first.
+- Attachments: photos and image documents become `ImageBlock`s; documents,
+  videos, video notes, audio, voice notes and animations become `FileBlock`s
+  through `ctx.attachments`. The connector passes the Telegram caption and file
+  metadata as text; DSH gives the agent a read-only file handle, so extraction is
+  the agent's job. Captionless media is staged (metadata only) and marked with
+  the **staged** reaction; the next caption or text prompt downloads and attaches
+  the whole batch. Albums share a `media_group_id` and are debounced for one
+  second before staging or prompting. Staged state expires after 15 minutes.
 - `agent/error` is reported in the same topic.
 - Conversations driven from the web UI are mirrored one-way into the bound
   topic while the connector is not driving that topic.

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.14
+
+- Photos, image documents, videos, video notes, audio, voice notes and
+  animations are downloaded through the Bot API and attached with DSH's
+  attachment service: images become `ImageBlock`s, everything else becomes a
+  `FileBlock` with a read-only path the agent can inspect.
+- Captionless media is staged instead of starting a turn per file. Staged items
+  get the **🙉** reaction, and the next caption or text prompt downloads and
+  attaches the whole batch. The reaction is removed when the batch is used or
+  after 15 minutes.
+- Albums are debounced by `media_group_id`, so a multi-photo upload is one
+  prompt, not one prompt per photo.
+- `/reactions staged <emoji>` and `stagedReaction` configure the marker; the
+  default is 🙉.
+
 ## 0.2.1-rc.2-0.1.13
 
 - Every Telegram session gets a `telegram-surface` system-prompt section that

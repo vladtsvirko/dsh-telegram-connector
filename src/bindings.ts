@@ -110,10 +110,11 @@ function isTrialMessage(value: unknown): value is TrialMessageBinding {
 
 function isReactions(value: unknown): value is StoredReactions {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
-  const candidate = value as { enabled?: unknown; read?: unknown; streaming?: unknown }
+  const candidate = value as { enabled?: unknown; read?: unknown; streaming?: unknown; staged?: unknown }
   return (candidate.enabled === undefined || typeof candidate.enabled === 'boolean')
     && (candidate.read === undefined || typeof candidate.read === 'string')
     && (candidate.streaming === undefined || typeof candidate.streaming === 'string')
+    && (candidate.staged === undefined || typeof candidate.staged === 'string')
 }
 
 export function sessionKey(chatId: number, threadId: number): string {

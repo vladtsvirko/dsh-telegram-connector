@@ -22,11 +22,105 @@ export interface TgChat {
   is_forum?: boolean
 }
 
+export interface TgPhotoSize {
+  file_id: string
+  file_unique_id: string
+  width: number
+  height: number
+  file_size?: number
+}
+
+export interface TgDocument {
+  file_id: string
+  file_unique_id: string
+  file_name?: string
+  mime_type?: string
+  file_size?: number
+}
+
+export interface TgVideo {
+  file_id: string
+  file_unique_id: string
+  file_name?: string
+  mime_type?: string
+  file_size?: number
+  width: number
+  height: number
+  duration: number
+}
+
+export interface TgVideoNote {
+  file_id: string
+  file_unique_id: string
+  file_size?: number
+  length: number
+  duration: number
+}
+
+export interface TgAudio {
+  file_id: string
+  file_unique_id: string
+  file_name?: string
+  mime_type?: string
+  file_size?: number
+  duration: number
+  performer?: string
+  title?: string
+}
+
+export interface TgVoice {
+  file_id: string
+  file_unique_id: string
+  mime_type?: string
+  file_size?: number
+  duration: number
+}
+
+export interface TgAnimation {
+  file_id: string
+  file_unique_id: string
+  file_name?: string
+  mime_type?: string
+  file_size?: number
+  width: number
+  height: number
+  duration: number
+}
+
+export interface TgSticker {
+  file_id: string
+  file_unique_id: string
+  file_size?: number
+  mime_type?: string
+  is_animated?: boolean
+  is_video?: boolean
+  emoji?: string
+}
+
+export interface TgFile {
+  file_id: string
+  file_unique_id: string
+  file_size?: number
+  file_path?: string
+}
+
 export interface TgMessage {
   message_id: number
   chat: TgChat
   from?: TgUser
   text?: string
+  /** Caption on a photo/document/video/audio/animation message. */
+  caption?: string
+  /** Album identifier shared by the several updates of one media group. */
+  media_group_id?: string
+  photo?: TgPhotoSize[]
+  document?: TgDocument
+  video?: TgVideo
+  video_note?: TgVideoNote
+  audio?: TgAudio
+  voice?: TgVoice
+  animation?: TgAnimation
+  sticker?: TgSticker
   /** Present on every message inside a forum topic. */
   is_topic_message?: boolean
   message_thread_id?: number
@@ -157,6 +251,28 @@ export class TelegramClient {
 
   getMe(): Promise<TgUser> {
     return this.call<TgUser>('getMe')
+  }
+
+  /** Resolve a Telegram file id to a temporary download path. */
+  getFile(fileId: string): Promise<TgFile> {
+    return this.call<TgFile>('getFile', { file_id: fileId })
+  }
+
+  /**
+   * Download a file sent to the bot. The Bot API caps this at 20 MB; callers
+   * should check `file_size` first and report larger files instead of failing
+   * after the round trip. The token is part of the URL and must never be logged.
+   */
+  async downloadFile(fileId: string): Promise<Uint8Array> {
+    const file = await this.getFile(fileId)
+    if (file.file_path === undefined || file.file_path.length === 0) {
+      throw new Error('Telegram returned no file_path for this file')
+    }
+    const response = await fetch(`${TG_API}/file/bot${this.token}/${file.file_path}`)
+    if (!response.ok) {
+      throw new Error(`Telegram file download failed (${String(response.status)})`)
+    }
+    return new Uint8Array(await response.arrayBuffer())
   }
 
   getUpdates(offset: number, timeoutSeconds: number): Promise<TgUpdate[]> {

@@ -31,12 +31,15 @@ export interface ReactionSettings {
   read: string
   /** Set on a streamed bot message while it may still be edited; empty disables it. */
   streaming: string
+  /** Set on media staged until a caption or text prompt arrives; empty disables it. */
+  staged: string
 }
 
 export const DEFAULT_REACTIONS: ReactionSettings = {
   enabled: true,
   read: '👀',
   streaming: '✍',
+  staged: '🙉',
 }
 
 /** Stored overrides; an empty string means "do not react" for that slot. */
@@ -44,6 +47,7 @@ export interface StoredReactions {
   enabled?: boolean
   read?: string
   streaming?: string
+  staged?: string
 }
 
 const VARIATION_SELECTOR = /\uFE0F/g
@@ -111,6 +115,7 @@ export function resolveReactions(
     enabled: stored?.enabled ?? configured?.enabled ?? DEFAULT_REACTIONS.enabled,
     read: pick(stored?.read, configured?.read, DEFAULT_REACTIONS.read),
     streaming: pick(stored?.streaming, configured?.streaming, DEFAULT_REACTIONS.streaming),
+    staged: pick(stored?.staged, configured?.staged, DEFAULT_REACTIONS.staged),
   }
 }
 
@@ -124,8 +129,9 @@ export function describeReactions(settings: ReactionSettings): string {
     `reactions: ${settings.enabled ? 'on' : 'off'}`,
     `read: ${show(settings.read)} — set on your prompt when the bot reads it`,
     `streaming: ${show(settings.streaming)} — set on a reply while it is still being edited`,
+    `staged: ${show(settings.staged)} — set on media waiting for a caption or prompt`,
     '',
-    'change: `/reactions read 👀` · `/reactions streaming ✍` · `/reactions off|on` · `/reactions reset`',
+    'change: `/reactions read 👀` · `/reactions streaming ✍` · `/reactions staged 🙉` · `/reactions off|on` · `/reactions reset`',
     'Telegram only accepts its own reaction emoji; `/reactions allowed` lists them.',
   ].join('\n')
 }

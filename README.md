@@ -37,8 +37,13 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   table-aware.
 - **Read and streaming reactions.** The bot reacts 👀 to a prompt when it reads
   it, and ✍ to a reply while it is still being edited; the streaming reaction is
-  removed when the turn settles. Change either emoji online with `/reactions`
-  (Telegram's fixed reaction set is validated).
+  removed when the turn settles. Media without a caption is staged and marked
+  🙉 until a caption or the next text prompt. Change any emoji online with
+  `/reactions` (Telegram's fixed reaction set is validated).
+- **Attachments.** Photos, image documents, videos, video notes, audio, voice
+  notes and animations are downloaded through the Bot API and attached with
+  DSH's attachment service. Albums are debounced and attached together; a
+  captionless upload waits for the prompt instead of starting one turn per file.
 - **Telegram-native formatting.** Every Telegram session gets a system-prompt
   section that tells the model to use Telegram rich Markdown; the full cheat
   sheet is a runtime skill (`telegram-rich-text`). Tables, headings, lists,
@@ -133,9 +138,10 @@ Plugin row:
 | `pollTimeoutSeconds` | `25` | long-poll timeout |
 | `reconcileIntervalSeconds` | `60` | UI → Telegram reconciliation period; `0` disables |
 | `agentPreset` | DSH default | preset mounted in new Telegram sessions (tools live there); existing sessions keep the preset recorded in their header |
-| `reactionsEnabled` | `true` | master switch for read/streaming reactions |
+| `reactionsEnabled` | `true` | master switch for read/streaming/staged reactions |
 | `readReaction` | `👀` | emoji set on a prompt when the bot reads it; `""` disables it |
 | `streamingReaction` | `✍` | emoji set on a reply while it is being edited; `""` disables it |
+| `stagedReaction` | `🙉` | emoji set on media staged until a caption or text prompt; `""` disables it |
 
 State lives in `$DSH_HOME/telegram-connector/bindings.json` (atomic writes).
 `/reactions` writes the same file, so an online change survives a restart and

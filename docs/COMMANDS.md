@@ -77,19 +77,22 @@ connector refuses to disable or remove itself.
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
 | `/status` | model route, workspace/session counts, poller, timezone, supervisor |
 | `/about` | connector version, runtime version, updater state |
-| `/reactions` | show the read and streaming reactions |
+| `/reactions` | show the read, streaming and staged-media reactions |
 | `/reactions read <emoji>` | set the prompt reaction; `off` disables it |
 | `/reactions streaming <emoji>` | set the in-progress reply reaction; `off` disables it |
-| `/reactions on` / `/reactions off` | enable or disable both reactions |
+| `/reactions staged <emoji>` | set the staged-media reaction; `off` disables it |
+| `/reactions on` / `/reactions off` | enable or disable all reactions |
 | `/reactions reset` | drop the overrides and return to the plugin defaults |
 | `/reactions allowed` | list the emoji Telegram accepts in a reaction |
 
 The **read** reaction is set on your prompt as soon as the bot reads it. The
 **streaming** reaction is set on a reply while the bot may still edit it and is
-removed when the turn ends, the agent errors, or the connector stops. Both
-values are saved in the bindings, so an online change survives a restart.
-Telegram only accepts its own reaction emoji; `✓`, `✅` and `⏳` are not in that
-set, which is why the defaults are 👀 and ✍.
+removed when the turn ends, the agent errors, or the connector stops. The
+**staged** reaction marks a captionless photo/file/video/audio upload until the
+caption or text prompt that consumes it arrives; it is removed when the media is
+used or after 15 minutes. All values are saved in the bindings, so an online
+change survives a restart. Telegram only accepts its own reaction emoji; `✓`,
+`✅` and `⏳` are not in that set, which is why the defaults are 👀, ✍ and 🙉.
 
 `/system update connector` runs the entrypoint's `reset-plugin` with the runtime
 stopped: the same allow-builds and version-compatibility logic that installed the

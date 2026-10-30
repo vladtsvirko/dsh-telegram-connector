@@ -72,6 +72,24 @@ describe('telegram client', () => {
     })
     expect(calls[1]?.body.reaction).toEqual([])
   })
+
+  it('resolves and downloads a Telegram file by id', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      urls.push(url)
+      if (url.includes('/getFile')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          result: { file_id: 'f1', file_unique_id: 'u1', file_path: 'photos/file.jpg' },
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200 })
+    })
+    const data = await new TelegramClient('tok').downloadFile('f1')
+    expect(Array.from(data)).toEqual([1, 2, 3])
+    expect(urls[0]).toContain('/bottok/getFile')
+    expect(urls[1]).toContain('/file/bottok/photos/file.jpg')
+  })
 })
 
 describe('isRichRejected', () => {

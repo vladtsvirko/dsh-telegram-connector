@@ -44,9 +44,10 @@ describe('resolveReactions', () => {
   })
 
   it('lets durable bindings win over the plugin row', () => {
-    expect(resolveReactions({ read: '🤝', streaming: '⚡' }, { read: '👀', streaming: '✍' })).toMatchObject({
+    expect(resolveReactions({ read: '🤝', streaming: '⚡', staged: '🫡' }, { read: '👀', streaming: '✍', staged: '🙉' })).toMatchObject({
       read: '🤝',
       streaming: '⚡',
+      staged: '🫡',
     })
   })
 
@@ -66,10 +67,11 @@ describe('resolveReactions', () => {
 
 describe('reaction text', () => {
   it('describes the active settings and lists the allowed emoji', () => {
-    const text = describeReactions({ enabled: true, read: '👀', streaming: '✍' })
+    const text = describeReactions({ enabled: true, read: '👀', streaming: '✍', staged: '🙉' })
     expect(text).toContain('reactions: on')
     expect(text).toContain('read: 👀')
     expect(text).toContain('streaming: ✍')
+    expect(text).toContain('staged: 🙉')
     expect(allowedReactionsText()).toContain('👀')
     expect(allowedReactionsText()).not.toContain('✓')
   })
