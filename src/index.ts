@@ -33,9 +33,12 @@ import {
   type MediaDescriptor,
 } from './media.js'
 import {
+  formatForwardedReference,
+  forwardedReference,
   mediaReplyPrompt,
   referenceOf,
   referencePrompt,
+  type ForwardedReference,
   type ReplyReference,
 } from './reference.js'
 import {
@@ -2898,13 +2901,19 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   const downloadAttachments = async (
     items: readonly StagedMedia[],
-    label: 'new' | 'referenced' | 'attached',
+    label: 'new' | 'referenced' | 'attached' | 'forwarded',
   ): Promise<{ blocks: unknown[]; errors: string[] }> => {
     const attachments = attachmentStore()
     if (attachments === undefined) return { blocks: [], errors: ['attachments are not available in this runtime'] }
     const blocks: unknown[] = []
     const errors: string[] = []
-    const prefix = label === 'new' ? 'New media' : label === 'referenced' ? 'Referenced media' : 'Attached media'
+    const prefix = label === 'new'
+      ? 'New media'
+      : label === 'referenced'
+        ? 'Referenced media'
+        : label === 'forwarded'
+          ? 'Forwarded media'
+          : 'Attached media'
     for (const item of items) {
       if (item.size !== undefined && item.size > MAX_TELEGRAM_DOWNLOAD) {
         errors.push(`${item.name} (${formatBytes(item.size)}) is larger than the 20 MB Bot API limit`)
@@ -2988,6 +2997,30 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       { type: 'text', text: fullPrompt },
       ...newDownload.blocks,
       ...refDownload.blocks,
+    ])
+  }
+
+  /** A forwarded message is its own context turn; its media is re-downloaded. */
+  const handleForwardedTurn = async (
+    message: TgMessage,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+    threadId: number,
+    forward: ForwardedReference,
+  ): Promise<void> => {
+    void markPromptRead(message)
+    const items = forward.media.map((media) => referenceStaged(message, media))
+    if (items.length > 0 && attachmentStore() === undefined) {
+      await reply(message, '⚠️ image/file attachments are not available in this runtime')
+      return
+    }
+    const downloaded = items.length > 0
+      ? await downloadAttachments(items, 'forwarded')
+      : { blocks: [] as unknown[], errors: [] as string[] }
+    const prompt = formatForwardedReference(forward, downloaded.errors)
+    await handleSession(message, workspaceId, workspace, threadId, prompt, [
+      { type: 'text', text: prompt },
+      ...downloaded.blocks,
     ])
   }
 
@@ -3111,12 +3144,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const text = message.text
     const media = mediaDescriptor(message)
     const reference = referenceOf(message)
+    const forwarded = forwardedReference(message)
 
     // A prompt is "read" as soon as it passes authorization and the update gate.
     // The reaction is cosmetic and never blocks routing.
     if (text !== undefined) void markPromptRead(message)
 
     if (message.chat.type === 'private') {
+      if (forwarded !== undefined) {
+        return reply(message, 'forwarded messages are supported in session topics, not in this control chat.')
+      }
       if (media !== undefined) {
         return reply(message, 'attachments are supported in session topics, not in this control chat.')
       }
@@ -3185,7 +3222,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return
     }
 
-    if (text === undefined && media === undefined) return
+    if (text === undefined && media === undefined && forwarded === undefined) return
 
     if (workspaceId === undefined) {
       if (text !== undefined && text.startsWith('/bind')) {
@@ -3223,10 +3260,17 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     const systemThread = workspace.systemThreadId ?? 0
     if (threadId === systemThread) {
+      if (forwarded !== undefined) {
+        return reply(message, 'forwarded messages belong in a session topic — open one and send them there.')
+      }
       if (media !== undefined) {
         return reply(message, 'attachments belong in a session topic — open one and send them there.')
       }
       return handleDashboard(message, workspaceId, workspace)
+    }
+
+    if (forwarded !== undefined) {
+      return handleForwardedTurn(message, workspaceId, workspace, threadId, forwarded)
     }
 
     if (text !== undefined && text.startsWith('/')) {
@@ -3362,6 +3406,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           if (
             message.text === undefined &&
             mediaDescriptor(message) === undefined &&
+            message.rich_message === undefined &&
+            message.forward_origin === undefined &&
+            message.forward_from === undefined &&
+            message.forward_from_chat === undefined &&
             message.forum_topic_edited === undefined &&
             message.new_chat_title === undefined &&
             message.forum_topic_created === undefined &&

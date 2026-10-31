@@ -48,6 +48,9 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   attach it to the new prompt. The referenced message is included as a quoted
   context block; external replies are supported and download errors are surfaced
   to the model so it can suggest a fix.
+- **Forwarded messages.** A forwarded message becomes a `Forwarded from …`
+  context turn; forwarded rich messages are read from `rich_message.blocks`, and
+  a reply to a forwarded message also records its origin in the reference block.
 - **Telegram-native formatting.** Every Telegram session gets a system-prompt
   section that tells the model to use Telegram rich Markdown; the full cheat
   sheet is a runtime skill (`telegram-rich-text`). Tables, headings, lists,

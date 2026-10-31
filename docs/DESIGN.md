@@ -255,6 +255,10 @@ update → allowlist → private? control
   into the prompt so the model can suggest re-uploading or granting access.
   A text reply is a normal acknowledgment turn; a media reply is an immediate
   prompt with the new media as the task and the referenced media as context.
+- Forwards: a forwarded message is its own context turn with a
+  `Forwarded from …` block. Forwarded rich messages are read from
+  `rich_message.blocks`; forwarded media is re-downloaded and attached. A reply
+  to a forwarded message adds its origin to the reference block.
 - `agent/error` is reported in the same topic.
 - Conversations driven from the web UI are mirrored one-way into the bound
   topic while the connector is not driving that topic.

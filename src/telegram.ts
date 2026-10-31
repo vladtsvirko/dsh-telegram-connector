@@ -106,7 +106,7 @@ export interface TgFile {
 
 /** The media subset of ExternalReplyInfo used when the user replies across chats/topics. */
 export interface TgExternalReplyInfo {
-  origin?: unknown
+  origin?: TgMessageOrigin
   chat?: TgChat
   message_id?: number
   photo?: TgPhotoSize[]
@@ -123,6 +123,17 @@ export interface TgTextQuote {
   text: string
 }
 
+/** The subset of MessageOrigin used to label forwarded content. */
+export interface TgMessageOrigin {
+  type: string
+  date?: number
+  sender_user?: TgUser
+  sender_user_name?: string
+  sender_chat?: TgChat
+  chat?: TgChat
+  message_id?: number
+}
+
 export interface TgMessage {
   message_id: number
   chat: TgChat
@@ -130,6 +141,13 @@ export interface TgMessage {
   text?: string
   /** Present instead of `text` for messages sent with sendRichMessage. */
   rich_message?: { blocks?: unknown[] }
+  /** Modern forward metadata; a forwarded rich message has this and no `text`. */
+  forward_origin?: TgMessageOrigin
+  /** Legacy forward metadata kept for older updates. */
+  forward_from?: TgUser
+  forward_from_chat?: TgChat
+  forward_from_message_id?: number
+  forward_sender_name?: string
   /** Caption on a photo/document/video/audio/animation message. */
   caption?: string
   /** Album identifier shared by the several updates of one media group. */

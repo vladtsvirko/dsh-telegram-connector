@@ -23,7 +23,46 @@ export interface ReplyReference {
   text: string
   /** Present for external replies when Telegram supplied the origin chat. */
   chatLabel?: string
+  /** Present when the referenced message was itself forwarded. */
+  forwardedFrom?: string
   media: MediaDescriptor[]
+}
+
+export interface ForwardedReference {
+  text: string
+  originLabel: string
+  media: MediaDescriptor[]
+}
+
+type MessageOrigin = NonNullable<TgMessage['forward_origin']>
+
+/** Human label for a forward origin, or undefined when the message is not forwarded. */
+export function originLabel(origin: MessageOrigin | undefined): string | undefined {
+  if (origin === undefined) return undefined
+  switch (origin.type) {
+    case 'user':
+      return origin.sender_user?.username !== undefined
+        ? `@${origin.sender_user.username}`
+        : origin.sender_user?.first_name ?? 'a user'
+    case 'hidden_user':
+      return origin.sender_user_name ?? 'a hidden user'
+    case 'chat':
+      return origin.sender_chat?.title ?? 'a chat'
+    case 'channel':
+      return origin.chat?.title ?? 'a channel'
+    default:
+      return 'another chat'
+  }
+}
+
+/** Forward label from either the modern origin or the legacy fields. */
+export function forwardOriginLabel(message: TgMessage): string | undefined {
+  return originLabel(message.forward_origin)
+    ?? message.forward_from_chat?.title
+    ?? (message.forward_from?.username !== undefined
+      ? `@${message.forward_from.username}`
+      : message.forward_from?.first_name)
+    ?? message.forward_sender_name
 }
 
 const SKIP_RICH_KEYS = new Set(['type', 'url', 'href', 'align', 'valign', 'is_header', 'is_bordered', 'is_striped', 'is_compact', 'is_rtl'])
@@ -68,21 +107,40 @@ export function referenceOf(message: TgMessage): ReplyReference | undefined {
     const text = [replied.text, replied.caption, rich, message.quote?.text]
       .find((value) => value !== undefined && value.trim().length > 0) ?? ''
     if (text.trim().length === 0 && media === undefined) return undefined
-    return { kind: 'same-chat', text, media: media === undefined ? [] : [media] }
+    const forwardedFrom = forwardOriginLabel(replied)
+    return {
+      kind: 'same-chat',
+      text,
+      ...(forwardedFrom === undefined ? {} : { forwardedFrom }),
+      media: media === undefined ? [] : [media],
+    }
   }
   const external = message.external_reply
   if (external !== undefined) {
     const media = externalMediaDescriptor(external, message.chat.id)
     const text = message.quote?.text ?? ''
     if (text.trim().length === 0 && media === undefined) return undefined
+    const forwardedFrom = originLabel(external.origin)
     return {
       kind: 'external',
       text,
       ...(external.chat?.title === undefined ? {} : { chatLabel: external.chat.title }),
+      ...(forwardedFrom === undefined ? {} : { forwardedFrom }),
       media: media === undefined ? [] : [media],
     }
   }
   return undefined
+}
+
+/** Extract a message that was forwarded into the current chat. */
+export function forwardedReference(message: TgMessage): ForwardedReference | undefined {
+  const origin = forwardOriginLabel(message)
+  if (origin === undefined) return undefined
+  const text = [message.text, message.caption, richMessageText(message.rich_message)]
+    .find((value) => value !== undefined && value.trim().length > 0) ?? ''
+  const media = mediaDescriptor(message)
+  if (text.trim().length === 0 && media === undefined) return undefined
+  return { text, originLabel: origin, media: media === undefined ? [] : [media] }
 }
 
 const MAX_QUOTE = 800
@@ -94,13 +152,13 @@ function quote(text: string): string {
   return clipped.split('\n').map((line) => `> ${line}`).join('\n')
 }
 
-function mediaLine(media: readonly MediaDescriptor[]): string[] {
+function mediaLine(media: readonly MediaDescriptor[], label = 'Referenced'): string[] {
   if (media.length === 0) return []
-  return ['', `Referenced media: ${media.map((item) => item.name).join(', ')} (attached)`]
+  return ['', `${label} media: ${media.map((item) => item.name).join(', ')} (attached)`]
 }
 
-function errorLines(errors: readonly string[]): string[] {
-  return errors.map((error) => `Referenced media could not be downloaded: ${error}. The user may need to re-upload it, send it as a file, or grant the bot access to the source chat.`)
+function errorLines(errors: readonly string[], label = 'Referenced'): string[] {
+  return errors.map((error) => `${label} media could not be downloaded: ${error}. The user may need to re-upload it, send it as a file, or grant the bot access to the source chat.`)
 }
 
 /** The reference block alone, used after the user's own text. */
@@ -108,9 +166,10 @@ export function formatReference(reference: ReplyReference, errors: readonly stri
   const header = reference.kind === 'external'
     ? '[Reference context — the user replied to a message from another chat/topic. This is background only, not a separate request. Use it as context for the user\'s message.]'
     : '[Reference context — the user replied to an earlier message. This is background only, not a separate request. Use it as context for the user\'s message. If the user has not asked a question or given an instruction, wait for the follow-up.]'
+  const forwarded = reference.forwardedFrom === undefined ? '' : ` (forwarded from ${reference.forwardedFrom})`
   const origin = reference.kind === 'external'
-    ? `Referenced message from ${reference.chatLabel ?? 'another chat/topic'}:`
-    : 'Referenced message:'
+    ? `Referenced message from ${reference.chatLabel ?? 'another chat/topic'}${forwarded}:`
+    : `Referenced message${forwarded}:`
   return [
     header,
     '',
@@ -118,6 +177,18 @@ export function formatReference(reference: ReplyReference, errors: readonly stri
     quote(reference.text),
     ...mediaLine(reference.media),
     ...errorLines(errors).map((line) => `\n${line}`),
+  ].join('\n')
+}
+
+/** A forwarded message, used as its own context turn. */
+export function formatForwardedReference(forward: ForwardedReference, errors: readonly string[] = []): string {
+  return [
+    '[Forwarded message — background context from another chat/session. It is not the user\'s own words.]',
+    '',
+    `Forwarded from: ${forward.originLabel}`,
+    quote(forward.text),
+    ...mediaLine(forward.media, 'Forwarded'),
+    ...errorLines(errors, 'Forwarded').map((line) => `\n${line}`),
   ].join('\n')
 }
 

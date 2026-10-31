@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.17
+
+- Forwarded messages are now processed as their own context turn with a
+  `Forwarded from …` block. Forwarded rich messages are read from
+  `rich_message.blocks`; forwarded media is re-downloaded and attached.
+- A reply to a forwarded message adds `(forwarded from …)` to the reference
+  block, so the model can tell that the quoted message was not written by the
+  current user.
+- The poll filter now admits forwarded and rich messages that carry no `text`.
+
 ## 0.2.1-rc.2-0.1.16
 
 - Reply references now read `rich_message.blocks` as well as `text`/`caption`/

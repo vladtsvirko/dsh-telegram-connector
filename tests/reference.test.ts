@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { formatReference, mediaReplyPrompt, referenceOf, referencePrompt, richMessageText, type ReplyReference } from '../src/reference.js'
+import {
+  formatForwardedReference,
+  formatReference,
+  forwardOriginLabel,
+  forwardedReference,
+  mediaReplyPrompt,
+  referenceOf,
+  referencePrompt,
+  richMessageText,
+  type ReplyReference,
+} from '../src/reference.js'
 import type { MediaDescriptor } from '../src/media.js'
 import type { TgMessage } from '../src/telegram.js'
 
@@ -79,6 +89,71 @@ describe('referenceOf', () => {
     expect(reference?.text).toContain('Reference anchor')
     expect(reference?.text).toContain('quick brown fox')
     expect(reference?.text).toContain('REF-2026-10-31-A')
+  })
+})
+
+describe('forwarded messages', () => {
+  it('labels a forwarded user message', () => {
+    const forward = forwardedReference(message({
+      forward_origin: { type: 'user', sender_user: { id: 9, username: 'alice' } },
+      text: 'forwarded text',
+    }))
+    expect(forward).toMatchObject({ originLabel: '@alice', text: 'forwarded text' })
+    expect(forwardOriginLabel(message({
+      forward_origin: { type: 'user', sender_user: { id: 9, first_name: 'Alice' } },
+    }))).toBe('Alice')
+  })
+
+  it('extracts rich text from a forwarded rich message', () => {
+    const forward = forwardedReference(message({
+      text: undefined,
+      forward_origin: { type: 'channel', chat: { id: -200, type: 'channel', title: 'Story channel' } },
+      rich_message: {
+        blocks: [
+          { type: 'paragraph', text: 'A lighthouse keeper found a bottle.' },
+        ],
+      },
+    }))
+    expect(forward).toMatchObject({ originLabel: 'Story channel' })
+    expect(forward?.text).toContain('lighthouse keeper')
+  })
+
+  it('falls back to legacy forward fields', () => {
+    expect(forwardOriginLabel(message({
+      forward_from: { id: 9, username: 'bob' },
+    }))).toBe('@bob')
+    expect(forwardOriginLabel(message({
+      forward_from_chat: { id: -300, type: 'channel', title: 'Old channel' },
+    }))).toBe('Old channel')
+  })
+
+  it('formats a forwarded context block', () => {
+    const forward = forwardedReference(message({
+      forward_origin: { type: 'user', sender_user: { id: 9, username: 'alice' } },
+      text: 'forwarded text',
+    }))
+    expect(forward).toBeDefined()
+    const text = formatForwardedReference(forward!)
+    expect(text).toContain('Forwarded message')
+    expect(text).toContain('Forwarded from: @alice')
+    expect(text).toContain('> forwarded text')
+  })
+
+  it('marks a referenced message that was itself forwarded', () => {
+    const reference = referenceOf(message({
+      reply_to_message: {
+        message_id: 10,
+        chat: { id: -100, type: 'supergroup' },
+        text: 'forwarded original',
+        forward_origin: { type: 'user', sender_user: { id: 9, username: 'alice' } },
+      },
+    }))
+    expect(reference?.forwardedFrom).toBe('@alice')
+    expect(formatReference(reference!)).toContain('(forwarded from @alice)')
+  })
+
+  it('returns undefined for a plain message', () => {
+    expect(forwardedReference(message({ text: 'hello' }))).toBeUndefined()
   })
 })
 
