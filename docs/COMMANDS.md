@@ -177,8 +177,19 @@ group has shown the bot are considered.
 ## Session topic
 
 Plain text is a turn in that session. Management stays in the dashboard — one
-topic is always one session, and a topic is never re-assigned. `/help` and
-`/man` work here, everything else is answered with a pointer to the dashboard.
+topic is always one session, and a topic is never re-assigned.
+
+| Command | What it does |
+|---|---|
+| `/commands` | list the host slash commands registered for this session, read live |
+| `/skills` | list user-invocable skills from the workspace catalog, read live |
+| `/<name>` | load a user-invocable skill into the next turn |
+| `/help`, `/man` | the session command manual |
+
+Host commands (for example `/compact`, `/goal` or a command from a newly
+installed plugin) run against the session without creating a model message.
+The lists are read live, so a plugin that registers a command or skill appears
+without a connector release. Connector commands keep precedence.
 
 A topic created by hand becomes a session on its first message.
 

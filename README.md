@@ -51,6 +51,12 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 - **Forwarded messages.** A forwarded message becomes a `Forwarded from …`
   context turn; forwarded rich messages are read from `rich_message.blocks`, and
   a reply to a forwarded message also records its origin in the reference block.
+- **Process rows.** Tool calls, host commands and skill loads become short safe
+  rows; `processMode: summary` appends a collapsed summary after each turn, and
+  web-UI sessions show a live process card.
+- **Host commands and skills.** `/commands` and `/skills` read the live
+  registries; `/<name>` loads a user-invocable skill, so commands and skills from
+  newly installed plugins work without a connector release.
 - **Telegram-native formatting.** Every Telegram session gets a system-prompt
   section that tells the model to use Telegram rich Markdown; the full cheat
   sheet is a runtime skill (`telegram-rich-text`). Tables, headings, lists,
@@ -142,6 +148,7 @@ Plugin row:
 | `workspaceRoot` | `$DSH_WORKSPACE`, else `$DSH_HOME/workspace` | where `/workspace new` creates directories |
 | `provider` / `model` | profile default | model route for new sessions |
 | `editIntervalMs` | `1200` | minimum spacing between streaming edits |
+| `processMode` | `summary` | `summary` appends a collapsed tool/command/skill summary after each turn; `off` hides process rows |
 | `pollTimeoutSeconds` | `25` | long-poll timeout |
 | `reconcileIntervalSeconds` | `60` | UI → Telegram reconciliation period; `0` disables |
 | `agentPreset` | DSH default | preset mounted in new Telegram sessions (tools live there); existing sessions keep the preset recorded in their header |

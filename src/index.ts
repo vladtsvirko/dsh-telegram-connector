@@ -69,6 +69,17 @@ import { Outbox, type ItemPriority, type OutboxItem } from './outbox.js'
 import { SessionBridge, type TurnRecord } from './bridge.js'
 import { MirrorQueue, messageText, promptText } from './mirror.js'
 import {
+  commandLabel,
+  formatLiveProcess,
+  formatProcessSummary,
+  formatProcessSummaryText,
+  redactPreview,
+  skillLabel,
+  toolLabel,
+  type ProcessItem,
+} from './process.js'
+import { isReservedConnectorCommand, parseSlash } from './slash.js'
+import {
   bindingsPath,
   findWorkspace,
   loadBindings,
@@ -97,6 +108,7 @@ export const Config = Schema.object({
   editIntervalMs: Schema.number().default(1200),
   pollTimeoutSeconds: Schema.number().default(25),
   reconcileIntervalSeconds: Schema.number().default(60),
+  processMode: Schema.union(['off', 'summary']).default('summary'),
   agentPreset: Schema.string(),
   reactionsEnabled: Schema.boolean().default(true),
   readReaction: Schema.string().default('👀'),
@@ -113,6 +125,8 @@ export interface ConnectorConfig {
   editIntervalMs?: number
   pollTimeoutSeconds?: number
   reconcileIntervalSeconds?: number
+  /** `off` hides process rows; `summary` appends a collapsed summary per turn. */
+  processMode?: 'off' | 'summary'
   agentPreset?: string
   reactionsEnabled?: boolean
   readReaction?: string
@@ -125,6 +139,34 @@ interface AgentPresetService {
   readonly defaultId: string
   resolve(id?: string): Promise<{ id: string; broken?: unknown }>
   mount(ctx: Context, id: string): Promise<unknown>
+}
+
+/** The subset of dsh-commands used by the Telegram slash bridge. */
+interface HostCommandDescriptor {
+  name: string
+  description?: string
+  input?: { hint?: string }
+}
+
+interface HostCommandService {
+  list(agent: Agent): readonly HostCommandDescriptor[]
+  execute(
+    agent: Agent,
+    line: string,
+    attachments: readonly unknown[],
+    signal: AbortSignal,
+  ): Promise<{ result: { kind: 'success' | 'error'; text?: string } } | undefined>
+}
+
+/** The subset of dsh-skill's registry used to list user-invocable skills. */
+interface SkillSummaryView {
+  name: string
+  description?: string
+  invocation?: { userInvocable?: boolean }
+}
+
+interface SkillListService {
+  list(options: { cwd?: string }): Promise<readonly SkillSummaryView[]>
 }
 
 interface WorkspaceView {
@@ -221,6 +263,10 @@ interface TopicRuntime {
   lastPrompt?: string
   /** Journaled turn waiting for its first message to be acknowledged. */
   pendingTurnId?: string
+  /** Safe tool/command/skill rows for the current turn; summarized at turn end. */
+  process: ProcessItem[]
+  /** True between turn/start and turn/end; stray events outside a turn are ignored. */
+  processActive?: boolean
 }
 
 /** One media message waiting for a caption or a following text prompt. */
@@ -1893,6 +1939,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       parts: [],
       partRich: [],
       reactionParts: new Map(),
+      process: [],
     }
     runtimes.set(key, created)
     return created
@@ -2027,6 +2074,58 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await clearStreamReactions(runtime)
   }
 
+  const processMode = (): 'off' | 'summary' => config.processMode ?? 'summary'
+
+  const sendProcessSummary = async (
+    chatId: number,
+    threadId: number,
+    items: readonly ProcessItem[],
+  ): Promise<void> => {
+    if (items.length === 0) return
+    try {
+      await botPool.takeMain(chatId)
+      await botPool.main.client.sendRichMessage(chatId, formatProcessSummary(items), { threadId })
+    } catch (error) {
+      if (!isRichRejected(error)) logger.warn(`dsh-telegram-connector: process summary failed: ${String(error)}`)
+      await sendTo(chatId, threadId, formatProcessSummaryText(items))
+    }
+  }
+
+  const beginProcessTurn = (runtime: TopicRuntime): void => {
+    runtime.process = []
+    runtime.processActive = true
+  }
+
+  const recordProcessItem = (runtime: TopicRuntime, item: ProcessItem): void => {
+    if (runtime.processActive !== true) return
+    const index = runtime.process.findIndex((candidate) => candidate.id === item.id)
+    if (index === -1) runtime.process.push(item)
+    else runtime.process[index] = item
+  }
+
+  const completeProcessItem = (
+    runtime: TopicRuntime,
+    id: string,
+    status: 'done' | 'error',
+    detail?: string,
+  ): void => {
+    if (runtime.processActive !== true) return
+    const index = runtime.process.findIndex((candidate) => candidate.id === id)
+    if (index === -1) return
+    const current = runtime.process[index]
+    if (current === undefined) return
+    runtime.process[index] = { ...current, status, ...(detail === undefined ? {} : { detail }) }
+  }
+
+  const finishProcessTurn = async (runtime: TopicRuntime): Promise<void> => {
+    const active = runtime.processActive === true
+    runtime.processActive = false
+    const items = runtime.process
+    runtime.process = []
+    if (!active || items.length === 0 || processMode() === 'off') return
+    await sendProcessSummary(runtime.chatId, runtime.threadId, items)
+  }
+
   const resetStream = (runtime: TopicRuntime): void => {
     void clearStreamReactions(runtime)
     runtime.buffer = ''
@@ -2035,6 +2134,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     runtime.bot = undefined
     runtime.richMode = undefined
     runtime.lastFlushed = undefined
+    runtime.process = []
+    runtime.processActive = false
     if (runtime.flushTimer !== undefined) {
       clearTimeout(runtime.flushTimer)
       runtime.flushTimer = undefined
@@ -2876,6 +2977,152 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
+  // --- session slash bridge ------------------------------------------------
+
+  const hostCommandService = (): HostCommandService | undefined => serviceOf<HostCommandService>(ctx, 'commands')
+  const skillListService = (): SkillListService | undefined => serviceOf<SkillListService>(ctx, 'skills')
+
+  const topicRuntimeFor = async (
+    message: TgMessage,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+    threadId: number,
+  ): Promise<TopicRuntime> => {
+    const existing = sessionFor(bindings, message.chat.id, threadId)
+    const session: SessionBinding = existing ?? {
+      workspaceId,
+      sessionId: String(SessionId(randomUUID())),
+    }
+    if (existing === undefined) {
+      setSession(bindings, message.chat.id, threadId, session)
+      await persist()
+    }
+    return runtimeFor(message, workspace, session)
+  }
+
+  const listUserSkills = async (workspace: WorkspaceBinding): Promise<readonly SkillSummaryView[] | undefined> => {
+    const service = skillListService()
+    if (service === undefined) return undefined
+    try {
+      const skills = await service.list({ cwd: workspace.path })
+      return skills.filter((skill) => skill.invocation?.userInvocable === true)
+    } catch (error) {
+      logger.warn(`dsh-telegram-connector: cannot list skills: ${String(error)}`)
+      return undefined
+    }
+  }
+
+  const skillsText = async (workspace: WorkspaceBinding): Promise<string> => {
+    const skills = await listUserSkills(workspace)
+    if (skills === undefined) return 'the skills service is not available in this runtime.'
+    if (skills.length === 0) return 'no user-invocable skills are installed for this workspace.'
+    const lines = ['**skills**', '']
+    for (const skill of [...skills].sort((left, right) => left.name.localeCompare(right.name))) {
+      const description = skill.description === undefined ? '' : ` — ${truncate(skill.description, 160)}`
+      lines.push(`• \`/${skill.name}\`${description}`)
+    }
+    lines.push('', 'Run `/<name>` to load one into the next turn.')
+    return lines.join('\n')
+  }
+
+  const commandsText = async (runtime: TopicRuntime): Promise<string> => {
+    const service = hostCommandService()
+    if (service === undefined) return 'the commands service is not available in this runtime.'
+    try {
+      const agent = await ensureAgent(runtime)
+      const commands = service.list(agent)
+      if (commands.length === 0) return 'no host commands are registered for this session.'
+      const lines = ['**commands**', '']
+      for (const command of [...commands].sort((left, right) => left.name.localeCompare(right.name))) {
+        const description = command.description === undefined ? '' : ` — ${truncate(command.description, 160)}`
+        const hint = command.input?.hint === undefined ? '' : ` \`${command.input.hint}\``
+        lines.push(`• \`/${command.name}\`${hint}${description}`)
+      }
+      lines.push('', 'Run `/name` in this topic; output stays out of the model history.')
+      return lines.join('\n')
+    } catch (error) {
+      return `⚠️ cannot list commands: ${error instanceof Error ? error.message : String(error)}`
+    }
+  }
+
+  const handleSessionSlash = async (
+    message: TgMessage,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+    threadId: number,
+    text: string,
+  ): Promise<void> => {
+    const parsed = parseSlash(text)
+    if (parsed === undefined) {
+      await reply(message, 'this is a session topic — use `/help` for the connector commands, or `/commands` / `/skills`.')
+      return
+    }
+    const name = parsed.name
+
+    if (/^\/(help|man|start)\b/.test(text)) {
+      const words = text.trim().split(/\s+/)
+      await showHelp(message, words[0] ?? '/help', words.slice(1), 'session')
+      return
+    }
+    if (name === 'commands') {
+      const runtime = await topicRuntimeFor(message, workspaceId, workspace, threadId)
+      await reply(message, await commandsText(runtime))
+      return
+    }
+    if (name === 'skills') {
+      await reply(message, await skillsText(workspace))
+      return
+    }
+    if (isReservedConnectorCommand(name)) {
+      if (name === 'restart' || name === 'confirm' || name === 'rollback' || name === 'update' || name === 'plugin' || name === 'plugins') {
+        await reply(message, 'that one is profile-global — the private chat with the bot has it.')
+        return
+      }
+      await reply(
+        message,
+        `this is a session topic — connector commands live in the system topic. Try \`/commands\` or \`/skills\` here.`,
+      )
+      return
+    }
+
+    // Host commands are executed without a model message. Unknown names fall
+    // through to the skill catalog, so a newly installed `/skill` works without
+    // a connector release.
+    const service = hostCommandService()
+    if (service !== undefined) {
+      const runtime = await topicRuntimeFor(message, workspaceId, workspace, threadId)
+      try {
+        const agent = await ensureAgent(runtime)
+        await finishStream(runtime)
+        const execution = await service.execute(agent, text, [], AbortSignal.timeout(300_000))
+        if (execution !== undefined) {
+          const result = execution.result
+          const body = result.text?.trim() ?? (result.kind === 'success' ? 'done' : 'command failed')
+          await reply(message, `⚡ \`/${name}\`\n\n${result.kind === 'success' ? '✅' : '⚠️'} ${body}`)
+          return
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        await reply(message, `⚠️ \`/${name}\` failed: ${detail}`)
+        return
+      }
+    }
+
+    const skills = await listUserSkills(workspace)
+    const skill = skills?.find((candidate) => candidate.name === name)
+    if (skill !== undefined) {
+      // dsh-tool-skill recognizes the `/name` gesture on the resulting user
+      // message and injects the skill instructions into that step.
+      await handleSession(message, workspaceId, workspace, threadId, text)
+      return
+    }
+
+    await reply(
+      message,
+      `unknown command or skill \`/${name}\`. Try \`/commands\` for host commands or \`/skills\` for user-invocable skills.`,
+    )
+  }
+
   // --- inbound media -------------------------------------------------------
 
   const attachmentStore = (): AttachmentStoreLike | undefined =>
@@ -3279,19 +3526,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (/^\/setsystem\b/.test(text) && sessionFor(bindings, message.chat.id, threadId) === undefined) {
         return handleDashboard(message, workspaceId, workspace)
       }
-      // help is the exception to "plain text only": you must be able to ask
-      // where the commands are from inside a session topic.
-      if (/^\/(help|man|start)\b/.test(text)) {
-        const words = text.trim().split(/\s+/)
-        return showHelp(message, words[0] ?? '/help', words.slice(1), 'session')
-      }
-      if (/^\/(restart|confirm|rollback|update|plugins?)\b/.test(text)) {
-        return reply(message, 'that one is profile-global — the private chat with the bot has it.')
-      }
-      return reply(
-        message,
-        `this is a session topic — commands live in the system topic${systemThread === 0 ? ' (General, until you run /setsystem elsewhere)' : ''}.`,
-      )
+      return handleSessionSlash(message, workspaceId, workspace, threadId, text)
     }
     if (media !== undefined) {
       if (reference !== undefined) {
@@ -3735,12 +3970,229 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     })
   }
 
+  /**
+   * A live process card for a session driven elsewhere (the web UI). Telegram
+   * sessions use the collapsed summary instead; the mirror has no streaming
+   * answer to attach one to, so the card is the progress surface.
+   */
+  interface MirrorProcess {
+    sessionId: string
+    chatId: number
+    threadId: number
+    items: ProcessItem[]
+    messageId?: number
+    rich: boolean
+    turnActive: boolean
+    turnStarted: boolean
+    timer?: NodeJS.Timeout
+    chain: Promise<void>
+  }
+  const mirrorProcesses = new Map<string, MirrorProcess>()
+
+  const mirrorProcessFor = (sessionId: string): MirrorProcess | undefined => {
+    if (processMode() === 'off') return undefined
+    const found = bindingForSession(sessionId)
+    if (found === undefined) return undefined
+    const claimed = (): boolean => [...runtimes.values()]
+      .some((candidate) => candidate.chatId === found.chatId && candidate.threadId === found.threadId)
+    if (claimed()) {
+      const existing = mirrorProcesses.get(sessionId)
+      if (existing !== undefined && existing.timer !== undefined) clearTimeout(existing.timer)
+      mirrorProcesses.delete(sessionId)
+      return undefined
+    }
+    let state = mirrorProcesses.get(sessionId)
+    if (state === undefined) {
+      state = {
+        sessionId,
+        chatId: found.chatId,
+        threadId: found.threadId,
+        items: [],
+        rich: true,
+        turnActive: false,
+        turnStarted: false,
+        chain: Promise.resolve(),
+      }
+      mirrorProcesses.set(sessionId, state)
+    }
+    return state
+  }
+
+  const updateMirrorProcess = (state: MirrorProcess): Promise<void> => {
+    state.chain = state.chain
+      .then(async () => {
+        if (state.items.length === 0) return
+        const rich = state.turnActive ? formatLiveProcess(state.items) : formatProcessSummary(state.items)
+        const plain = state.turnActive ? formatLiveProcess(state.items) : formatProcessSummaryText(state.items)
+        if (state.messageId === undefined) {
+          await botPool.takeMain(state.chatId)
+          try {
+            const sent = await botPool.main.client.sendRichMessage(state.chatId, rich, { threadId: state.threadId })
+            state.messageId = sent.message_id
+            state.rich = true
+          } catch (error) {
+            if (!isRichRejected(error)) throw error
+            const sent = await botPool.main.client.sendMessage(state.chatId, toTelegramHtml(plain), {
+              threadId: state.threadId,
+              parseMode: 'HTML',
+            })
+            state.messageId = sent.message_id
+            state.rich = false
+          }
+          return
+        }
+        await botPool.waitEdit(botPool.main, state.chatId)
+        if (state.rich) {
+          try {
+            await botPool.main.client.editRichMessageText(state.chatId, state.messageId, rich)
+            return
+          } catch (error) {
+            if (!isRichRejected(error)) throw error
+            state.rich = false
+          }
+        }
+        try {
+          await botPool.main.client.editMessageText(state.chatId, state.messageId, toTelegramHtml(plain), { parseMode: 'HTML' })
+        } catch (error) {
+          if (error instanceof TelegramApiError && error.errorCode === 400) {
+            await botPool.main.client.editMessageText(state.chatId, state.messageId, plain)
+            return
+          }
+          throw error
+        }
+      })
+      .catch((error: unknown) => {
+        logger.warn(`dsh-telegram-connector: process card failed: ${String(error)}`)
+      })
+    return state.chain
+  }
+
+  const scheduleMirrorProcess = (state: MirrorProcess): void => {
+    if (state.timer !== undefined) return
+    state.timer = setTimeout(() => {
+      state.timer = undefined
+      void updateMirrorProcess(state)
+    }, editIntervalMs)
+  }
+
+  const recordMirrorProcess = (sessionId: string, item: ProcessItem): void => {
+    const state = mirrorProcessFor(sessionId)
+    if (state === undefined) return
+    if (state.turnActive !== true) {
+      state.turnActive = true
+      state.turnStarted = false
+      state.items = []
+    }
+    const index = state.items.findIndex((candidate) => candidate.id === item.id)
+    if (index === -1) state.items.push(item)
+    else state.items[index] = item
+    scheduleMirrorProcess(state)
+  }
+
+  const completeMirrorProcess = (
+    sessionId: string,
+    id: string,
+    status: 'done' | 'error',
+    detail?: string,
+  ): void => {
+    const state = mirrorProcesses.get(sessionId)
+    if (state === undefined) return
+    const index = state.items.findIndex((candidate) => candidate.id === id)
+    if (index === -1) return
+    const current = state.items[index]
+    if (current === undefined) return
+    state.items[index] = { ...current, status, ...(detail === undefined ? {} : { detail }) }
+    scheduleMirrorProcess(state)
+  }
+
+  const startMirrorTurn = (sessionId: string): void => {
+    const state = mirrorProcessFor(sessionId)
+    if (state === undefined) return
+    state.turnActive = true
+    state.turnStarted = true
+    state.items = []
+  }
+
+  const finishMirrorTurn = async (sessionId: string): Promise<void> => {
+    const state = mirrorProcesses.get(sessionId)
+    if (state === undefined) return
+    if (state.timer !== undefined) {
+      clearTimeout(state.timer)
+      state.timer = undefined
+    }
+    state.turnActive = false
+    if (state.items.length > 0) await updateMirrorProcess(state)
+    mirrorProcesses.delete(sessionId)
+  }
+
   ctx.on('session/event', (session, event: SessionEvent) => {
     const owner = [...runtimes.values()].find((candidate) => candidate.agent?.session === session)
     if (owner === undefined) {
       const sessionId = String((session as { id?: unknown }).id ?? '')
       if (sessionId.length === 0) return
+      const eventType = (event as { type: string }).type
+      if (eventType === 'turn/start') {
+        startMirrorTurn(sessionId)
+        return
+      }
+      if (eventType === 'turn/end') {
+        void finishMirrorTurn(sessionId)
+        return
+      }
+      if (event.type === 'tool/call') {
+        recordMirrorProcess(sessionId, {
+          id: `tool:${String(event.data.callId)}`,
+          kind: 'tool',
+          label: toolLabel(event.data.name, event.data.arguments),
+          status: 'running',
+        })
+        return
+      }
+      if (event.type === 'tool/result') {
+        const reason = event.data.error?.reason
+        completeMirrorProcess(
+          sessionId,
+          `tool:${String(event.data.message.toolCallId)}`,
+          event.data.message.isError === true ? 'error' : 'done',
+          reason === undefined ? undefined : redactPreview(reason),
+        )
+        return
+      }
+      if (eventType === 'command/run') {
+        const data = (event as unknown as { data: { commandId?: unknown; name?: unknown; args?: unknown } }).data
+        if (typeof data.name === 'string') {
+          recordMirrorProcess(sessionId, {
+            id: `command:${String(data.commandId)}`,
+            kind: 'command',
+            label: commandLabel(data.name, typeof data.args === 'string' ? data.args : undefined),
+            status: 'running',
+          })
+        }
+        return
+      }
+      if (eventType === 'command/done') {
+        const data = (event as unknown as { data: { commandId?: unknown; kind?: string; text?: unknown } }).data
+        completeMirrorProcess(
+          sessionId,
+          `command:${String(data.commandId)}`,
+          data.kind === 'success' ? 'done' : 'error',
+          data.kind === 'success' ? undefined : redactPreview(typeof data.text === 'string' ? data.text : 'command failed'),
+        )
+        const state = mirrorProcesses.get(sessionId)
+        if (state !== undefined && state.turnStarted !== true) void finishMirrorTurn(sessionId)
+        return
+      }
       if (event.type === 'user/message') {
+        const source = (event.data as { source?: { kind?: string; name?: string } }).source
+        if (source?.kind === 'skill-invocation' && typeof source.name === 'string') {
+          recordMirrorProcess(sessionId, {
+            id: `skill:${source.name}:${String((event as { seq?: unknown }).seq ?? Date.now())}`,
+            kind: 'skill',
+            label: skillLabel(source.name),
+            status: 'done',
+          })
+          return
+        }
         const pending = injected.get(sessionId)
         if (pending !== undefined) {
           injected.delete(sessionId)
@@ -3762,6 +4214,65 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     // attach may fail right after create if the session header is not persisted
     // yet; by the end of the first turn it certainly is
     if (event.type !== 'assistant/message') {
+      const eventType = (event as { type: string }).type
+      if (eventType === 'turn/start') {
+        beginProcessTurn(owner)
+        return
+      }
+      if (event.type === 'tool/call') {
+        recordProcessItem(owner, {
+          id: `tool:${String(event.data.callId)}`,
+          kind: 'tool',
+          label: toolLabel(event.data.name, event.data.arguments),
+          status: 'running',
+        })
+        return
+      }
+      if (event.type === 'tool/result') {
+        const callId = String(event.data.message.toolCallId)
+        const reason = event.data.error?.reason
+        completeProcessItem(
+          owner,
+          `tool:${callId}`,
+          event.data.message.isError === true ? 'error' : 'done',
+          reason === undefined ? undefined : redactPreview(reason),
+        )
+        return
+      }
+      if (eventType === 'command/run') {
+        const data = (event as unknown as { data: { commandId?: unknown; name?: unknown; args?: unknown } }).data
+        if (typeof data.name === 'string') {
+          recordProcessItem(owner, {
+            id: `command:${String(data.commandId)}`,
+            kind: 'command',
+            label: commandLabel(data.name, typeof data.args === 'string' ? data.args : undefined),
+            status: 'running',
+          })
+        }
+        return
+      }
+      if (eventType === 'command/done') {
+        const data = (event as unknown as { data: { commandId?: unknown; kind?: string; text?: unknown } }).data
+        completeProcessItem(
+          owner,
+          `command:${String(data.commandId)}`,
+          data.kind === 'success' ? 'done' : 'error',
+          data.kind === 'success' ? undefined : redactPreview(typeof data.text === 'string' ? data.text : 'command failed'),
+        )
+        return
+      }
+      if (event.type === 'user/message') {
+        const source = (event.data as { source?: { kind?: string; name?: string } }).source
+        if (source?.kind === 'skill-invocation' && typeof source.name === 'string') {
+          recordProcessItem(owner, {
+            id: `skill:${source.name}:${String((event as { seq?: unknown }).seq ?? Date.now())}`,
+            kind: 'skill',
+            label: skillLabel(source.name),
+            status: 'done',
+          })
+        }
+        return
+      }
       if ((event as { type: string }).type === 'turn/end') {
         const text = owner.buffer.trim()
         if (text.length > 0) {
@@ -3778,8 +4289,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             .catch((error: unknown) => stderr(`bridge: cannot record turn: ${String(error)}`))
         }
         // The final assistant chunk may still be waiting for the edit timer.
-        // Flush it and only then retire the streaming reaction.
-        void finishStream(owner)
+        // Flush it and only then retire the streaming reaction and summarize.
+        void (async () => {
+          await finishStream(owner)
+          await finishProcessTurn(owner)
+        })()
       }
       if ((event as { type: string }).type !== 'turn/end' || owner.attached === true) return
       const registry = registryOf(ctx)
@@ -3805,8 +4319,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   ctx.on('agent/error', (payload: { agent: Agent; error: unknown }) => {
     const runtime = [...runtimes.values()].find((candidate) => candidate.agent === payload.agent)
     if (runtime === undefined) return
-    void finishStream(runtime)
     const message = payload.error instanceof Error ? payload.error.message : String(payload.error)
+    if (runtime.processActive === true) {
+      runtime.process = runtime.process.map((item) => item.status === 'running'
+        ? { ...item, status: 'error' as const, detail: redactPreview(message) }
+        : item)
+    }
+    void (async () => {
+      await finishStream(runtime)
+      await finishProcessTurn(runtime)
+    })()
     void sendTo(runtime.chatId, runtime.threadId, `⚠️ Agent error: ${message}`)
   })
 

@@ -6,9 +6,9 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.2-0.1.18 | `0.2.1-rc.2` | tested | rich-text skill loads again; tables render as a monospaced block or bullets on every client; the setup repo ships `v0.2.1-rc.2-0.1.18` |
-| 0.2.1-rc.2-0.1.17 | `0.2.1-rc.2` | previous | forwarded messages as context turns + forward origin in reply references |
-| 0.2.1-rc.2-0.1.18 | `>=0.1.0-rc.6 <0.3.0-0` | declared peer range | outside the tested version, expect drift |
+| 0.2.1-rc.2-0.1.19 | `0.2.1-rc.2` | tested | process summaries/live cards + live host-command and skill bridge; the setup repo ships `v0.2.1-rc.2-0.1.19` |
+| 0.2.1-rc.2-0.1.18 | `0.2.1-rc.2` | previous | client-safe tables and the fixed rich-text skill |
+| 0.2.1-rc.2-0.1.19 | `>=0.1.0-rc.6 <0.3.0-0` | declared peer range | outside the tested version, expect drift |
 
 `/about` in the bot chat prints the connector version, the detected runtime
 version and the declared peer range.
@@ -24,7 +24,7 @@ purpose.
 ## Version line
 
 Connector versions are `<dsh-version>-<major>.<minor>.<patch>`, for example
-`0.2.1-rc.2-0.1.17`, and match the setup repo tag. The product part starts at
+`0.2.1-rc.2-0.1.19`, and match the setup repo tag. The product part starts at
 `0.0.0` for each new DSH alignment; `0.x` is the compatible line and a new major
 (`1.0.0`) marks an incompatible change. Same-major updates may jump between
 releases; crossing a major or a DSH line needs the explicit

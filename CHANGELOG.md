@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.19
+
+- Tool calls, host commands and skill loads become short safe process rows.
+  Telegram sessions append one collapsed `<details>` summary per turn
+  (`processMode: summary`); web-UI-driven sessions get a live process card.
+  Raw tool output is never mirrored; command/path/query previews are redacted and
+  truncated, and credentials are masked.
+- Session topics now bridge host commands dynamically with
+  `ctx.commands.list()` / `ctx.commands.execute()`; no allowlist means a command
+  from a newly installed plugin works without a connector release. The command
+  result is posted without creating a model message.
+- `/commands` lists host commands, `/skills` lists user-invocable skills, and
+  `/<name>` loads a skill through the `dsh-tool-skill` gesture. Both lists are
+  read live from the session, so new skills also work without a connector
+  release.
+- Connector commands keep precedence over host commands on a name collision.
+
 ## 0.2.1-rc.2-0.1.18
 
 - Fix the `telegram-rich-text` skill never loading: the registration omitted the

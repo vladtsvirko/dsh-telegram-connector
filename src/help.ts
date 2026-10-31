@@ -40,7 +40,7 @@ const SURFACE_NOTE: Record<Surface, string> = {
   dashboard:
     'This topic owns this group\'s workspace. Plugin, restart, update and timezone commands live in the bot chat.',
   session:
-    'This topic is one session — plain text is a turn. Commands live in the system topic; `/help` and `/man` work here too.',
+    'This topic is one session — plain text is a turn. `/commands` lists host slash commands and `/skills` lists user-invocable skills; `/name` loads one. `/help` and `/man` work here too.',
 }
 
 const COMMANDS: CommandDoc[] = [
@@ -61,6 +61,26 @@ const COMMANDS: CommandDoc[] = [
     summary: 'the full manual, with semantics and examples',
     details: 'Same as `/help` but includes every detail, caveat and example.',
     surfaces: ['control', 'dashboard', 'session'],
+    group: 'start',
+  },
+  {
+    path: 'commands',
+    usage: '/commands',
+    summary: 'list the host slash commands available in this session',
+    details:
+      'Host commands run against the session without creating a model message. The list is read live, so a plugin that registers a command appears without a connector update.',
+    examples: ['/commands'],
+    surfaces: ['session'],
+    group: 'start',
+  },
+  {
+    path: 'skills',
+    usage: '/skills',
+    summary: 'list user-invocable skills and how to load them',
+    details:
+      'Run `/<name>` to load a user-invocable skill; the skill instructions are injected into that turn. The list is read live from the workspace skill catalog.',
+    examples: ['/skills', '/telegram-rich-text'],
+    surfaces: ['session'],
     group: 'start',
   },
   {

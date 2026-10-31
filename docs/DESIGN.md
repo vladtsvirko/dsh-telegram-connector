@@ -259,6 +259,17 @@ update → allowlist → private? control
   `Forwarded from …` block. Forwarded rich messages are read from
   `rich_message.blocks`; forwarded media is re-downloaded and attached. A reply
   to a forwarded message adds its origin to the reference block.
+- Process rows: `tool/call`, `tool/result`, `command/run`, `command/done` and
+  `skill-invocation` become short safe rows. Telegram sessions append one
+  collapsed `<details>` summary at turn end (`processMode: summary`) without
+  raw results; web-UI sessions get a live card because there is no streamed
+  answer to attach a summary to.
+- Slash bridge in a session topic: connector commands keep precedence; host
+  commands are read live from `ctx.commands.list()` and executed with
+  `ctx.commands.execute()` without a model message; user-invocable skills are
+  read live from `ctx.skills.list()` and `/<name>` is passed to the agent for
+  the `dsh-tool-skill` gesture. `/commands` and `/skills` are the discovery
+  commands.
 - `agent/error` is reported in the same topic.
 - Conversations driven from the web UI are mirrored one-way into the bound
   topic while the connector is not driving that topic.

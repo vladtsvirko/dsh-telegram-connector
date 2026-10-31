@@ -19,10 +19,12 @@ describe('help registry', () => {
     expect(index).not.toContain('/plugin add')
   })
 
-  it('gives a session topic only help and man', () => {
+  it('gives a session topic help, man, commands and skills', () => {
     const index = indexText('session')
     expect(index).toContain('/help')
     expect(index).toContain('/man')
+    expect(index).toContain('/commands')
+    expect(index).toContain('/skills')
     expect(index).not.toContain('`/sync` — ')
     expect(index).not.toContain('/system')
   })
