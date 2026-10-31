@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatReference, mediaReplyPrompt, referenceOf, referencePrompt, type ReplyReference } from '../src/reference.js'
+import { formatReference, mediaReplyPrompt, referenceOf, referencePrompt, richMessageText, type ReplyReference } from '../src/reference.js'
 import type { MediaDescriptor } from '../src/media.js'
 import type { TgMessage } from '../src/telegram.js'
 
@@ -60,6 +60,37 @@ describe('referenceOf', () => {
 
   it('returns undefined for a plain message', () => {
     expect(referenceOf(message({ text: 'hello' }))).toBeUndefined()
+  })
+
+  it('extracts text from a rich-message reply', () => {
+    const reference = referenceOf(message({
+      reply_to_message: {
+        message_id: 10,
+        chat: { id: -100, type: 'supergroup' },
+        rich_message: {
+          blocks: [
+            { type: 'section_heading', text: { type: 'bold', text: 'Reference anchor' } },
+            { type: 'paragraph', text: 'The quick brown fox jumps over the lazy dog.' },
+            { type: 'table', cells: [[{ text: 'REF-2026-10-31-A' }]] },
+          ],
+        },
+      },
+    }))
+    expect(reference?.text).toContain('Reference anchor')
+    expect(reference?.text).toContain('quick brown fox')
+    expect(reference?.text).toContain('REF-2026-10-31-A')
+  })
+})
+
+describe('richMessageText', () => {
+  it('flattens nested rich text and skips layout metadata', () => {
+    const text = richMessageText({
+      blocks: [
+        { type: 'paragraph', align: 'left', text: { type: 'bold', text: 'bold' } },
+        { type: 'table', is_bordered: true, cells: [[{ text: 'cell' }]] },
+      ],
+    })
+    expect(text).toBe('bold cell')
   })
 })
 

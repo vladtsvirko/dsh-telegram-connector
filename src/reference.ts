@@ -26,12 +26,47 @@ export interface ReplyReference {
   media: MediaDescriptor[]
 }
 
+const SKIP_RICH_KEYS = new Set(['type', 'url', 'href', 'align', 'valign', 'is_header', 'is_bordered', 'is_striped', 'is_compact', 'is_rtl'])
+
+function collectRichText(value: unknown, out: string[]): void {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.length > 0) out.push(trimmed)
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectRichText(item, out)
+    return
+  }
+  if (value === null || typeof value !== 'object') return
+  const record = value as Record<string, unknown>
+  if (typeof record.text === 'string') {
+    const trimmed = record.text.trim()
+    if (trimmed.length > 0) out.push(trimmed)
+    return
+  }
+  for (const [key, child] of Object.entries(record)) {
+    if (SKIP_RICH_KEYS.has(key)) continue
+    collectRichText(child, out)
+  }
+}
+
+/** Flatten a rich message's blocks into a plain-text quote. */
+export function richMessageText(rich: { blocks?: unknown[] } | undefined): string {
+  if (rich?.blocks === undefined) return ''
+  const parts: string[] = []
+  collectRichText(rich.blocks, parts)
+  return parts.join(' ').replace(/\s+/g, ' ').trim()
+}
+
 /** Extract the referenced message text/media from a same-chat or external reply. */
 export function referenceOf(message: TgMessage): ReplyReference | undefined {
   const replied = message.reply_to_message
   if (replied !== undefined) {
     const media = mediaDescriptor(replied)
-    const text = replied.text ?? replied.caption ?? message.quote?.text ?? ''
+    const rich = richMessageText(replied.rich_message)
+    const text = [replied.text, replied.caption, rich, message.quote?.text]
+      .find((value) => value !== undefined && value.trim().length > 0) ?? ''
     if (text.trim().length === 0 && media === undefined) return undefined
     return { kind: 'same-chat', text, media: media === undefined ? [] : [media] }
   }

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.16
+
+- Reply references now read `rich_message.blocks` as well as `text`/`caption`/
+  `quote`. A reply to a message the connector sent as a rich message (for
+  example the anchor test message) used to look like a plain prompt because
+  Telegram puts the content in `rich_message`, not `text`.
+- The rich-block extractor flattens headings, paragraphs, tables and nested
+  inline text, skips layout metadata, and still truncates the quote to ~800
+  characters.
+
 ## 0.2.1-rc.2-0.1.15
 
 - Replying to an earlier message now adds it to the prompt as quoted reference

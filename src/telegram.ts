@@ -128,6 +128,8 @@ export interface TgMessage {
   chat: TgChat
   from?: TgUser
   text?: string
+  /** Present instead of `text` for messages sent with sendRichMessage. */
+  rich_message?: { blocks?: unknown[] }
   /** Caption on a photo/document/video/audio/animation message. */
   caption?: string
   /** Album identifier shared by the several updates of one media group. */
