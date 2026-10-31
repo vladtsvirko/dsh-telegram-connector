@@ -2145,6 +2145,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (items.length === 0) return
     const options = heading === undefined ? {} : { heading }
     try {
+      if (botPool.isBlocked(botPool.main, chatId)) {
+        await sendTo(chatId, threadId, formatProcessSummaryText(items, options))
+        return
+      }
       await botPool.takeMain(chatId)
       await botPool.main.client.sendRichMessage(chatId, formatProcessSummary(items, options), { threadId })
     } catch (error) {
@@ -2178,6 +2182,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     markdown: string,
     plain: string,
   ): Promise<void> => {
+    if (botPool.isBlocked(botPool.main, state.chatId)) {
+      throw new Error('the main bot is rate-limited in this chat')
+    }
     await botPool.takeMain(state.chatId)
     try {
       const sent = await botPool.main.client.sendRichMessage(state.chatId, markdown, { threadId: state.threadId })
@@ -2279,6 +2286,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     for (const [sessionId, ref] of entries) {
       let closed = false
       try {
+        if (botPool.isBlocked(botPool.main, ref.chatId)) {
+          logger.warn(`dsh-telegram-connector: process card ${sessionId} left open; the main bot is rate-limited in that chat`)
+          continue
+        }
         await botPool.takeMain(ref.chatId)
         await botPool.waitEdit(botPool.main, ref.chatId)
         if (ref.rich) {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1-rc.2-0.3.1
+
+- Process cards no longer wait for a rate-limited main bot. A summary falls back
+  to the outbox, live-card creation is skipped instead of blocking the turn, and
+  a stale card is left for the next start rather than delaying shutdown or
+  startup for the 429 block to expire.
+
 ## 0.2.1-rc.2-0.3.0
 
 - `processMode: live` is the new default. One process card is created on the
