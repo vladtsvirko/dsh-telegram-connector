@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.18
+
+- Fix the `telegram-rich-text` skill never loading: the registration omitted the
+  `source` field that the skills registry requires, so loading it failed with
+  `source must be a string`.
+- Send a Markdown table as a fenced monospaced block, or as bullets when it is
+  too wide, instead of leaving the GFM table to the client. Clients that do not
+  render tables showed the raw pipe syntax; a code block and a list work
+  everywhere.
+
 ## 0.2.1-rc.2-0.1.17
 
 - Forwarded messages are now processed as their own context turn with a

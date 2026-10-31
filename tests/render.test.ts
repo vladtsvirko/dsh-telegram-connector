@@ -104,6 +104,35 @@ describe('toRichMarkdown', () => {
   it('normalizes line endings and drops NUL padding', () => {
     expect(toRichMarkdown('a\r\nb\u0000')).toBe('a\nb')
   })
+
+  it('turns a narrow table into a fenced block, never raw pipes', () => {
+    const rich = toRichMarkdown('| Name | State |\n|---|---|\n| api | ok |')
+    expect(rich.startsWith('```\n')).toBe(true)
+    expect(rich.endsWith('\n```')).toBe(true)
+    expect(rich).toContain('api')
+    expect(rich.includes('| api | ok |')).toBe(false)
+  })
+
+  it('turns a wide table into bullets instead of overflowing a phone', () => {
+    const rich = toRichMarkdown([
+      '| Tier | What you get | Trade-off |',
+      '|---|---|---|',
+      '| sandbox | dedicated user, no sudo, systemd hardening | no docker, no apt at all |',
+      '| privileged | same user plus the docker group | root-equivalent by design |',
+    ].join('\n'))
+    expect(rich.includes('```')).toBe(false)
+    expect(rich).toContain('- **sandbox** —')
+    expect(rich.includes('| sandbox |')).toBe(false)
+  })
+
+  it('leaves a table inside a fenced block alone', () => {
+    const source = '```md\n| a | b |\n|---|---|\n| 1 | 2 |\n```'
+    expect(toRichMarkdown(source)).toBe(source)
+  })
+
+  it('leaves prose with a stray pipe alone', () => {
+    expect(toRichMarkdown('a | b is not a table')).toBe('a | b is not a table')
+  })
 })
 
 describe('splitMessage', () => {

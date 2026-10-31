@@ -6,9 +6,9 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.2-0.1.17 | `0.2.1-rc.2` | tested | aligned release; forwarded messages as context turns + forward origin in reply references; the setup repo ships `v0.2.1-rc.2-0.1.17` |
-| 0.2.1-rc.2-0.1.16 | `0.2.1-rc.2` | previous | reply references read rich-message blocks; use 0.1.17 for forwarded messages |
-| 0.2.1-rc.2-0.1.17 | `>=0.1.0-rc.6 <0.3.0-0` | declared peer range | outside the tested version, expect drift |
+| 0.2.1-rc.2-0.1.18 | `0.2.1-rc.2` | tested | rich-text skill loads again; tables render as a monospaced block or bullets on every client; the setup repo ships `v0.2.1-rc.2-0.1.18` |
+| 0.2.1-rc.2-0.1.17 | `0.2.1-rc.2` | previous | forwarded messages as context turns + forward origin in reply references |
+| 0.2.1-rc.2-0.1.18 | `>=0.1.0-rc.6 <0.3.0-0` | declared peer range | outside the tested version, expect drift |
 
 `/about` in the bot chat prints the connector version, the detected runtime
 version and the declared peer range.

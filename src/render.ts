@@ -23,9 +23,15 @@ export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-/** Rich messages are parsed by Telegram; only line endings need normalizing. */
+/**
+ * Rich messages are parsed by Telegram, but not every client renders a GFM
+ * table — a client that cannot shows the raw pipes. Tables are therefore sent
+ * as a fenced monospaced block, or as a bullet list when they do not fit a
+ * phone; everything else passes through untouched.
+ */
 export function toRichMarkdown(markdown: string): string {
-  return markdown.replace(/\r\n?/g, '\n').replace(/\u0000/g, '')
+  const text = markdown.replace(/\r\n?/g, '\n').replace(/\u0000/g, '')
+  return hasTable(text) ? renderRichTables(text) : text
 }
 
 type Mode = 'html' | 'plain'
@@ -84,7 +90,7 @@ export function toPlainText(markdown: string): string {
 
 /** True when the text contains a Markdown table that plain HTML cannot express. */
 export function hasTable(markdown: string): boolean {
-  const lines = toRichMarkdown(markdown).split('\n')
+  const lines = markdown.replace(/\r\n?/g, '\n').split('\n')
   let inFence = false
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? ''
@@ -322,8 +328,19 @@ function stripInline(text: string): string {
 }
 
 function renderTable(table: Table, mode: Mode): string {
+  const grid = tableGrid(table)
+  if (grid === undefined) return renderTableAsList(table, mode)
+  return mode === 'html' ? `<pre>${escapeHtml(grid)}</pre>` : grid
+}
+
+/**
+ * The aligned monospace grid for a table, or `undefined` when it would not fit
+ * a phone. Shared by the HTML fallback and the rich-message path so both make
+ * the same width decision.
+ */
+function tableGrid(table: Table): string | undefined {
   const columns = table.header.length
-  if (columns === 0) return ''
+  if (columns === 0) return undefined
 
   const plainCells = table.rows.map((row) => row.map((cell) => stripInline(cell)))
   const widths = table.header.map((cell, column) => {
@@ -332,7 +349,7 @@ function renderTable(table: Table, mode: Mode): string {
   })
   const totalWidth = widths.reduce((sum, width) => sum + width, 0) + Math.max(0, columns - 1) * 3
 
-  if (columns > 6 || totalWidth > 48) return renderTableAsList(table, mode)
+  if (columns > 6 || totalWidth > 48) return undefined
 
   const headerLine = table.header
     .map((cell, column) => padCell(stripInline(cell), widths[column] ?? 3, table.aligns[column] ?? 'left'))
@@ -343,9 +360,67 @@ function renderTable(table: Table, mode: Mode): string {
     .join(' | '))
   const aligned = [headerLine, rule, ...body].join('\n')
   // Padding can make a table larger than the Markdown source; the list fallback
-  // is safer than a `<pre>` that no longer fits a Telegram message.
-  if (aligned.length > 3400) return renderTableAsList(table, mode)
-  return mode === 'html' ? `<pre>${escapeHtml(aligned)}</pre>` : aligned
+  // is safer than a block that no longer fits a Telegram message.
+  if (aligned.length > 3400) return undefined
+  return aligned
+}
+
+/**
+ * A table as rich Markdown: a fenced monospaced block when it fits, otherwise
+ * one bullet per row. Telegram clients do not all render GFM tables, and a
+ * client that cannot shows the raw pipes; a code block and a list are safe
+ * everywhere.
+ */
+function renderRichTable(table: Table): string {
+  const grid = tableGrid(table)
+  if (grid !== undefined) return ['```', ...grid.split('\n'), '```'].join('\n')
+  return renderRichTableAsList(table)
+}
+
+/** A wide table as rich bullets, keeping the cell Markdown the author wrote. */
+function renderRichTableAsList(table: Table): string {
+  return table.rows.map((row) => {
+    const first = (row[0] ?? '').trim().replace(/^\*\*(.+)\*\*$/, '$1')
+    const rest = row.slice(1)
+      .map((cell, index) => {
+        const value = (cell ?? '').trim()
+        if (value.length === 0) return ''
+        const label = (table.header[index + 1] ?? '').trim()
+        return label.length > 0 ? `**${label}**: ${value}` : value
+      })
+      .filter((part) => part.length > 0)
+    return rest.length > 0 ? `- **${first}** — ${rest.join(' · ')}` : `- **${first}**`
+  }).join('\n')
+}
+
+/** Replace every Markdown table outside fenced code with its rich-safe form. */
+function renderRichTables(markdown: string): string {
+  const lines = markdown.split('\n')
+  const out: string[] = []
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index] ?? ''
+
+    if (isFenceStart(line)) {
+      const fence = readFence(lines, index)
+      out.push(...lines.slice(index, fence.next))
+      index = fence.next
+      continue
+    }
+
+    const table = readTable(lines, index)
+    if (table !== undefined) {
+      out.push(renderRichTable(table.table))
+      index = table.next
+      continue
+    }
+
+    out.push(line)
+    index += 1
+  }
+
+  return out.join('\n')
 }
 
 function renderTableAsList(table: Table, mode: Mode): string {

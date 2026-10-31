@@ -33,6 +33,7 @@ The Telegram connector sends agent replies as **rich messages** (`rich_message.m
 ## Rules
 
 - Keep tables narrow: **2–4 columns** reads best on a phone; 20 is the hard limit.
+- **Keep cells to a few words.** The connector sends a table as a monospaced block, or as bullets when it is too wide, because not every Telegram client renders GFM tables; long cells force the bullet form, so put explanation in bullets under the table.
 - Table cells accept **inline formatting only** — no lists or block content inside a cell.
 - Never wrap the whole answer in a code fence.
 - Do not use MarkdownV2 escaping; write normal Markdown.

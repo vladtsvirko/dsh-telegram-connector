@@ -30,6 +30,8 @@ export interface SkillRegistration {
   description: string
   whenToUse?: string
   content: string
+  /** Discovery source bucket; the registry rejects a registration without it. */
+  source: string
   invocation?: { modelInvocable: boolean; userInvocable: boolean }
 }
 
@@ -76,6 +78,7 @@ export function telegramSkill(): SkillRegistration | undefined {
     description: 'Format replies as Telegram rich Markdown — headings, tables, lists, details, math, footnotes, tg-time, spoilers and safe fallbacks.',
     whenToUse: 'Use when the user is reading through the Telegram connector, or when a reply benefits from structured rich Markdown (tables, headings, details, math, timestamps).',
     content,
+    source: 'runtime',
     invocation: { modelInvocable: true, userInvocable: true },
   }
 }
