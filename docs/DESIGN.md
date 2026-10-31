@@ -260,16 +260,23 @@ update → allowlist → private? control
   `rich_message.blocks`; forwarded media is re-downloaded and attached. A reply
   to a forwarded message adds its origin to the reference block.
 - Process rows: `tool/call`, `tool/result`, `command/run`, `command/done` and
-  `skill-invocation` become short safe rows. Telegram sessions append one
-  collapsed `<details>` summary at turn end (`processMode: summary`) without
-  raw results; web-UI sessions get a live card because there is no streamed
-  answer to attach a summary to.
-- Slash bridge in a session topic: connector commands keep precedence; host
-  commands are read live from `ctx.commands.list()` and executed with
-  `ctx.commands.execute()` without a model message; user-invocable skills are
-  read live from `ctx.skills.list()` and `/<name>` is passed to the agent for
-  the `dsh-tool-skill` gesture. `/commands` and `/skills` are the discovery
-  commands.
+  `skill-invocation` become short safe rows. `processMode: live` (default)
+  creates one card on the first row, edits it during the turn, then turns the
+  same message into a collapsed `<details>` summary. `summary` sends only the
+  collapsed summary after the turn; `off` hides rows. Web-UI sessions follow the
+  same mode. Live cards live in memory and their message refs are persisted in
+  bindings, so a restart or graceful stop can close stale cards. A 30-minute
+  inactivity sweep closes an orphaned card. Raw results are never mirrored.
+- Slash bridge in a session topic: only the first non-whitespace `/` starts a
+  command; later slashes are literal. A `@bot` suffix is stripped and a command
+  addressed to another known bot is ignored. `//text` is a leading-only escape.
+  Connector commands keep precedence; host commands are read live from
+  `ctx.commands.list()` and executed with `ctx.commands.execute()` without a
+  model message; user-invocable skills are read live from `ctx.skills.list()` and
+  `/<name>` is passed to the agent for the `dsh-tool-skill` gesture. `/run` and
+  `/skill` are the collision escape hatches. `/commands` and `/skills` are the
+  discovery commands. Media sent with a skill is attached to that turn; media
+  sent with a command is staged for the next prompt.
 - `agent/error` is reported in the same topic.
 - Conversations driven from the web UI are mirrored one-way into the bound
   topic while the connector is not driving that topic.
@@ -278,7 +285,9 @@ update → allowlist → private? control
 
 Bindings load at startup; agents are created lazily on the next message, so a
 restart costs nothing until someone talks. On shutdown pending edits are
-flushed, agents disposed and bindings written. A lost `bindings.json` is
+flushed, agents disposed and bindings written. Live process-card refs are part
+of bindings: they are added when the card is sent, removed when it is finalised,
+and closed with a warning on the next start. A lost `bindings.json` is
 recoverable: the group link rebinds, and DSH still has the workspaces, sessions
 and directories.
 

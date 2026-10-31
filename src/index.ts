@@ -74,11 +74,17 @@ import {
   formatProcessSummary,
   formatProcessSummaryText,
   redactPreview,
+  redactSecrets,
   skillLabel,
   toolLabel,
   type ProcessItem,
 } from './process.js'
-import { isReservedConnectorCommand, parseSlash } from './slash.js'
+import {
+  isReservedConnectorCommand,
+  normalizeSlashInput,
+  parseSlash,
+  unescapeLeadingSlash,
+} from './slash.js'
 import {
   bindingsPath,
   findWorkspace,
@@ -108,7 +114,7 @@ export const Config = Schema.object({
   editIntervalMs: Schema.number().default(1200),
   pollTimeoutSeconds: Schema.number().default(25),
   reconcileIntervalSeconds: Schema.number().default(60),
-  processMode: Schema.union(['off', 'summary']).default('summary'),
+  processMode: Schema.union(['off', 'summary', 'live']).default('live'),
   agentPreset: Schema.string(),
   reactionsEnabled: Schema.boolean().default(true),
   readReaction: Schema.string().default('👀'),
@@ -125,8 +131,11 @@ export interface ConnectorConfig {
   editIntervalMs?: number
   pollTimeoutSeconds?: number
   reconcileIntervalSeconds?: number
-  /** `off` hides process rows; `summary` appends a collapsed summary per turn. */
-  processMode?: 'off' | 'summary'
+  /**
+   * `off` hides process rows; `summary` sends one collapsed summary per turn;
+   * `live` edits a process card during the turn and finalises it collapsed.
+   */
+  processMode?: 'off' | 'summary' | 'live'
   agentPreset?: string
   reactionsEnabled?: boolean
   readReaction?: string
@@ -267,6 +276,20 @@ interface TopicRuntime {
   process: ProcessItem[]
   /** True between turn/start and turn/end; stray events outside a turn are ignored. */
   processActive?: boolean
+  /** Editable live card for this turn; absent in `summary`/`off` mode. */
+  processCard?: ProcessCardState
+}
+
+/** One editable process message, shared by Telegram turns and Web mirrors. */
+interface ProcessCardState {
+  chatId: number
+  threadId: number
+  sessionId: string
+  messageId?: number
+  rich: boolean
+  timer?: NodeJS.Timeout
+  chain: Promise<void>
+  lastTouched: number
 }
 
 /** One media message waiting for a caption or a following text prompt. */
@@ -477,6 +500,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   /** Albums are several updates; collect them before deciding stage vs prompt. */
   const pendingGroups = new Map<string, PendingMediaGroup>()
   const STAGED_TTL_MS = 15 * 60 * 1000
+  const PROCESS_CARD_TTL_MS = 30 * 60 * 1000
   const MEDIA_GROUP_WINDOW_MS = 1000
   let stagedSweep: NodeJS.Timeout | undefined
 
@@ -573,6 +597,42 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const stopStagedSweep = (): void => {
     if (stagedSweep !== undefined) clearInterval(stagedSweep)
     stagedSweep = undefined
+  }
+
+  let processCardSweep: NodeJS.Timeout | undefined
+  /** Assigned once mirror state is declared, so one sweep covers both surfaces. */
+  let sweepMirrorCards = (): void => undefined
+
+  const sweepProcessCards = (): void => {
+    const now = Date.now()
+    for (const runtime of runtimes.values()) {
+      if (runtime.processActive !== true) continue
+      const card = runtime.processCard
+      if (card === undefined) continue
+      if (now - card.lastTouched < PROCESS_CARD_TTL_MS) continue
+      runtime.processActive = false
+      runtime.process = runtime.process.map((item) => item.status === 'running'
+        ? { ...item, status: 'error' as const, detail: 'timed out' }
+        : item)
+      const items = runtime.process
+      runtime.process = []
+      runtime.processCard = undefined
+      if (card !== undefined) {
+        if (items.length > 0) void finalizeProcessCard(card, items, '⚠️ Process interrupted')
+        else forgetProcessCard(card.sessionId)
+      }
+    }
+    sweepMirrorCards()
+  }
+
+  const startProcessCardSweep = (): void => {
+    if (processCardSweep !== undefined) return
+    processCardSweep = setInterval(sweepProcessCards, 60_000)
+  }
+
+  const stopProcessCardSweep = (): void => {
+    if (processCardSweep !== undefined) clearInterval(processCardSweep)
+    processCardSweep = undefined
   }
 
   // --- outbox, queue status and saturation stats ---------------------------
@@ -2074,26 +2134,206 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await clearStreamReactions(runtime)
   }
 
-  const processMode = (): 'off' | 'summary' => config.processMode ?? 'summary'
+  const processMode = (): 'off' | 'summary' | 'live' => config.processMode ?? 'live'
 
   const sendProcessSummary = async (
     chatId: number,
     threadId: number,
     items: readonly ProcessItem[],
+    heading?: string,
   ): Promise<void> => {
     if (items.length === 0) return
+    const options = heading === undefined ? {} : { heading }
     try {
       await botPool.takeMain(chatId)
-      await botPool.main.client.sendRichMessage(chatId, formatProcessSummary(items), { threadId })
+      await botPool.main.client.sendRichMessage(chatId, formatProcessSummary(items, options), { threadId })
     } catch (error) {
       if (!isRichRejected(error)) logger.warn(`dsh-telegram-connector: process summary failed: ${String(error)}`)
-      await sendTo(chatId, threadId, formatProcessSummaryText(items))
+      await sendTo(chatId, threadId, formatProcessSummaryText(items, options))
     }
   }
 
+  const rememberProcessCard = (state: ProcessCardState): void => {
+    if (state.messageId === undefined) return
+    bindings.processCards = {
+      ...(bindings.processCards ?? {}),
+      [state.sessionId]: {
+        chatId: state.chatId,
+        threadId: state.threadId,
+        messageId: state.messageId,
+        rich: state.rich,
+      },
+    }
+    void persist()
+  }
+
+  const forgetProcessCard = (sessionId: string): void => {
+    if (bindings.processCards?.[sessionId] === undefined) return
+    delete bindings.processCards[sessionId]
+    void persist()
+  }
+
+  const sendProcessCardNow = async (
+    state: ProcessCardState,
+    markdown: string,
+    plain: string,
+  ): Promise<void> => {
+    await botPool.takeMain(state.chatId)
+    try {
+      const sent = await botPool.main.client.sendRichMessage(state.chatId, markdown, { threadId: state.threadId })
+      state.messageId = sent.message_id
+      state.rich = true
+    } catch (error) {
+      if (!isRichRejected(error)) throw error
+      const sent = await botPool.main.client.sendMessage(state.chatId, toTelegramHtml(plain), {
+        threadId: state.threadId,
+        parseMode: 'HTML',
+      })
+      state.messageId = sent.message_id
+      state.rich = false
+    }
+    rememberProcessCard(state)
+  }
+
+  const editProcessCardNow = async (
+    state: ProcessCardState,
+    markdown: string,
+    plain: string,
+  ): Promise<void> => {
+    if (state.messageId === undefined) {
+      await sendProcessCardNow(state, markdown, plain)
+      return
+    }
+    await botPool.waitEdit(botPool.main, state.chatId)
+    if (state.rich) {
+      try {
+        await botPool.main.client.editRichMessageText(state.chatId, state.messageId, markdown)
+        return
+      } catch (error) {
+        if (error instanceof TelegramApiError && isNotModified(error)) return
+        if (!isRichRejected(error)) throw error
+        state.rich = false
+      }
+    }
+    try {
+      await botPool.main.client.editMessageText(state.chatId, state.messageId, toTelegramHtml(plain), {
+        parseMode: 'HTML',
+      })
+    } catch (error) {
+      if (error instanceof TelegramApiError && isNotModified(error)) return
+      if (error instanceof TelegramApiError && error.errorCode === 400) {
+        await botPool.main.client.editMessageText(state.chatId, state.messageId, plain)
+        return
+      }
+      throw error
+    }
+  }
+
+  const updateProcessCard = (
+    state: ProcessCardState,
+    items: readonly ProcessItem[],
+    final: boolean,
+    heading?: string,
+  ): Promise<void> => {
+    if (items.length === 0) return Promise.resolve()
+    state.lastTouched = Date.now()
+    const options = heading === undefined ? {} : { heading }
+    const markdown = final ? formatProcessSummary(items, options) : formatLiveProcess(items)
+    const plain = final ? formatProcessSummaryText(items, options) : formatLiveProcess(items)
+    state.chain = state.chain
+      .then(async () => {
+        state.lastTouched = Date.now()
+        await editProcessCardNow(state, markdown, plain)
+      })
+      .catch((error: unknown) => {
+        logger.warn(`dsh-telegram-connector: process card failed: ${String(error)}`)
+      })
+    return state.chain
+  }
+
+  const scheduleProcessCard = (state: ProcessCardState, items: readonly ProcessItem[]): void => {
+    if (state.timer !== undefined || items.length === 0) return
+    state.timer = setTimeout(() => {
+      state.timer = undefined
+      void updateProcessCard(state, items, false)
+    }, editIntervalMs)
+  }
+
+  const finalizeProcessCard = async (
+    state: ProcessCardState,
+    items: readonly ProcessItem[],
+    heading?: string,
+  ): Promise<void> => {
+    if (state.timer !== undefined) {
+      clearTimeout(state.timer)
+      state.timer = undefined
+    }
+    await updateProcessCard(state, items, true, heading)
+    forgetProcessCard(state.sessionId)
+  }
+
+  /** Close every live card left in bindings, e.g. after a restart or on stop. */
+  const closeAllProcessCards = async (text: string): Promise<void> => {
+    const entries = Object.entries(bindings.processCards ?? {})
+    if (entries.length === 0) return
+    for (const [sessionId, ref] of entries) {
+      let closed = false
+      try {
+        await botPool.takeMain(ref.chatId)
+        await botPool.waitEdit(botPool.main, ref.chatId)
+        if (ref.rich) {
+          try {
+            await botPool.main.client.editRichMessageText(ref.chatId, ref.messageId, text)
+            closed = true
+          } catch (error) {
+            if (!isRichRejected(error) && !(error instanceof TelegramApiError && error.errorCode === 400)) throw error
+          }
+        }
+        if (!closed) {
+          await botPool.main.client.editMessageText(ref.chatId, ref.messageId, text)
+          closed = true
+        }
+      } catch (error) {
+        if (!(error instanceof TelegramApiError && error.errorCode === 400)) {
+          logger.warn(`dsh-telegram-connector: cannot close process card ${sessionId}: ${String(error)}`)
+        } else {
+          closed = true
+        }
+      }
+      if (closed) delete bindings.processCards?.[sessionId]
+    }
+    await persist()
+  }
+
+  const processCardFor = (runtime: TopicRuntime): ProcessCardState => {
+    const existing = runtime.processCard
+    if (existing !== undefined) return existing
+    const created: ProcessCardState = {
+      chatId: runtime.chatId,
+      threadId: runtime.threadId,
+      sessionId: runtime.session.sessionId,
+      rich: true,
+      chain: Promise.resolve(),
+      lastTouched: Date.now(),
+    }
+    runtime.processCard = created
+    return created
+  }
+
   const beginProcessTurn = (runtime: TopicRuntime): void => {
+    const previous = runtime.processCard
+    const previousItems = runtime.process
+    if (previous !== undefined) {
+      if (previous.timer !== undefined) clearTimeout(previous.timer)
+      if (previousItems.length > 0) {
+        void finalizeProcessCard(previous, previousItems, '⚠️ Process interrupted')
+      } else {
+        forgetProcessCard(previous.sessionId)
+      }
+    }
     runtime.process = []
     runtime.processActive = true
+    runtime.processCard = undefined
   }
 
   const recordProcessItem = (runtime: TopicRuntime, item: ProcessItem): void => {
@@ -2101,6 +2341,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const index = runtime.process.findIndex((candidate) => candidate.id === item.id)
     if (index === -1) runtime.process.push(item)
     else runtime.process[index] = item
+    if (processMode() === 'live') scheduleProcessCard(processCardFor(runtime), runtime.process)
   }
 
   const completeProcessItem = (
@@ -2115,19 +2356,46 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const current = runtime.process[index]
     if (current === undefined) return
     runtime.process[index] = { ...current, status, ...(detail === undefined ? {} : { detail }) }
+    if (processMode() === 'live') scheduleProcessCard(processCardFor(runtime), runtime.process)
   }
 
-  const finishProcessTurn = async (runtime: TopicRuntime): Promise<void> => {
+  const finishProcessTurn = async (
+    runtime: TopicRuntime,
+    heading?: string,
+  ): Promise<void> => {
     const active = runtime.processActive === true
     runtime.processActive = false
     const items = runtime.process
+    const card = runtime.processCard
     runtime.process = []
+    runtime.processCard = undefined
     if (!active || items.length === 0 || processMode() === 'off') return
-    await sendProcessSummary(runtime.chatId, runtime.threadId, items)
+    if (processMode() === 'live' && card !== undefined) {
+      await finalizeProcessCard(card, items, heading ?? '✅ Process')
+      return
+    }
+    await sendProcessSummary(runtime.chatId, runtime.threadId, items, heading)
   }
 
   const resetStream = (runtime: TopicRuntime): void => {
     void clearStreamReactions(runtime)
+    const previousCard = runtime.processCard
+    const previousItems = runtime.process
+    if (previousCard !== undefined) {
+      if (previousCard.timer !== undefined) clearTimeout(previousCard.timer)
+      if (previousItems.length > 0) {
+        void finalizeProcessCard(previousCard, previousItems, '⚠️ Process interrupted')
+      } else if (previousCard.messageId !== undefined) {
+        void updateProcessCard(
+          previousCard,
+          [{ id: 'reset', kind: 'tool', label: 'process view closed', status: 'error' }],
+          true,
+          '⚠️ Process interrupted',
+        )
+        forgetProcessCard(previousCard.sessionId)
+      }
+    }
+    runtime.processCard = undefined
     runtime.buffer = ''
     runtime.parts = []
     runtime.partRich = []
@@ -2249,6 +2517,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   const disposeRuntime = async (runtime: TopicRuntime): Promise<void> => {
     if (runtime.flushTimer !== undefined) clearTimeout(runtime.flushTimer)
+    if (runtime.processCard?.timer !== undefined) clearTimeout(runtime.processCard.timer)
+    runtime.processCard = undefined
     await flush(runtime)
     await clearStreamReactions(runtime)
     await runtime.dispose?.()
@@ -2266,8 +2536,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   const clearChatSessions = async (chatId: number): Promise<void> => {
     clearStagedForChat(chatId)
-    for (const [threadId] of sessionsOfChat(bindings, chatId)) {
+    for (const [threadId, bound] of sessionsOfChat(bindings, chatId)) {
       await deleteTopic(chatId, threadId)
+      forgetProcessCard(bound.sessionId)
       removeSession(bindings, chatId, threadId)
       const runtime = runtimes.get(runtimeKey(chatId, threadId))
       if (runtime !== undefined) {
@@ -3021,7 +3292,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const description = skill.description === undefined ? '' : ` — ${truncate(skill.description, 160)}`
       lines.push(`• \`/${skill.name}\`${description}`)
     }
-    lines.push('', 'Run `/<name>` to load one into the next turn.')
+    lines.push('', 'Run `/<name>` to load one into the next turn. `/skill <name>` forces it when a host command owns the name.')
     return lines.join('\n')
   }
 
@@ -3038,89 +3309,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         const hint = command.input?.hint === undefined ? '' : ` \`${command.input.hint}\``
         lines.push(`• \`/${command.name}\`${hint}${description}`)
       }
-      lines.push('', 'Run `/name` in this topic; output stays out of the model history.')
+      lines.push('', 'Run `/name` in this topic; output stays out of the model history. `/run <name>` forces a host command when a connector command owns the name.')
       return lines.join('\n')
     } catch (error) {
       return `⚠️ cannot list commands: ${error instanceof Error ? error.message : String(error)}`
     }
-  }
-
-  const handleSessionSlash = async (
-    message: TgMessage,
-    workspaceId: string,
-    workspace: WorkspaceBinding,
-    threadId: number,
-    text: string,
-  ): Promise<void> => {
-    const parsed = parseSlash(text)
-    if (parsed === undefined) {
-      await reply(message, 'this is a session topic — use `/help` for the connector commands, or `/commands` / `/skills`.')
-      return
-    }
-    const name = parsed.name
-
-    if (/^\/(help|man|start)\b/.test(text)) {
-      const words = text.trim().split(/\s+/)
-      await showHelp(message, words[0] ?? '/help', words.slice(1), 'session')
-      return
-    }
-    if (name === 'commands') {
-      const runtime = await topicRuntimeFor(message, workspaceId, workspace, threadId)
-      await reply(message, await commandsText(runtime))
-      return
-    }
-    if (name === 'skills') {
-      await reply(message, await skillsText(workspace))
-      return
-    }
-    if (isReservedConnectorCommand(name)) {
-      if (name === 'restart' || name === 'confirm' || name === 'rollback' || name === 'update' || name === 'plugin' || name === 'plugins') {
-        await reply(message, 'that one is profile-global — the private chat with the bot has it.')
-        return
-      }
-      await reply(
-        message,
-        `this is a session topic — connector commands live in the system topic. Try \`/commands\` or \`/skills\` here.`,
-      )
-      return
-    }
-
-    // Host commands are executed without a model message. Unknown names fall
-    // through to the skill catalog, so a newly installed `/skill` works without
-    // a connector release.
-    const service = hostCommandService()
-    if (service !== undefined) {
-      const runtime = await topicRuntimeFor(message, workspaceId, workspace, threadId)
-      try {
-        const agent = await ensureAgent(runtime)
-        await finishStream(runtime)
-        const execution = await service.execute(agent, text, [], AbortSignal.timeout(300_000))
-        if (execution !== undefined) {
-          const result = execution.result
-          const body = result.text?.trim() ?? (result.kind === 'success' ? 'done' : 'command failed')
-          await reply(message, `⚡ \`/${name}\`\n\n${result.kind === 'success' ? '✅' : '⚠️'} ${body}`)
-          return
-        }
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
-        await reply(message, `⚠️ \`/${name}\` failed: ${detail}`)
-        return
-      }
-    }
-
-    const skills = await listUserSkills(workspace)
-    const skill = skills?.find((candidate) => candidate.name === name)
-    if (skill !== undefined) {
-      // dsh-tool-skill recognizes the `/name` gesture on the resulting user
-      // message and injects the skill instructions into that step.
-      await handleSession(message, workspaceId, workspace, threadId, text)
-      return
-    }
-
-    await reply(
-      message,
-      `unknown command or skill \`/${name}\`. Try \`/commands\` for host commands or \`/skills\` for user-invocable skills.`,
-    )
   }
 
   // --- inbound media -------------------------------------------------------
@@ -3312,13 +3505,26 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         ...staged,
         ...group.items.map(({ message, media }) => toStaged(message, media)),
       ]
+      const unescaped = unescapeLeadingSlash(captionItem.media.caption.trimStart())
+      if (!unescaped.escaped && unescaped.text.startsWith('/')) {
+        return handleSessionSlash(
+          captionItem.message,
+          workspaceId,
+          workspace,
+          group.threadId,
+          unescaped.text,
+          undefined,
+          referenceOf(captionItem.message),
+          items,
+        )
+      }
       await processMediaPrompt(
         captionItem.message,
         workspaceId,
         workspace,
         group.threadId,
         items,
-        captionItem.media.caption,
+        unescaped.text,
       )
       return
     }
@@ -3371,13 +3577,243 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     addStaged([toStaged(message, media)])
   }
 
+  // --- session slash bridge -----------------------------------------------
+
+  const MEDIA_STAGED_NOTICE = '📎 media staged for the next prompt (commands don\'t take attachments).'
+
+  /** Items a slash gesture owns: already staged + this album/message. */
+  const takeSlashItems = (
+    message: TgMessage,
+    threadId: number,
+    media: MediaDescriptor | undefined,
+    groupItems: readonly StagedMedia[] | undefined,
+    consumeStaged: boolean,
+  ): StagedMedia[] => {
+    const userId = message.from?.id ?? 0
+    const key = stagedKey(message.chat.id, threadId, userId)
+    const pending = groupItems === undefined ? takePendingGroupsFor(message.chat.id, threadId, userId) : []
+    const staged = consumeStaged ? takeStaged(key) : []
+    const current = media === undefined ? [] : [toStaged(message, media)]
+    return [...staged, ...pending, ...(groupItems ?? []), ...current]
+  }
+
+  /** Commands cannot take attachments; keep the media for the next prompt. */
+  const stageSlashMedia = async (
+    message: TgMessage,
+    threadId: number,
+    media: MediaDescriptor | undefined,
+    groupItems: readonly StagedMedia[] | undefined,
+  ): Promise<void> => {
+    const fresh = takeSlashItems(message, threadId, media, groupItems, false)
+    if (fresh.length === 0) return
+    addStaged(fresh)
+    await reply(message, MEDIA_STAGED_NOTICE)
+  }
+
+  const handleSkillSlash = async (
+    message: TgMessage,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+    threadId: number,
+    text: string,
+    media: MediaDescriptor | undefined,
+    reference: ReplyReference | undefined,
+    groupItems: readonly StagedMedia[] | undefined,
+  ): Promise<void> => {
+    const items = takeSlashItems(message, threadId, media, groupItems, true)
+    if (reference !== undefined) {
+      return handleReferenceTurn(
+        message,
+        workspaceId,
+        workspace,
+        threadId,
+        text,
+        reference,
+        items,
+        items.length > 0,
+      )
+    }
+    if (items.length > 0) {
+      return processMediaPrompt(message, workspaceId, workspace, threadId, items, text)
+    }
+    return handleSession(message, workspaceId, workspace, threadId, text)
+  }
+
+  const skillByName = async (
+    name: string,
+    workspace: WorkspaceBinding,
+  ): Promise<SkillSummaryView | undefined> => {
+    const skills = await listUserSkills(workspace)
+    return skills?.find((candidate) => candidate.name === name)
+  }
+
+  const hasHostCommand = async (runtime: TopicRuntime, name: string): Promise<boolean> => {
+    const service = hostCommandService()
+    if (service === undefined) return false
+    try {
+      const agent = await ensureAgent(runtime)
+      return service.list(agent).some((command) => command.name === name)
+    } catch (error) {
+      logger.warn(`dsh-telegram-connector: cannot list commands: ${String(error)}`)
+      return false
+    }
+  }
+
+  const executeHostCommand = async (
+    message: TgMessage,
+    runtime: TopicRuntime,
+    name: string,
+    args: string,
+    label: string,
+    required: boolean,
+  ): Promise<boolean> => {
+    const service = hostCommandService()
+    if (service === undefined) {
+      if (required) await reply(message, 'the host command service is not available in this runtime.')
+      return false
+    }
+    try {
+      const agent = await ensureAgent(runtime)
+      await finishStream(runtime)
+      const line = `/${name}${args.length > 0 ? ` ${args}` : ''}`
+      const execution = await service.execute(agent, line, [], AbortSignal.timeout(300_000))
+      if (execution === undefined) {
+        if (required) await reply(message, `no host command \`/${name}\`. See \`/commands\`.`)
+        return required
+      }
+      const result = execution.result
+      const body = result.text?.trim() ?? (result.kind === 'success' ? 'done' : 'command failed')
+      const safeBody = result.kind === 'success' ? body : redactSecrets(body)
+      await reply(message, `⚡ \`${label}\`\n\n${result.kind === 'success' ? '✅' : '⚠️'} ${safeBody}`)
+      return true
+    } catch (error) {
+      const detail = redactPreview(error instanceof Error ? error.message : String(error))
+      await reply(message, `⚠️ \`${label}\` failed: ${detail}`)
+      return true
+    }
+  }
+
+  const handleSessionSlash = async (
+    message: TgMessage,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+    threadId: number,
+    text: string,
+    media?: MediaDescriptor,
+    reference?: ReplyReference,
+    groupItems?: readonly StagedMedia[],
+  ): Promise<void> => {
+    void markPromptRead(message)
+    const parsed = parseSlash(text)
+    if (parsed === undefined) {
+      await stageSlashMedia(message, threadId, media, groupItems)
+      await reply(
+        message,
+        'that doesn\'t look like a command. Use `//text` to send a message starting with `/`, or `/help` for the session commands.',
+      )
+      return
+    }
+    const name = parsed.name
+
+    if (name === 'help' || name === 'man' || name === 'start') {
+      await stageSlashMedia(message, threadId, media, groupItems)
+      const words = text.trim().split(/\s+/)
+      await showHelp(message, `/${name}`, words.slice(1), 'session')
+      return
+    }
+    if (name === 'commands') {
+      await stageSlashMedia(message, threadId, media, groupItems)
+      const runtime = await topicRuntimeFor(message, workspaceId, workspace, threadId)
+      await reply(message, await commandsText(runtime))
+      return
+    }
+    if (name === 'skills') {
+      await stageSlashMedia(message, threadId, media, groupItems)
+      await reply(message, await skillsText(workspace))
+      return
+    }
+    if (name === 'run') {
+      const [command, ...tail] = parsed.args.split(/\s+/).filter((part) => part.length > 0)
+      if (command === undefined) {
+        await stageSlashMedia(message, threadId, media, groupItems)
+        await reply(message, 'usage: `/run <command> [args]` — see `/commands`.')
+        return
+      }
+      await stageSlashMedia(message, threadId, media, groupItems)
+      const runtime = await topicRuntimeFor(message, workspaceId, workspace, threadId)
+      await executeHostCommand(message, runtime, command, tail.join(' '), `/run ${command}`, true)
+      return
+    }
+    if (name === 'skill') {
+      const [skillName, ...tail] = parsed.args.split(/\s+/).filter((part) => part.length > 0)
+      if (skillName === undefined) {
+        await stageSlashMedia(message, threadId, media, groupItems)
+        await reply(message, 'usage: `/skill <name> [args]` — see `/skills`.')
+        return
+      }
+      if (await skillByName(skillName, workspace) === undefined) {
+        await stageSlashMedia(message, threadId, media, groupItems)
+        await reply(message, `no user-invocable skill \`${skillName}\`. See \`/skills\`.`)
+        return
+      }
+      const line = `/${skillName}${tail.length > 0 ? ` ${tail.join(' ')}` : ''}`
+      await handleSkillSlash(message, workspaceId, workspace, threadId, line, media, reference, groupItems)
+      return
+    }
+    if (isReservedConnectorCommand(name)) {
+      await stageSlashMedia(message, threadId, media, groupItems)
+      if (name === 'restart' || name === 'confirm' || name === 'rollback' || name === 'update' || name === 'plugin' || name === 'plugins') {
+        await reply(message, 'that one is profile-global — the private chat with the bot has it.')
+        return
+      }
+      await reply(
+        message,
+        `this is a session topic — connector commands live in the system topic. Try \`/commands\` or \`/skills\` here.`,
+      )
+      return
+    }
+
+    // A bare name prefers a host command; `/skill` above forces the skill.
+    const runtime = await topicRuntimeFor(message, workspaceId, workspace, threadId)
+    if (await hasHostCommand(runtime, name)) {
+      await stageSlashMedia(message, threadId, media, groupItems)
+      await executeHostCommand(message, runtime, name, parsed.args, `/${name}`, false)
+      return
+    }
+
+    if (await skillByName(name, workspace) !== undefined) {
+      // dsh-tool-skill recognizes the `/name` gesture on the resulting user
+      // message and injects the skill instructions into that step.
+      await handleSkillSlash(message, workspaceId, workspace, threadId, text, media, reference, groupItems)
+      return
+    }
+
+    await stageSlashMedia(message, threadId, media, groupItems)
+    await reply(
+      message,
+      `unknown command or skill \`/${name}\`. Try \`/commands\` for host commands, \`/skills\` for skills, or \`//text\` for a literal slash.`,
+    )
+  }
+
   // --- routing -------------------------------------------------------------
 
   const handleMessage = async (message: TgMessage): Promise<void> => {
     // Publisher bots post, they do not talk; ignore any bot-originated message.
     if (message.from?.is_bot === true) return
+    const media = mediaDescriptor(message)
+    const reference = referenceOf(message)
+    const forwarded = forwardedReference(message)
+    const rawText = message.text ?? media?.caption
+    const normalized = forwarded !== undefined || rawText === undefined
+      ? undefined
+      : normalizeSlashInput(rawText, botUsername)
+    if (normalized?.directedElsewhere === true) return
+    let text = normalized?.text ?? message.text
+    if (text !== undefined && message.text !== undefined) message.text = text
+    if (media !== undefined && normalized !== undefined) media.caption = normalized.text
+
     if (bindings.update !== undefined) {
-      const command = message.text?.trim() ?? ''
+      const command = (text ?? media?.caption ?? '').trim()
       if (!/^\/(?:system\s+status|about|help|man|start)\b/.test(command)) {
         const now = Date.now()
         const last = blockedNotified.get(message.chat.id) ?? 0
@@ -3388,10 +3824,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         return
       }
     }
-    const text = message.text
-    const media = mediaDescriptor(message)
-    const reference = referenceOf(message)
-    const forwarded = forwardedReference(message)
 
     // A prompt is "read" as soon as it passes authorization and the update gate.
     // The reaction is cosmetic and never blocks routing.
@@ -3520,13 +3952,32 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return handleForwardedTurn(message, workspaceId, workspace, threadId, forwarded)
     }
 
-    if (text !== undefined && text.startsWith('/')) {
+    // Albums are several updates; let the group debounce decide, then flush.
+    if (media?.groupId !== undefined) {
+      return handleMediaMessage(message, workspaceId, workspace, threadId, media)
+    }
+
+    const rawSession = text ?? media?.caption ?? ''
+    const unescaped = unescapeLeadingSlash(rawSession)
+    const sessionText = unescaped.text
+    if (text !== undefined) text = sessionText
+    if (media !== undefined) media.caption = sessionText
+
+    if (!unescaped.escaped && sessionText.startsWith('/')) {
       // bootstrap: a topic that holds no conversation may claim itself as the
       // system topic, otherwise there is no way to create one off General
-      if (/^\/setsystem\b/.test(text) && sessionFor(bindings, message.chat.id, threadId) === undefined) {
+      if (/^\/setsystem\b/.test(sessionText) && sessionFor(bindings, message.chat.id, threadId) === undefined) {
         return handleDashboard(message, workspaceId, workspace)
       }
-      return handleSessionSlash(message, workspaceId, workspace, threadId, text)
+      return handleSessionSlash(
+        message,
+        workspaceId,
+        workspace,
+        threadId,
+        sessionText,
+        media,
+        reference,
+      )
     }
     if (media !== undefined) {
       if (reference !== undefined) {
@@ -3843,6 +4294,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const start = async (): Promise<void> => {
     bindings = await loadBindings(file)
     startStagedSweep()
+    startProcessCardSweep()
+    await closeAllProcessCards('⚠️ Connector restarted — process view closed.')
+      .catch((error: unknown) => stderr(`cannot close stale process cards: ${String(error)}`))
     offset = bindings.lastUpdateId ?? 0
     if (bindings.update !== undefined) {
       // The runtime was restarted by the updater. The first poll batch is what
@@ -3913,6 +4367,19 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const stop = async (): Promise<void> => {
     stopped = true
     stopStagedSweep()
+    stopProcessCardSweep()
+    for (const runtime of runtimes.values()) {
+      if (runtime.processCard?.timer !== undefined) clearTimeout(runtime.processCard.timer)
+      runtime.processActive = false
+      runtime.process = []
+      runtime.processCard = undefined
+    }
+    for (const state of mirrorProcesses.values()) {
+      if (state.timer !== undefined) clearTimeout(state.timer)
+    }
+    mirrorProcesses.clear()
+    await closeAllProcessCards('⚠️ Connector stopped — process view closed.')
+      .catch((error: unknown) => stderr(`cannot close process cards: ${String(error)}`))
     for (const group of pendingGroups.values()) {
       if (group.timer !== undefined) clearTimeout(group.timer)
     }
@@ -3975,17 +4442,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * sessions use the collapsed summary instead; the mirror has no streaming
    * answer to attach one to, so the card is the progress surface.
    */
-  interface MirrorProcess {
-    sessionId: string
-    chatId: number
-    threadId: number
+  interface MirrorProcess extends ProcessCardState {
     items: ProcessItem[]
-    messageId?: number
-    rich: boolean
     turnActive: boolean
     turnStarted: boolean
-    timer?: NodeJS.Timeout
-    chain: Promise<void>
   }
   const mirrorProcesses = new Map<string, MirrorProcess>()
 
@@ -3997,8 +4457,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       .some((candidate) => candidate.chatId === found.chatId && candidate.threadId === found.threadId)
     if (claimed()) {
       const existing = mirrorProcesses.get(sessionId)
-      if (existing !== undefined && existing.timer !== undefined) clearTimeout(existing.timer)
-      mirrorProcesses.delete(sessionId)
+      if (existing !== undefined) {
+        if (existing.timer !== undefined) clearTimeout(existing.timer)
+        if (existing.messageId !== undefined) {
+          void updateProcessCard(existing, existing.items, true, '⚠️ Process view moved to Telegram')
+        }
+        forgetProcessCard(sessionId)
+        mirrorProcesses.delete(sessionId)
+      }
       return undefined
     }
     let state = mirrorProcesses.get(sessionId)
@@ -4012,67 +4478,15 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         turnActive: false,
         turnStarted: false,
         chain: Promise.resolve(),
+        lastTouched: Date.now(),
       }
       mirrorProcesses.set(sessionId, state)
     }
     return state
   }
 
-  const updateMirrorProcess = (state: MirrorProcess): Promise<void> => {
-    state.chain = state.chain
-      .then(async () => {
-        if (state.items.length === 0) return
-        const rich = state.turnActive ? formatLiveProcess(state.items) : formatProcessSummary(state.items)
-        const plain = state.turnActive ? formatLiveProcess(state.items) : formatProcessSummaryText(state.items)
-        if (state.messageId === undefined) {
-          await botPool.takeMain(state.chatId)
-          try {
-            const sent = await botPool.main.client.sendRichMessage(state.chatId, rich, { threadId: state.threadId })
-            state.messageId = sent.message_id
-            state.rich = true
-          } catch (error) {
-            if (!isRichRejected(error)) throw error
-            const sent = await botPool.main.client.sendMessage(state.chatId, toTelegramHtml(plain), {
-              threadId: state.threadId,
-              parseMode: 'HTML',
-            })
-            state.messageId = sent.message_id
-            state.rich = false
-          }
-          return
-        }
-        await botPool.waitEdit(botPool.main, state.chatId)
-        if (state.rich) {
-          try {
-            await botPool.main.client.editRichMessageText(state.chatId, state.messageId, rich)
-            return
-          } catch (error) {
-            if (!isRichRejected(error)) throw error
-            state.rich = false
-          }
-        }
-        try {
-          await botPool.main.client.editMessageText(state.chatId, state.messageId, toTelegramHtml(plain), { parseMode: 'HTML' })
-        } catch (error) {
-          if (error instanceof TelegramApiError && error.errorCode === 400) {
-            await botPool.main.client.editMessageText(state.chatId, state.messageId, plain)
-            return
-          }
-          throw error
-        }
-      })
-      .catch((error: unknown) => {
-        logger.warn(`dsh-telegram-connector: process card failed: ${String(error)}`)
-      })
-    return state.chain
-  }
-
   const scheduleMirrorProcess = (state: MirrorProcess): void => {
-    if (state.timer !== undefined) return
-    state.timer = setTimeout(() => {
-      state.timer = undefined
-      void updateMirrorProcess(state)
-    }, editIntervalMs)
+    if (processMode() === 'live') scheduleProcessCard(state, state.items)
   }
 
   const recordMirrorProcess = (sessionId: string, item: ProcessItem): void => {
@@ -4086,6 +4500,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const index = state.items.findIndex((candidate) => candidate.id === item.id)
     if (index === -1) state.items.push(item)
     else state.items[index] = item
+    state.lastTouched = Date.now()
     scheduleMirrorProcess(state)
   }
 
@@ -4102,6 +4517,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const current = state.items[index]
     if (current === undefined) return
     state.items[index] = { ...current, status, ...(detail === undefined ? {} : { detail }) }
+    state.lastTouched = Date.now()
     scheduleMirrorProcess(state)
   }
 
@@ -4111,9 +4527,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     state.turnActive = true
     state.turnStarted = true
     state.items = []
+    state.lastTouched = Date.now()
   }
 
-  const finishMirrorTurn = async (sessionId: string): Promise<void> => {
+  const finishMirrorTurn = async (sessionId: string, heading?: string): Promise<void> => {
     const state = mirrorProcesses.get(sessionId)
     if (state === undefined) return
     if (state.timer !== undefined) {
@@ -4121,8 +4538,27 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       state.timer = undefined
     }
     state.turnActive = false
-    if (state.items.length > 0) await updateMirrorProcess(state)
+    if (state.items.length > 0) {
+      if (processMode() === 'live') {
+        await updateProcessCard(state, state.items, true, heading ?? '✅ Process')
+      } else {
+        await sendProcessSummary(state.chatId, state.threadId, state.items, heading)
+      }
+    }
+    forgetProcessCard(sessionId)
     mirrorProcesses.delete(sessionId)
+  }
+
+  sweepMirrorCards = (): void => {
+    const now = Date.now()
+    for (const [sessionId, state] of mirrorProcesses) {
+      if (state.turnActive !== true) continue
+      if (now - state.lastTouched < PROCESS_CARD_TTL_MS) continue
+      state.items = state.items.map((item) => item.status === 'running'
+        ? { ...item, status: 'error' as const, detail: 'timed out' }
+        : item)
+      void finishMirrorTurn(sessionId, '⚠️ Process interrupted')
+    }
   }
 
   ctx.on('session/event', (session, event: SessionEvent) => {
@@ -4317,19 +4753,30 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   })
 
   ctx.on('agent/error', (payload: { agent: Agent; error: unknown }) => {
-    const runtime = [...runtimes.values()].find((candidate) => candidate.agent === payload.agent)
-    if (runtime === undefined) return
     const message = payload.error instanceof Error ? payload.error.message : String(payload.error)
-    if (runtime.processActive === true) {
-      runtime.process = runtime.process.map((item) => item.status === 'running'
-        ? { ...item, status: 'error' as const, detail: redactPreview(message) }
-        : item)
+    const runtime = [...runtimes.values()].find((candidate) => candidate.agent === payload.agent)
+    if (runtime !== undefined) {
+      if (runtime.processActive === true) {
+        runtime.process = runtime.process.map((item) => item.status === 'running'
+          ? { ...item, status: 'error' as const, detail: redactPreview(message) }
+          : item)
+      }
+      void (async () => {
+        await finishStream(runtime)
+        await finishProcessTurn(runtime, '⚠️ Process interrupted')
+      })()
+      void sendTo(runtime.chatId, runtime.threadId, `⚠️ Agent error: ${message}`)
+      return
     }
-    void (async () => {
-      await finishStream(runtime)
-      await finishProcessTurn(runtime)
-    })()
-    void sendTo(runtime.chatId, runtime.threadId, `⚠️ Agent error: ${message}`)
+
+    const sessionId = String((payload.agent as unknown as { session?: { id?: unknown } }).session?.id ?? '')
+    if (sessionId.length === 0) return
+    const mirrorState = mirrorProcesses.get(sessionId)
+    if (mirrorState === undefined) return
+    mirrorState.items = mirrorState.items.map((item) => item.status === 'running'
+      ? { ...item, status: 'error' as const, detail: redactPreview(message) }
+      : item)
+    void finishMirrorTurn(sessionId, '⚠️ Process interrupted')
   })
 
   ctx.effect(() => {

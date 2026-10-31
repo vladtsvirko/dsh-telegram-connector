@@ -42,6 +42,9 @@ describe('bindings v2', () => {
     bindings.trialMessage = { chatId: -100, messageId: 7, trialId: 't1' }
     bindings.timezone = 'Europe/Minsk'
     bindings.reactions = { enabled: true, read: '👀', streaming: '✍', staged: '🙉' }
+    bindings.processCards = {
+      'session-a': { chatId: -100, threadId: 7, messageId: 99, rich: true },
+    }
     bindings.workspaces['ws-1'] = { chatId: -100, path: '/srv/one', title: 'one' }
     setSession(bindings, -100, 7, { workspaceId: 'ws-1', sessionId: 'session-a' })
     await saveBindings(file, bindings)
@@ -51,6 +54,9 @@ describe('bindings v2', () => {
     expect(again.trialMessage).toEqual({ chatId: -100, messageId: 7, trialId: 't1' })
     expect(again.timezone).toBe('Europe/Minsk')
     expect(again.reactions).toEqual({ enabled: true, read: '👀', streaming: '✍', staged: '🙉' })
+    expect(again.processCards).toEqual({
+      'session-a': { chatId: -100, threadId: 7, messageId: 99, rich: true },
+    })
     expect(workspaceByChat(again, -100)?.title).toBe('one')
     expect(workspaceIdByChat(again, -100)).toBe('ws-1')
     expect(sessionFor(again, -100, 7)?.sessionId).toBe('session-a')

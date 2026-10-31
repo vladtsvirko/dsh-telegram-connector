@@ -2,13 +2,14 @@
  * Human-facing process rows for tool calls, commands and skill loads.
  *
  * Telegram must stay readable: a tool call becomes one short row with a safe
- * preview, never its raw result. The connector summarizes those rows at turn end
- * for Telegram-driven sessions and keeps a live card for web-UI-driven sessions.
+ * preview, never its raw result. In `live` mode the connector edits one card
+ * during the turn and finalises it collapsed; `summary` sends only the collapsed
+ * summary after the turn. Web-UI-driven sessions follow the same mode.
  *
  * @module dsh-telegram-connector/process
  */
 
-export type ProcessMode = 'off' | 'summary'
+export type ProcessMode = 'off' | 'summary' | 'live'
 export type ProcessStatus = 'running' | 'done' | 'error'
 export type ProcessKind = 'tool' | 'command' | 'skill'
 
@@ -42,13 +43,18 @@ function parseArguments(raw: string | undefined): Record<string, unknown> | unde
   }
 }
 
-/** Redact common credential shapes and keep the preview short. */
-export function redactPreview(text: string, limit = MAX_PREVIEW): string {
-  const redacted = text
+/** Redact common credential shapes without changing the rest of the text. */
+export function redactSecrets(text: string): string {
+  return text
     .replace(/((?:token|secret|password|passwd|api[_-]?key)\s*[=:]\s*)\S+/gi, '$1<redacted>')
     .replace(/(--(?:token|password|secret|api-key)\s+)\S+/gi, '$1<redacted>')
     .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer <redacted>')
     .replace(/\/\/[^/\s]+@/g, '//<redacted>@')
+}
+
+/** Redact and keep a short single-line preview. */
+export function redactPreview(text: string, limit = MAX_PREVIEW): string {
+  const redacted = redactSecrets(text)
     .replace(/\s+/g, ' ')
     .trim()
   return redacted.length <= limit ? redacted : `${redacted.slice(0, limit - 1)}…`
@@ -144,12 +150,21 @@ export function formatLiveProcess(items: readonly ProcessItem[]): string {
   return ['⚙️ Working…', ...lines].join('\n')
 }
 
+export interface ProcessSummaryOptions {
+  /** Heading inside the collapsed summary; defaults to `Process`. */
+  heading?: string
+}
+
 /** A collapsed process summary for rich Telegram messages. */
-export function formatProcessSummary(items: readonly ProcessItem[]): string {
+export function formatProcessSummary(
+  items: readonly ProcessItem[],
+  options: ProcessSummaryOptions = {},
+): string {
   const count = items.length
   const lines = visible(items).map((item) => processLine(item, false))
+  const heading = options.heading ?? 'Process'
   return [
-    `<details><summary>Process · ${String(count)} step${count === 1 ? '' : 's'}</summary>`,
+    `<details><summary>${heading} · ${String(count)} step${count === 1 ? '' : 's'}</summary>`,
     '',
     ...lines,
     '',
@@ -158,7 +173,11 @@ export function formatProcessSummary(items: readonly ProcessItem[]): string {
 }
 
 /** Plain fallback when a rich message is unavailable. */
-export function formatProcessSummaryText(items: readonly ProcessItem[]): string {
+export function formatProcessSummaryText(
+  items: readonly ProcessItem[],
+  options: ProcessSummaryOptions = {},
+): string {
   const count = items.length
-  return [`Process · ${String(count)} step${count === 1 ? '' : 's'}`, ...visible(items).map((item) => processLine(item, false))].join('\n')
+  const heading = options.heading ?? 'Process'
+  return [`${heading} · ${String(count)} step${count === 1 ? '' : 's'}`, ...visible(items).map((item) => processLine(item, false))].join('\n')
 }

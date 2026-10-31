@@ -40,7 +40,7 @@ const SURFACE_NOTE: Record<Surface, string> = {
   dashboard:
     'This topic owns this group\'s workspace. Plugin, restart, update and timezone commands live in the bot chat.',
   session:
-    'This topic is one session — plain text is a turn. `/commands` lists host slash commands and `/skills` lists user-invocable skills; `/name` loads one. `/help` and `/man` work here too.',
+    'This topic is one session — plain text is a turn. Only a leading `/` starts a command; slashes later in the text are literal. `/commands` lists host commands, `/skills` lists user-invocable skills, `/run` bypasses connector names and `/skill` forces a skill. `//text` sends a message that starts with `/`. `/help` and `/man` work here too.',
 }
 
 const COMMANDS: CommandDoc[] = [
@@ -68,8 +68,8 @@ const COMMANDS: CommandDoc[] = [
     usage: '/commands',
     summary: 'list the host slash commands available in this session',
     details:
-      'Host commands run against the session without creating a model message. The list is read live, so a plugin that registers a command appears without a connector update.',
-    examples: ['/commands'],
+      'Host commands run against the session without creating a model message. The list is read live, so a plugin that registers a command appears without a connector update. A file or photo sent with a command is staged for the next prompt; commands do not take attachments.',
+    examples: ['/commands', '/run status'],
     surfaces: ['session'],
     group: 'start',
   },
@@ -78,8 +78,28 @@ const COMMANDS: CommandDoc[] = [
     usage: '/skills',
     summary: 'list user-invocable skills and how to load them',
     details:
-      'Run `/<name>` to load a user-invocable skill; the skill instructions are injected into that turn. The list is read live from the workspace skill catalog.',
-    examples: ['/skills', '/telegram-rich-text'],
+      'Run `/<name>` to load a user-invocable skill; the skill instructions are injected into that turn. The list is read live from the workspace skill catalog. Media sent with a skill is attached to that turn.',
+    examples: ['/skills', '/skill telegram-rich-text', '/telegram-rich-text'],
+    surfaces: ['session'],
+    group: 'start',
+  },
+  {
+    path: 'run',
+    usage: '/run <command> [args]',
+    summary: 'run a host command even when a connector command owns the name',
+    details:
+      'This is the escape hatch for name collisions. It only runs host commands, never a skill, and the output stays out of the model history. Media is staged for the next prompt.',
+    examples: ['/run status', '/run compact now'],
+    surfaces: ['session'],
+    group: 'start',
+  },
+  {
+    path: 'skill',
+    usage: '/skill <name> [args]',
+    summary: 'load a user-invocable skill even when a host command owns the name',
+    details:
+      'This is the escape hatch for host-command vs skill collisions. It only loads skills, never a host command. Media and reply references are attached to the skill turn.',
+    examples: ['/skill telegram-rich-text', '/skill status'],
     surfaces: ['session'],
     group: 'start',
   },

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.1-rc.2-0.3.0
+
+- `processMode: live` is the new default. One process card is created on the
+  first tool/command/skill row, edited during the turn, and finalised as a
+  collapsed `<details>` summary. `summary` still sends only the collapsed
+  summary after the turn; `off` hides process rows. Web-UI sessions follow the
+  same mode.
+- Live process-card refs are persisted in bindings, closed with a warning after
+  a restart or graceful stop, and expired after 30 minutes of inactivity.
+- Slash commands are detected only at the first non-whitespace character;
+  slashes later in a prompt are literal. `/commands@bot` is accepted and a
+  command addressed to another known bot is ignored. `//text` is a leading-only
+  escape.
+- `/run <command> [args]` executes a host command even when a connector name
+  wins; `/skill <name> [args]` loads a user-invocable skill even when a host
+  command owns the name.
+- Media sent with a skill is attached to that turn, including reply references.
+  Media sent with a command is staged for the next prompt instead of being
+  dropped; unknown slash commands stage it too. Albums are debounced as one
+  gesture.
+- Failed command output and thrown command errors are redacted before posting;
+  successful command output is unchanged. Command output still stays out of the
+  model history, and replying to the result pulls it back in.
+- `/commands` and `/skills` documentation now covers the collision escapes,
+  leading-only slash rule and media behaviour.
+
 ## 0.2.1-rc.2-0.2.1
 
 Maintenance release: ships with the setup's supervisor-test fix. No connector

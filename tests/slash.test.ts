@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { isReservedConnectorCommand, parseSlash } from '../src/slash.js'
+import {
+  isReservedConnectorCommand,
+  normalizeSlashInput,
+  parseSlash,
+  unescapeLeadingSlash,
+} from '../src/slash.js'
 
 describe('parseSlash', () => {
   it('parses a host command and its arguments', () => {
@@ -8,10 +13,17 @@ describe('parseSlash', () => {
     expect(parseSlash('/feedback')).toEqual({ name: 'feedback', args: '' })
   })
 
-  it('rejects non-command text', () => {
-    expect(parseSlash('/Foo')).toBeUndefined()
+  it('ignores whitespace before the first slash and keeps slashes in arguments literal', () => {
+    expect(parseSlash('  /compact now')).toEqual({ name: 'compact', args: 'now' })
+    expect(parseSlash('/compact see /etc/hosts')).toEqual({ name: 'compact', args: 'see /etc/hosts' })
     expect(parseSlash('hello /compact')).toBeUndefined()
+    expect(parseSlash('explain /etc/hosts')).toBeUndefined()
+  })
+
+  it('rejects malformed command names', () => {
+    expect(parseSlash('/Foo')).toBeUndefined()
     expect(parseSlash('/compact@bot')).toBeUndefined()
+    expect(parseSlash('/etc/hosts')).toBeUndefined()
     expect(parseSlash('/compact\nsecond line')).toEqual({ name: 'compact', args: 'second line' })
   })
 
@@ -20,5 +32,59 @@ describe('parseSlash', () => {
     expect(isReservedConnectorCommand('model')).toBe(true)
     expect(isReservedConnectorCommand('new')).toBe(true)
     expect(isReservedConnectorCommand('skills')).toBe(true)
+    expect(isReservedConnectorCommand('run')).toBe(true)
+    expect(isReservedConnectorCommand('skill')).toBe(true)
+  })
+})
+
+describe('slash normalization', () => {
+  it('strips one @bot suffix from the command token only', () => {
+    expect(normalizeSlashInput('/commands@my_bot', 'my_bot')).toEqual({
+      text: '/commands',
+      directedElsewhere: false,
+    })
+    expect(normalizeSlashInput('  /run status@other', 'my_bot')).toEqual({
+      text: '/run status@other',
+      directedElsewhere: false,
+    })
+  })
+
+  it('reports a command addressed to another known bot', () => {
+    expect(normalizeSlashInput('/commands@other_bot', 'my_bot')).toEqual({
+      text: '/commands@other_bot',
+      directedElsewhere: true,
+    })
+    expect(normalizeSlashInput('/commands@other_bot').directedElsewhere).toBe(false)
+  })
+
+  it('leaves ordinary prompt text alone', () => {
+    expect(normalizeSlashInput('  hello@bot /path', 'my_bot')).toEqual({
+      text: '  hello@bot /path',
+      directedElsewhere: false,
+    })
+    expect(normalizeSlashInput('  /etc/hosts')).toEqual({
+      text: '/etc/hosts',
+      directedElsewhere: false,
+    })
+    expect(normalizeSlashInput('  //literal')).toEqual({
+      text: '//literal',
+      directedElsewhere: false,
+    })
+  })
+})
+
+describe('leading slash escape', () => {
+  it('removes exactly one leading slash', () => {
+    expect(unescapeLeadingSlash('//etc/hosts')).toEqual({ text: '/etc/hosts', escaped: true })
+    expect(unescapeLeadingSlash('///etc/hosts')).toEqual({ text: '//etc/hosts', escaped: true })
+    expect(unescapeLeadingSlash('//')).toEqual({ text: '/', escaped: true })
+  })
+
+  it('never touches slashes later in the text', () => {
+    expect(unescapeLeadingSlash('see //etc/hosts')).toEqual({
+      text: 'see //etc/hosts',
+      escaped: false,
+    })
+    expect(unescapeLeadingSlash('/etc/hosts')).toEqual({ text: '/etc/hosts', escaped: false })
   })
 })

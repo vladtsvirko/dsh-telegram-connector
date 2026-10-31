@@ -184,12 +184,24 @@ topic is always one session, and a topic is never re-assigned.
 | `/commands` | list the host slash commands registered for this session, read live |
 | `/skills` | list user-invocable skills from the workspace catalog, read live |
 | `/<name>` | load a user-invocable skill into the next turn |
+| `/run <command> [args]` | run a host command even when a connector command owns the name |
+| `/skill <name> [args]` | load a skill even when a host command owns the name |
+| `//text` | send a prompt that literally starts with `/` |
 | `/help`, `/man` | the session command manual |
 
 Host commands (for example `/compact`, `/goal` or a command from a newly
 installed plugin) run against the session without creating a model message.
 The lists are read live, so a plugin that registers a command or skill appears
-without a connector release. Connector commands keep precedence.
+without a connector release. Connector commands keep precedence; `/run` and
+`/skill` are the escape hatches for name collisions.
+
+Only the first non-whitespace `/` starts a command. Slashes later in the text
+are literal and never need escaping. `/commands@bot` is accepted; a command
+addressed to a different known bot is ignored.
+
+Media sent with a skill is attached to that turn. Media sent with a command is
+staged with the configured staged reaction for the next prompt, because commands
+do not take attachments. An album is debounced and treated as one gesture.
 
 A topic created by hand becomes a session on its first message.
 

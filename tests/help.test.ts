@@ -25,6 +25,8 @@ describe('help registry', () => {
     expect(index).toContain('/man')
     expect(index).toContain('/commands')
     expect(index).toContain('/skills')
+    expect(index).toContain('/run <command> [args]')
+    expect(index).toContain('/skill <name> [args]')
     expect(index).not.toContain('`/sync` — ')
     expect(index).not.toContain('/system')
   })
@@ -33,6 +35,8 @@ describe('help registry', () => {
     expect(lookupText('plugin add', 'control')).toContain('github:owner/repo')
     expect(lookupText('/plugin rm', 'control')).toContain('/plugin remove <name>')
     expect(lookupText('/workspace new', 'control')).toContain('startgroup')
+    expect(lookupText('run', 'session')).toContain('name collisions')
+    expect(lookupText('skill', 'session')).toContain('host command')
     expect(lookupText('nope', 'control')).toBeUndefined()
   })
 

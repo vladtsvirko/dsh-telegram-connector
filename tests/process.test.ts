@@ -6,6 +6,7 @@ import {
   formatProcessSummaryText,
   processLine,
   redactPreview,
+  redactSecrets,
   toolLabel,
   type ProcessItem,
 } from '../src/process.js'
@@ -48,6 +49,12 @@ describe('process labels', () => {
     expect(redactPreview('x'.repeat(200)).endsWith('…')).toBe(true)
   })
 
+  it('redacts secrets without collapsing or truncating the rest', () => {
+    const text = 'line one\nTOKEN=abc123\nline three is long'
+    expect(redactSecrets(text)).toBe('line one\nTOKEN=<redacted>\nline three is long')
+    expect(redactSecrets('--password hunter2 run')).toBe('--password <redacted> run')
+  })
+
   it('labels commands and skills', () => {
     expect(commandLabel('compact', ' now ')).toBe('⚡ /compact now')
     expect(commandLabel('compact')).toBe('⚡ /compact')
@@ -68,6 +75,15 @@ describe('process rendering', () => {
     expect(text).toContain('• 💻 pnpm test')
     expect(text).toContain('⚠️ 📖 Read: src/index.ts — not found')
     expect(text.endsWith('</details>')).toBe(true)
+  })
+
+  it('accepts a custom summary heading', () => {
+    expect(formatProcessSummary([skill], { heading: '✅ Process' })).toContain(
+      '<details><summary>✅ Process · 1 step</summary>',
+    )
+    expect(formatProcessSummaryText([skill], { heading: '⚠️ Process interrupted' })).toContain(
+      '⚠️ Process interrupted · 1 step',
+    )
   })
 
   it('provides a plain fallback', () => {

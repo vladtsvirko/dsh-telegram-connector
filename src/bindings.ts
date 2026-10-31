@@ -62,6 +62,15 @@ export interface TrialMessageBinding {
   trialId: string
 }
 
+/** A live process card that must be closed if the connector restarts mid-turn. */
+export interface ProcessCardBinding {
+  chatId: number
+  threadId: number
+  messageId: number
+  /** The card was sent as a rich message and must be edited the same way. */
+  rich: boolean
+}
+
 export interface Bindings {
   version: 2
   /** Private chat with the bot: the configuration surface. */
@@ -76,6 +85,8 @@ export interface Bindings {
   timezone?: string
   /** Online overrides for the prompt/streaming reactions; config supplies defaults. */
   reactions?: StoredReactions
+  /** sessionId → live process card that a restart should close. */
+  processCards?: Record<string, ProcessCardBinding>
   /** workspaceId → group */
   workspaces: Record<string, WorkspaceBinding>
   /** `${chatId}:${threadId}` → session */
@@ -108,6 +119,18 @@ function isTrialMessage(value: unknown): value is TrialMessageBinding {
     && typeof candidate.trialId === 'string'
 }
 
+function isProcessCards(value: unknown): value is Record<string, ProcessCardBinding> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.values(value as Record<string, unknown>).every((entry) => {
+    if (entry === null || typeof entry !== 'object') return false
+    const card = entry as { chatId?: unknown; threadId?: unknown; messageId?: unknown; rich?: unknown }
+    return typeof card.chatId === 'number'
+      && typeof card.threadId === 'number'
+      && typeof card.messageId === 'number'
+      && typeof card.rich === 'boolean'
+  })
+}
+
 function isReactions(value: unknown): value is StoredReactions {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
   const candidate = value as { enabled?: unknown; read?: unknown; streaming?: unknown; staged?: unknown }
@@ -137,6 +160,7 @@ export async function loadBindings(file: string): Promise<Bindings> {
       ...(isUpdate(parsed.update) ? { update: parsed.update } : {}),
       ...(typeof parsed.timezone === 'string' ? { timezone: parsed.timezone } : {}),
       ...(isReactions(parsed.reactions) ? { reactions: parsed.reactions } : {}),
+      ...(isProcessCards(parsed.processCards) ? { processCards: parsed.processCards } : {}),
       workspaces: parsed.workspaces ?? {},
       sessions: parsed.sessions ?? {},
     }
