@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.1-rc.2-0.1.15
+
+- Replying to an earlier message now adds it to the prompt as quoted reference
+  context. Same-chat replies use `reply_to_message`; cross-chat/topic replies use
+  `external_reply`.
+- Referenced media is re-downloaded on every use (no cache), attached as
+  `ImageBlock`/`FileBlock`, and deduped against staged or newly sent media by
+  `file_id`.
+- Download failures are written into the prompt, including the likely fixes
+  (re-upload, send as a file, grant the bot access to the source chat).
+- A text reply is a normal acknowledgment turn; a media reply is an immediate
+  prompt with the new media as the task and the referenced media as context.
+- Commands never attach referenced media.
+
 ## 0.2.1-rc.2-0.1.14
 
 - Photos, image documents, videos, video notes, audio, voice notes and

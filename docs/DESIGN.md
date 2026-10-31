@@ -249,6 +249,12 @@ update → allowlist → private? control
   the **staged** reaction; the next caption or text prompt downloads and attaches
   the whole batch. Albums share a `media_group_id` and are debounced for one
   second before staging or prompting. Staged state expires after 15 minutes.
+- Replies: a same-chat `reply_to_message` or cross-chat `external_reply` becomes
+  a quoted reference block in the prompt. Its media is re-downloaded (no cache),
+  deduped against staged/new media by `file_id`, and download errors are written
+  into the prompt so the model can suggest re-uploading or granting access.
+  A text reply is a normal acknowledgment turn; a media reply is an immediate
+  prompt with the new media as the task and the referenced media as context.
 - `agent/error` is reported in the same topic.
 - Conversations driven from the web UI are mirrored one-way into the bound
   topic while the connector is not driving that topic.

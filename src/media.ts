@@ -10,7 +10,7 @@
  * @module dsh-telegram-connector/media
  */
 
-import type { TgMessage } from './telegram.js'
+import type { TgExternalReplyInfo, TgMessage } from './telegram.js'
 
 /** Telegram's cloud Bot API cannot download files larger than this. */
 export const MAX_TELEGRAM_DOWNLOAD = 20 * 1024 * 1024
@@ -179,6 +179,30 @@ export function mediaDescriptor(message: TgMessage): MediaDescriptor | undefined
   }
 
   return undefined
+}
+
+/** Normalize media from a reply that crossed a chat or topic boundary. */
+export function externalMediaDescriptor(
+  external: TgExternalReplyInfo,
+  fallbackChatId: number,
+): MediaDescriptor | undefined {
+  const pseudo: TgMessage = {
+    message_id: external.message_id ?? 0,
+    chat: external.chat ?? { id: fallbackChatId, type: 'supergroup' },
+    photo: external.photo,
+    document: external.document,
+    video: external.video,
+    video_note: external.video_note,
+    audio: external.audio,
+    voice: external.voice,
+    animation: external.animation,
+    sticker: external.sticker,
+  }
+  const media = mediaDescriptor(pseudo)
+  if (media !== undefined && external.message_id === undefined) {
+    media.name = `external_${media.name}`
+  }
+  return media
 }
 
 /** Text used when a prompt carries attachments but no caption/text. */

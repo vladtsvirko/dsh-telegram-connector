@@ -44,6 +44,10 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   notes and animations are downloaded through the Bot API and attached with
   DSH's attachment service. Albums are debounced and attached together; a
   captionless upload waits for the prompt instead of starting one turn per file.
+- **Reply-to reuse.** Reply to an earlier photo/file/video/audio message to
+  attach it to the new prompt. The referenced message is included as a quoted
+  context block; external replies are supported and download errors are surfaced
+  to the model so it can suggest a fix.
 - **Telegram-native formatting.** Every Telegram session gets a system-prompt
   section that tells the model to use Telegram rich Markdown; the full cheat
   sheet is a runtime skill (`telegram-rich-text`). Tables, headings, lists,

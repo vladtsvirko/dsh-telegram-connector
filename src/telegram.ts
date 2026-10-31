@@ -104,6 +104,25 @@ export interface TgFile {
   file_path?: string
 }
 
+/** The media subset of ExternalReplyInfo used when the user replies across chats/topics. */
+export interface TgExternalReplyInfo {
+  origin?: unknown
+  chat?: TgChat
+  message_id?: number
+  photo?: TgPhotoSize[]
+  document?: TgDocument
+  video?: TgVideo
+  video_note?: TgVideoNote
+  audio?: TgAudio
+  voice?: TgVoice
+  animation?: TgAnimation
+  sticker?: TgSticker
+}
+
+export interface TgTextQuote {
+  text: string
+}
+
 export interface TgMessage {
   message_id: number
   chat: TgChat
@@ -121,13 +140,17 @@ export interface TgMessage {
   voice?: TgVoice
   animation?: TgAnimation
   sticker?: TgSticker
+  /** The original message when this one is a same-chat reply. */
+  reply_to_message?: TgMessage
+  /** The original message when this one replies across chats/topics. */
+  external_reply?: TgExternalReplyInfo
+  /** Quoted slice of the replied-to message, when the client sends one. */
+  quote?: TgTextQuote
   /** Present on every message inside a forum topic. */
   is_topic_message?: boolean
   message_thread_id?: number
   /** Present on the service message Telegram sends when a topic is created. */
   forum_topic_created?: { name: string }
-  /** On the first message of a topic this carries `forum_topic_created`. */
-  reply_to_message?: TgMessage
   /** Service message Telegram sends when a topic is renamed. */
   forum_topic_edited?: { name?: string }
   /** Service message Telegram sends when the group itself is renamed. */

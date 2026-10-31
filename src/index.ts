@@ -33,6 +33,12 @@ import {
   type MediaDescriptor,
 } from './media.js'
 import {
+  mediaReplyPrompt,
+  referenceOf,
+  referencePrompt,
+  type ReplyReference,
+} from './reference.js'
+import {
   allowedReactionsText,
   describeReactions,
   parseReactionValue,
@@ -2872,6 +2878,55 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const attachmentStore = (): AttachmentStoreLike | undefined =>
     serviceOf<AttachmentStoreLike>(ctx, 'attachments')
 
+  const dedupeMedia = (items: readonly StagedMedia[]): StagedMedia[] => {
+    const seen = new Set<string>()
+    return items.filter((item) => {
+      if (seen.has(item.fileId)) return false
+      seen.add(item.fileId)
+      return true
+    })
+  }
+
+  const referenceStaged = (message: TgMessage, media: MediaDescriptor): StagedMedia => ({
+    ...media,
+    chatId: message.chat.id,
+    threadId: message.message_thread_id ?? 0,
+    userId: message.from?.id ?? 0,
+    messageId: 0,
+    createdAt: Date.now(),
+  })
+
+  const downloadAttachments = async (
+    items: readonly StagedMedia[],
+    label: 'new' | 'referenced' | 'attached',
+  ): Promise<{ blocks: unknown[]; errors: string[] }> => {
+    const attachments = attachmentStore()
+    if (attachments === undefined) return { blocks: [], errors: ['attachments are not available in this runtime'] }
+    const blocks: unknown[] = []
+    const errors: string[] = []
+    const prefix = label === 'new' ? 'New media' : label === 'referenced' ? 'Referenced media' : 'Attached media'
+    for (const item of items) {
+      if (item.size !== undefined && item.size > MAX_TELEGRAM_DOWNLOAD) {
+        errors.push(`${item.name} (${formatBytes(item.size)}) is larger than the 20 MB Bot API limit`)
+        continue
+      }
+      try {
+        const data = await client.downloadFile(item.fileId)
+        blocks.push({ type: 'text', text: `${prefix}: ${item.name}` })
+        if (item.kind === 'image' && isImageMediaType(item.mediaType)) {
+          const ref = await attachments.saveImage({ data, mediaType: item.mediaType, name: item.name })
+          blocks.push({ type: 'image', attachment: ref })
+        } else {
+          const ref = await attachments.saveFile({ data, name: item.name })
+          blocks.push({ type: 'file', attachment: ref })
+        }
+      } catch (error) {
+        errors.push(`${item.name}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    return { blocks, errors }
+  }
+
   /** Download every item and hand the agent one message with text + DSH blocks. */
   const processMediaPrompt = async (
     message: TgMessage,
@@ -2882,39 +2937,58 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     text: string,
   ): Promise<void> => {
     void markPromptRead(message)
-    const attachments = attachmentStore()
-    if (attachments === undefined) {
+    if (attachmentStore() === undefined) {
+      await reply(message, '⚠️ image/file attachments are not available in this runtime')
+      return
+    }
+    const prompt = text.trim().length > 0 ? text.trim() : attachmentPlaceholder(items)
+    const downloaded = await downloadAttachments(items, 'attached')
+    const fullPrompt = downloaded.errors.length > 0
+      ? `${prompt}\n\n[Attachment errors: ${downloaded.errors.join('; ')}]`
+      : prompt
+    await handleSession(message, workspaceId, workspace, threadId, fullPrompt, [
+      { type: 'text', text: fullPrompt },
+      ...downloaded.blocks,
+    ])
+  }
+
+  /** A reply turn: the user's text or new media, plus the referenced message. */
+  const handleReferenceTurn = async (
+    message: TgMessage,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+    threadId: number,
+    userText: string,
+    reference: ReplyReference,
+    newItems: readonly StagedMedia[],
+    currentMedia: boolean,
+  ): Promise<void> => {
+    void markPromptRead(message)
+    const fresh = dedupeMedia(newItems)
+    const referenced = dedupeMedia(reference.media.map((media) => referenceStaged(message, media)))
+      .filter((item) => !fresh.some((candidate) => candidate.fileId === item.fileId))
+    const needsAttachments = fresh.length > 0 || referenced.length > 0
+    if (needsAttachments && attachmentStore() === undefined) {
       await reply(message, '⚠️ image/file attachments are not available in this runtime')
       return
     }
 
-    const prompt = text.trim().length > 0 ? text.trim() : attachmentPlaceholder(items)
-    const blocks: unknown[] = [{ type: 'text', text: prompt }]
-    for (const item of items) {
-      if (item.size !== undefined && item.size > MAX_TELEGRAM_DOWNLOAD) {
-        blocks.push({
-          type: 'text',
-          text: `[attachment too large to download: ${item.name} (${formatBytes(item.size)})]`,
-        })
-        continue
-      }
-      try {
-        const data = await client.downloadFile(item.fileId)
-        if (item.kind === 'image' && isImageMediaType(item.mediaType)) {
-          const ref = await attachments.saveImage({ data, mediaType: item.mediaType, name: item.name })
-          blocks.push({ type: 'image', attachment: ref })
-        } else {
-          const ref = await attachments.saveFile({ data, name: item.name })
-          blocks.push({ type: 'file', attachment: ref })
-        }
-      } catch (error) {
-        blocks.push({
-          type: 'text',
-          text: `[could not download ${item.name}: ${error instanceof Error ? error.message : String(error)}]`,
-        })
-      }
-    }
-    await handleSession(message, workspaceId, workspace, threadId, prompt, blocks)
+    const newDownload = needsAttachments
+      ? await downloadAttachments(fresh, currentMedia ? 'new' : 'attached')
+      : { blocks: [] as unknown[], errors: [] as string[] }
+    const refDownload = needsAttachments
+      ? await downloadAttachments(referenced, 'referenced')
+      : { blocks: [] as unknown[], errors: [] as string[] }
+    const prompt = currentMedia
+      ? mediaReplyPrompt(userText, reference, refDownload.errors)
+      : referencePrompt(userText, reference, refDownload.errors)
+    const newErrors = newDownload.errors.map((error) => `New media could not be attached: ${error}.`)
+    const fullPrompt = [prompt, ...newErrors].join('\n\n').trim()
+    await handleSession(message, workspaceId, workspace, threadId, fullPrompt, [
+      { type: 'text', text: fullPrompt },
+      ...newDownload.blocks,
+      ...refDownload.blocks,
+    ])
   }
 
   const takePendingGroupsFor = (chatId: number, threadId: number, userId: number): StagedMedia[] => {
@@ -3036,6 +3110,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     const text = message.text
     const media = mediaDescriptor(message)
+    const reference = referenceOf(message)
 
     // A prompt is "read" as soon as it passes authorization and the update gate.
     // The reaction is cosmetic and never blocks routing.
@@ -3175,15 +3250,40 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       )
     }
     if (media !== undefined) {
+      if (reference !== undefined) {
+        const userId = message.from?.id ?? 0
+        const pending = takePendingGroupsFor(message.chat.id, threadId, userId)
+        const staged = takeStaged(stagedKey(message.chat.id, threadId, userId))
+        return handleReferenceTurn(
+          message,
+          workspaceId,
+          workspace,
+          threadId,
+          media.caption,
+          reference,
+          [...staged, ...pending, toStaged(message, media)],
+          true,
+        )
+      }
       return handleMediaMessage(message, workspaceId, workspace, threadId, media)
     }
     if (text === undefined) return
 
-    // A text prompt consumes anything the user staged before it. Flush a media
-    // group that may still be waiting for its debounce first.
     const userId = message.from?.id ?? 0
     const pending = takePendingGroupsFor(message.chat.id, threadId, userId)
     const staged = takeStaged(stagedKey(message.chat.id, threadId, userId))
+    if (reference !== undefined) {
+      return handleReferenceTurn(
+        message,
+        workspaceId,
+        workspace,
+        threadId,
+        text,
+        reference,
+        [...staged, ...pending],
+        false,
+      )
+    }
     const attachments = [...staged, ...pending]
     if (attachments.length > 0) {
       return processMediaPrompt(message, workspaceId, workspace, threadId, attachments, text)

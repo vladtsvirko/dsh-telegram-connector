@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   attachmentPlaceholder,
+  externalMediaDescriptor,
   formatBytes,
   isImageMediaType,
   MAX_TELEGRAM_DOWNLOAD,
@@ -76,6 +77,23 @@ describe('mediaDescriptor', () => {
   it('returns undefined for text and service messages', () => {
     expect(mediaDescriptor(message({ text: 'hello' }))).toBeUndefined()
     expect(mediaDescriptor(message({ forum_topic_created: { name: 'topic' } }))).toBeUndefined()
+  })
+})
+
+describe('externalMediaDescriptor', () => {
+  it('maps media from an external reply and keeps the origin message id', () => {
+    const media = externalMediaDescriptor({
+      message_id: 77,
+      photo: [{ file_id: 'p', file_unique_id: 'u', width: 10, height: 10, file_size: 5 }],
+    }, -100)
+    expect(media).toMatchObject({ kind: 'image', fileId: 'p', name: 'photo_77.jpg' })
+  })
+
+  it('marks media without an origin message id as external', () => {
+    const media = externalMediaDescriptor({
+      document: { file_id: 'd', file_unique_id: 'u', file_name: 'a.pdf', mime_type: 'application/pdf' },
+    }, -100)
+    expect(media).toMatchObject({ kind: 'file', fileId: 'd', name: 'external_a.pdf' })
   })
 })
 
