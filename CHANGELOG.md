@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1-rc.2-0.2.0
+
+Maintenance release aligned with the setup's two-mode installer. No connector
+behavior change: the same code runs under the container and under the new native
+systemd deployment.
+
 ## 0.2.1-rc.2-0.1.19
 
 - Tool calls, host commands and skill loads become short safe process rows.
