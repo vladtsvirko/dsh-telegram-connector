@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.2.1
+
+Maintenance release: ships with the setup's supervisor-test fix. No connector
+behavior change.
+
 ## 0.2.1-rc.2-0.2.0
 
 Maintenance release aligned with the setup's two-mode installer. No connector
