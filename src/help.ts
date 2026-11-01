@@ -225,11 +225,21 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system',
-    usage: '/system <status|restart|update|confirm|rollback>',
-    summary: 'runtime lifecycle: status, restarts, connector and setup updates',
+    usage: '/system <status|restart|update|confirm|rollback|manage>',
+    summary: 'runtime lifecycle: status, restarts, connector and setup updates, optional components',
     details:
-      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update all` drains agents and moves the setup image through the updater sidecar. `confirm` and `rollback` close the profile trial; rollback does not move the image.',
+      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update all` drains agents and moves the setup image through the updater sidecar. `confirm` and `rollback` close the profile trial; rollback does not move the image. `manage` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
     examples: ['/system status', '/system restart now', '/system update connector'],
+    surfaces: ['control'],
+    group: 'system',
+  },
+  {
+    path: 'system manage',
+    usage: '/system manage [<component> <enable|disable|port> [<port>]]',
+    summary: 'optional components: list, enable, disable, change the port',
+    details:
+      'No argument posts a card with one row per component (Enable/Disable and Port). The updater starts or stops the stack on the host and restarts the runtime so the tools follow; it reports the result in this chat. The text form is for precision, for example /system manage design port 8091. Needs DSH_UPDATER_TOKEN; without it the card explains what is missing.',
+    examples: ['/system manage', '/system manage design enable', '/system manage design port 8091'],
     surfaces: ['control'],
     group: 'system',
   },

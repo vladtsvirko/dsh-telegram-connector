@@ -218,6 +218,7 @@ session id, an id prefix, or the topic title.
 | `/system update all [--i-know-versions-are-incompatible]` | drain sessions, then update setup through the updater sidecar |
 | `/system confirm` | commit the running trial (or press **Commit**) |
 | `/system rollback` | restore the last committed state and restart |
+| `/system manage` | optional components (e.g. the design stack): enable, disable, change the port |
 | `/timezone [zone]` | IANA zone used to read times you type (default `$DSH_TIMEZONE` or UTC) |
 | `/status` | runtime, workspace and session counts |
 | `/about` | connector, runtime and updater state |

@@ -1228,6 +1228,128 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     void runSetupUpdate(mode)
   }
 
+  // --- optional components -------------------------------------------------
+  interface ComponentInfo {
+    name: string
+    label: string
+    description: string
+    enabled: boolean
+    port?: number
+  }
+
+  const fetchComponents = async (): Promise<ComponentInfo[]> => {
+    const response = await updaterFetch('/components')
+    if (!response.ok) throw new Error(`updater answered ${String(response.status)}`)
+    const body = await response.json() as { components?: ComponentInfo[] }
+    return body.components ?? []
+  }
+
+  const componentsText = (components: readonly ComponentInfo[]): string => {
+    const lines = ['**components**']
+    if (components.length === 0) lines.push('nothing registered')
+    for (const component of components) {
+      const state = component.enabled ? '**on**' : 'off'
+      const port = component.port === undefined ? '' : ` · port ${String(component.port)}`
+      lines.push(`• ${component.label} — ${state}${port}`)
+    }
+    lines.push('', 'enable/disable starts or stops the stack; the runtime restarts so the tools follow.')
+    return lines.join('\n')
+  }
+
+  const componentsKeyboard = (components: readonly ComponentInfo[]) => ({
+    inline_keyboard: components.map((component) => ([
+      {
+        text: component.enabled ? '⏹ Disable' : '▶️ Enable',
+        callback_data: `cmp:${component.enabled ? 'disable' : 'enable'}:${component.name}`,
+      },
+      {
+        text: component.port === undefined ? '⚙️ Port' : `⚙️ Port ${String(component.port)}`,
+        callback_data: `cmp:port:${component.name}`,
+      },
+    ])),
+  })
+
+  const postComponent = async (name: string, action: 'enable' | 'disable' | 'configure', port?: number): Promise<string> => {
+    const response = await updaterFetch('/components', { name, action, ...(port === undefined ? {} : { port }) })
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      return `⚠️ updater refused (${String(response.status)})${detail.length > 0 ? `: ${detail.slice(0, 200)}` : ''}`
+    }
+    return `⏳ ${name}: ${action}${port === undefined ? '' : ` ${String(port)}`} accepted — the updater reports when it is done.`
+  }
+
+  const showComponents = async (message: TgMessage): Promise<void> => {
+    if (updaterToken.length === 0) {
+      return reply(message, '**components** — set `DSH_UPDATER_TOKEN` to manage them from here.')
+    }
+    let components: ComponentInfo[]
+    try {
+      components = await fetchComponents()
+    } catch (error) {
+      return reply(message, `⚠️ cannot reach the updater: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    await client.sendMessage(message.chat.id, toTelegramHtml(componentsText(components)), {
+      parseMode: 'HTML',
+      replyMarkup: componentsKeyboard(components),
+    })
+  }
+
+  const manageComponents = async (message: TgMessage, args: readonly string[]): Promise<void> => {
+    if (args.length === 0) return showComponents(message)
+    const [name, action, value] = args
+    if (name === undefined || action === undefined) {
+      return reply(message, 'usage: `/system manage [<component> <enable|disable|port> [<port>]]`')
+    }
+    if (action === 'enable' || action === 'disable') {
+      return reply(message, await postComponent(name, action))
+    }
+    if (action === 'port') {
+      const port = Number(value)
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+        return reply(message, 'usage: `/system manage <component> port <1024-65535>`')
+      }
+      return reply(message, await postComponent(name, 'configure', port))
+    }
+    return reply(message, 'usage: `/system manage [<component> <enable|disable|port> [<port>]]`')
+  }
+
+  const handleComponentButton = async (query: TgCallbackQuery): Promise<void> => {
+    const [, action, name, value] = (query.data ?? '').split(':')
+    const card = query.message
+    if (name === undefined || card === undefined) {
+      await client.answerCallbackQuery(query.id, 'unknown action').catch(() => undefined)
+      return
+    }
+    if (action === 'port') {
+      await client.answerCallbackQuery(query.id, 'choose a port').catch(() => undefined)
+      const current = value ?? ''
+      await client.editMessageText(card.chat.id, card.message_id, toTelegramHtml(`**${name}** — port\n\npick one, or send \`/system manage ${name} port <n>\` for another.`), {
+        parseMode: 'HTML',
+        replyMarkup: {
+          inline_keyboard: [[
+            { text: '8090', callback_data: `cmp:set:${name}:8090` },
+            { text: '8091', callback_data: `cmp:set:${name}:8091` },
+            { text: '8092', callback_data: `cmp:set:${name}:8092` },
+          ]],
+        },
+      }).catch(() => undefined)
+      void current
+      return
+    }
+    if (action === 'set') {
+      const port = Number(value)
+      await client.answerCallbackQuery(query.id, 'applying…').catch(() => undefined)
+      await client.editMessageText(card.chat.id, card.message_id, toTelegramHtml(await postComponent(name, 'configure', port)), { parseMode: 'HTML' }).catch(() => undefined)
+      return
+    }
+    if (action === 'enable' || action === 'disable') {
+      await client.answerCallbackQuery(query.id, 'applying…').catch(() => undefined)
+      await client.editMessageText(card.chat.id, card.message_id, toTelegramHtml(await postComponent(name, action)), { parseMode: 'HTML' }).catch(() => undefined)
+      return
+    }
+    await client.answerCallbackQuery(query.id, 'unknown action').catch(() => undefined)
+  }
+
   const handleSystem = async (message: TgMessage, args: readonly string[]): Promise<void> => {
     const [sub, ...tail] = args
     const mode = tail.join(' ').trim()
@@ -1240,6 +1362,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       return reply(message, lines.join('\n'))
     }
+    if (sub === 'manage' || sub === 'components') return manageComponents(message, tail)
     if (sub === 'restart') return restartRuntime(message, mode)
     if (sub === 'confirm') return confirmTrial(message)
     if (sub === 'rollback') return rollbackTrial(message)
@@ -4095,6 +4218,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             }
             if (!isAllowed(query.from?.id)) {
               await client.answerCallbackQuery(query.id, 'not authorized').catch(() => undefined)
+              continue
+            }
+            if (query.data?.startsWith('cmp:')) {
+              await handleComponentButton(query)
               continue
             }
             await handleTrialButton(query)

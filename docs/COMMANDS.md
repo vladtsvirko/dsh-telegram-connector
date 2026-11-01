@@ -75,6 +75,7 @@ connector refuses to disable or remove itself.
 | `/system update all [--i-know-versions-are-incompatible]` | drain, then update setup through the updater sidecar; the flag permits a major/DSH jump |
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
+| `/system manage [<component> <enable|disable|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form |
 | `/status` | model route, workspace/session counts, poller, timezone, supervisor |
 | `/about` | connector version, runtime version, updater state |
 | `/reactions` | show the read, streaming and staged-media reactions |
