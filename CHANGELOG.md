@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.0
+
+- `/system manage` lists the optional components the setup registers and posts a
+  card with Enable / Disable and Port buttons. The text form
+  `/system manage <component> <enable|disable|port> [<port>]` does the same
+  without a tap. The updater applies the change, restarts the runtime and
+  reports; the connector never touches Docker.
+
 ## 0.2.1-rc.2-0.3.1
 
 - Process cards no longer wait for a rate-limited main bot. A summary falls back
