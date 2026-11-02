@@ -101,33 +101,3 @@ export function promptText(message: MirrorMessage | undefined): string | undefin
   const text = messageText(message)
   return text.length === 0 || isInjectedContext(text) ? undefined : text
 }
-
-/**
- * Serialises tasks per key. Enqueue is synchronous, so the call order is the
- * order in which tasks are appended, regardless of how long an earlier task
- * takes.
- */
-export class MirrorQueue {
-  private readonly tails = new Map<string, Promise<void>>()
-
-  constructor(private readonly onError: (error: unknown) => void = () => undefined) {}
-
-  enqueue(key: string, task: () => Promise<void>): Promise<void> {
-    const previous = this.tails.get(key) ?? Promise.resolve()
-    const next = previous
-      .then(task)
-      .catch((error: unknown) => {
-        this.onError(error)
-      })
-    this.tails.set(key, next)
-    void next.then(() => {
-      if (this.tails.get(key) === next) this.tails.delete(key)
-    })
-    return next
-  }
-
-  /** Number of keys with work queued or running; tests use it to wait for idle. */
-  get size(): number {
-    return this.tails.size
-  }
-}

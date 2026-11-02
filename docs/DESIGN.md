@@ -281,7 +281,10 @@ update → allowlist → private? control
   sent with a command is staged for the next prompt.
 - `agent/error` is reported in the same topic.
 - Conversations driven from the web UI are mirrored one-way into the bound
-  topic while the connector is not driving that topic.
+  topic while the connector is not driving that topic. The mirror is the same
+  sink as a Telegram turn (buffer, flush, edits, splitting); the differences are
+  declared, not duplicated: it echoes the prompt because Telegram never saw it,
+  and it shows no process card because the web UI already does.
 
 ## 9. Persistence and restart
 

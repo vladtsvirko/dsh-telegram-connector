@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MirrorQueue, messageText, promptText, isForeignPrompt, claimsTopic, type TopicClaim } from '../src/mirror.js'
+import { messageText, promptText, isForeignPrompt, claimsTopic, type TopicClaim } from '../src/mirror.js'
 
 const timeContext = [
   'Time sampled while preparing turn 2, step 1:',
@@ -40,49 +40,6 @@ describe('mirror text', () => {
   })
 })
 
-describe('MirrorQueue', () => {
-  it('keeps prompt before answer when the prompt write is slow', async () => {
-    const queue = new MirrorQueue()
-    const sent: string[] = []
-    const prompt = queue.enqueue('chat:1', async () => {
-      await new Promise((resolve) => setTimeout(resolve, 25))
-      sent.push('prompt')
-    })
-    const answer = queue.enqueue('chat:1', async () => {
-      sent.push('answer')
-    })
-    await Promise.all([prompt, answer])
-    expect(sent).toEqual(['prompt', 'answer'])
-  })
-
-  it('keeps independent topics independent', async () => {
-    const queue = new MirrorQueue()
-    const sent: string[] = []
-    const slow = queue.enqueue('chat:1', async () => {
-      await new Promise((resolve) => setTimeout(resolve, 25))
-      sent.push('slow')
-    })
-    const fast = queue.enqueue('chat:2', async () => {
-      sent.push('fast')
-    })
-    await Promise.all([slow, fast])
-    expect(sent).toEqual(['fast', 'slow'])
-  })
-
-  it('continues after a failed task', async () => {
-    const errors: unknown[] = []
-    const queue = new MirrorQueue((error) => errors.push(error))
-    const sent: string[] = []
-    await queue.enqueue('chat:1', async () => {
-      throw new Error('telegram down')
-    })
-    await queue.enqueue('chat:1', async () => {
-      sent.push('next')
-    })
-    expect(errors).toHaveLength(1)
-    expect(sent).toEqual(['next'])
-  })
-})
 
 describe('isForeignPrompt', () => {
   it('treats an unrecorded user prompt as another client', () => {

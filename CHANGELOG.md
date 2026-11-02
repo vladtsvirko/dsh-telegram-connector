@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.9
+
+- One delivery path for a topic. A mirrored web turn now feeds the same sink as
+  a Telegram turn — buffer, flush, edits, splitting, rich/HTML fallback — instead
+  of a second plain-text pipeline through the outbox. Net -219 lines.
+- What differs is declared on the sink, not duplicated in code: the mirror echoes
+  the prompt (Telegram never saw it) and shows no process card (the web UI
+  already does).
+- A session taken over by another client drops its stale agent, so the next
+  Telegram prompt resumes instead of reusing a handle that owns nothing.
+- `MirrorQueue` and the mirror process-card machinery are gone.
+
 ## 0.2.1-rc.2-0.4.8
 
 - A failed Telegram prompt no longer silences the topic. The attempt created a

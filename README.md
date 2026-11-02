@@ -279,7 +279,9 @@ DSH state is the truth; Telegram follows it.
   (one-way) while the connector is not driving that topic. Only your prompts and
   the assistant's answers are posted — harness-injected context (time readings,
   runtime context, skill catalogs) is not, and the prompt/answer pair keeps its
-  order even when Telegram is rate-limiting.
+  order even when Telegram is rate-limiting. A mirrored turn streams through the
+  same sink as a Telegram one (edits, splitting, the rich/HTML fallback) but has
+  no process card — you are watching the process in the web UI.
 
 `/sync` is the explicit adoption step. For every session in the workspace it
 decides once: archived → skip; bound → probe the topic with a message send and

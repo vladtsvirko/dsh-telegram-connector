@@ -67,7 +67,7 @@ import { connectorVersion, runtimeVersion } from './about.js'
 import { BotPool, type BotHandle } from './bots.js'
 import { Outbox, type ItemPriority, type OutboxItem } from './outbox.js'
 import { SessionBridge, type TurnRecord } from './bridge.js'
-import { claimsTopic, isForeignPrompt, MirrorQueue, messageText, promptText } from './mirror.js'
+import { claimsTopic, isForeignPrompt, messageText, promptText } from './mirror.js'
 import { isOwnershipError, OWNERSHIP_HINT } from './errors.js'
 import {
   commandLabel,
@@ -257,6 +257,12 @@ interface TopicRuntime {
    * instead of streaming into a handle it no longer owns.
    */
   foreign?: boolean
+  /**
+   * A sink for a session driven elsewhere (the web UI). It streams into the
+   * topic exactly like a Telegram turn, but it does not echo the prompt it did
+   * not send and shows no process card — the user watches that in the web UI.
+   */
+  mirror?: boolean
   dispose?: () => Promise<void>
   buffer: string
   parts: number[]
@@ -608,7 +614,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   let processCardSweep: NodeJS.Timeout | undefined
   /** Assigned once mirror state is declared, so one sweep covers both surfaces. */
-  let sweepMirrorCards = (): void => undefined
 
   const sweepProcessCards = (): void => {
     const now = Date.now()
@@ -629,7 +634,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         else forgetProcessCard(card.sessionId)
       }
     }
-    sweepMirrorCards()
   }
 
   const startProcessCardSweep = (): void => {
@@ -2114,6 +2118,36 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   // --- streaming -----------------------------------------------------------
 
   const runtimeKey = (chatId: number, threadId: number): string => `${chatId}:${threadId}`
+
+  /** The sink for a bound topic, created on demand for a session driven elsewhere. */
+  /** Hand a topic back to the mirror: drop the agent whose handle is gone. */
+  const releaseAgent = (runtime: TopicRuntime): void => {
+    const dispose = runtime.dispose
+    runtime.agent = undefined
+    runtime.dispose = undefined
+    runtime.foreign = true
+    if (dispose !== undefined) void dispose().catch((error: unknown) => stderr(`release agent failed: ${String(error)}`))
+  }
+
+  const sinkForBinding = (chatId: number, threadId: number, workspace: WorkspaceBinding, session: SessionBinding): TopicRuntime => {
+    const key = runtimeKey(chatId, threadId)
+    const existing = runtimes.get(key)
+    if (existing !== undefined) return existing
+    const created: TopicRuntime = {
+      chatId,
+      threadId,
+      workspace,
+      session,
+      mirror: true,
+      buffer: '',
+      parts: [],
+      partRich: [],
+      reactionParts: new Map(),
+      process: [],
+    }
+    runtimes.set(key, created)
+    return created
+  }
 
   const runtimeFor = (message: TgMessage, workspace: WorkspaceBinding, session: SessionBinding): TopicRuntime => {
     const threadId = message.message_thread_id ?? 0
@@ -4527,10 +4561,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       runtime.process = []
       runtime.processCard = undefined
     }
-    for (const state of mirrorProcesses.values()) {
-      if (state.timer !== undefined) clearTimeout(state.timer)
-    }
-    mirrorProcesses.clear()
     await closeAllProcessCards('⚠️ Connector stopped — process view closed.')
       .catch((error: unknown) => stderr(`cannot close process cards: ${String(error)}`))
     for (const group of pendingGroups.values()) {
@@ -4564,21 +4594,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   /**
    * Mirror a conversation driven elsewhere (the web UI) into its topic.
-   *
-   * Events arrive in log order but each send is asynchronous; a per-topic queue
-   * keeps the prompt ahead of the answer it produced. The topic is checked again
-   * when the task runs, because a Telegram turn may have claimed the session
-   * while an earlier mirror was still being written to the outbox.
    */
-  const mirrorQueue = new MirrorQueue((error: unknown) => {
-    stderr(`mirror: ${String(error)}`)
-  })
+  /**
+   * Mirror a conversation driven elsewhere into its topic.
+   *
+   * Same sink as a Telegram turn — buffer, flush, edits — so both surfaces look
+   * alike. The only differences are declared on the sink: no process card, and
+   * the user's prompt is echoed because Telegram never saw it.
+   */
   const mirror = (sessionId: string, text: string, fromUser: boolean): void => {
     const found = bindingForSession(sessionId)
     if (found === undefined) return
-    // Thread ids are only unique inside one group; matching on the thread alone
-    // would drop a General-topic mirror whenever another group has one.
-    const claimed = (): boolean => claimsTopic(
+    // A Telegram turn that actually holds this topic is already posting; a
+    // runtime without an agent is a failed attempt, not a claim.
+    if (claimsTopic(
       [...runtimes.values()].map((candidate) => ({
         chatId: candidate.chatId,
         threadId: candidate.threadId,
@@ -4587,141 +4616,25 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       })),
       found.chatId,
       found.threadId,
-    )
-    if (claimed()) return
-    const name = bindings.workspaces[found.bound.workspaceId]?.title ?? 'workspace'
-    const markdown = fromUser ? `💬 **you (web)** · ${name}\n${text}` : text
-    const key = `${found.chatId}:${found.threadId}`
-    void mirrorQueue.enqueue(key, async () => {
-      if (claimed()) return
-      await sendTo(found.chatId, found.threadId, markdown)
-    })
+    )) return
+    const workspace = bindings.workspaces[found.bound.workspaceId]
+    if (workspace === undefined) return
+    if (fromUser) {
+      const name = workspace.title ?? 'workspace'
+      void sendTo(found.chatId, found.threadId, `💬 **you (web)** · ${name}\n${text}`)
+      return
+    }
+    const sink = sinkForBinding(found.chatId, found.threadId, workspace, found.bound)
+    sink.buffer = sink.buffer.length === 0 ? text : `${sink.buffer}\n\n${text}`
+    scheduleFlush(sink)
   }
 
   /**
-   * A live process card for a session driven elsewhere (the web UI). Telegram
-   * sessions use the collapsed summary instead; the mirror has no streaming
-   * answer to attach one to, so the card is the progress surface.
+   * One sink per topic, whichever surface drives it. A Telegram turn streams and
+   * shows a process card; a mirrored web turn streams the same way but echoes the
+   * prompt instead (Telegram never saw it) and shows no card — the user is
+   * watching the process in the web UI.
    */
-  interface MirrorProcess extends ProcessCardState {
-    items: ProcessItem[]
-    turnActive: boolean
-    turnStarted: boolean
-  }
-  const mirrorProcesses = new Map<string, MirrorProcess>()
-
-  const mirrorProcessFor = (sessionId: string): MirrorProcess | undefined => {
-    if (processMode() === 'off') return undefined
-    const found = bindingForSession(sessionId)
-    if (found === undefined) return undefined
-    const claimed = (): boolean => [...runtimes.values()]
-      .some((candidate) => candidate.chatId === found.chatId && candidate.threadId === found.threadId)
-    if (claimed()) {
-      const existing = mirrorProcesses.get(sessionId)
-      if (existing !== undefined) {
-        if (existing.timer !== undefined) clearTimeout(existing.timer)
-        if (existing.messageId !== undefined) {
-          void updateProcessCard(existing, existing.items, true, '⚠️ Process view moved to Telegram')
-        }
-        forgetProcessCard(sessionId)
-        mirrorProcesses.delete(sessionId)
-      }
-      return undefined
-    }
-    let state = mirrorProcesses.get(sessionId)
-    if (state === undefined) {
-      state = {
-        sessionId,
-        chatId: found.chatId,
-        threadId: found.threadId,
-        items: [],
-        rich: true,
-        turnActive: false,
-        turnStarted: false,
-        chain: Promise.resolve(),
-        lastTouched: Date.now(),
-      }
-      mirrorProcesses.set(sessionId, state)
-    }
-    return state
-  }
-
-  const scheduleMirrorProcess = (state: MirrorProcess): void => {
-    if (processMode() === 'live') scheduleProcessCard(state, state.items)
-  }
-
-  const recordMirrorProcess = (sessionId: string, item: ProcessItem): void => {
-    const state = mirrorProcessFor(sessionId)
-    if (state === undefined) return
-    if (state.turnActive !== true) {
-      state.turnActive = true
-      state.turnStarted = false
-      state.items = []
-    }
-    const index = state.items.findIndex((candidate) => candidate.id === item.id)
-    if (index === -1) state.items.push(item)
-    else state.items[index] = item
-    state.lastTouched = Date.now()
-    scheduleMirrorProcess(state)
-  }
-
-  const completeMirrorProcess = (
-    sessionId: string,
-    id: string,
-    status: 'done' | 'error',
-    detail?: string,
-  ): void => {
-    const state = mirrorProcesses.get(sessionId)
-    if (state === undefined) return
-    const index = state.items.findIndex((candidate) => candidate.id === id)
-    if (index === -1) return
-    const current = state.items[index]
-    if (current === undefined) return
-    state.items[index] = { ...current, status, ...(detail === undefined ? {} : { detail }) }
-    state.lastTouched = Date.now()
-    scheduleMirrorProcess(state)
-  }
-
-  const startMirrorTurn = (sessionId: string): void => {
-    const state = mirrorProcessFor(sessionId)
-    if (state === undefined) return
-    state.turnActive = true
-    state.turnStarted = true
-    state.items = []
-    state.lastTouched = Date.now()
-  }
-
-  const finishMirrorTurn = async (sessionId: string, heading?: string): Promise<void> => {
-    const state = mirrorProcesses.get(sessionId)
-    if (state === undefined) return
-    if (state.timer !== undefined) {
-      clearTimeout(state.timer)
-      state.timer = undefined
-    }
-    state.turnActive = false
-    if (state.items.length > 0) {
-      if (processMode() === 'live') {
-        await updateProcessCard(state, state.items, true, heading ?? '✅ Process')
-      } else {
-        await sendProcessSummary(state.chatId, state.threadId, state.items, heading)
-      }
-    }
-    forgetProcessCard(sessionId)
-    mirrorProcesses.delete(sessionId)
-  }
-
-  sweepMirrorCards = (): void => {
-    const now = Date.now()
-    for (const [sessionId, state] of mirrorProcesses) {
-      if (state.turnActive !== true) continue
-      if (now - state.lastTouched < PROCESS_CARD_TTL_MS) continue
-      state.items = state.items.map((item) => item.status === 'running'
-        ? { ...item, status: 'error' as const, detail: 'timed out' }
-        : item)
-      void finishMirrorTurn(sessionId, '⚠️ Process interrupted')
-    }
-  }
-
   ctx.on('session/event', (session, event: SessionEvent) => {
     const owner = [...runtimes.values()].find((candidate) => candidate.agent?.session === session)
     if (owner !== undefined && owner.foreign !== true) {
@@ -4731,7 +4644,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         if (pending !== undefined) injected.delete(sessionId)
         const source = (event.data as { source?: { kind?: string } }).source
         if (isForeignPrompt(pending !== undefined, source?.kind)) {
-          owner.foreign = true
+          releaseAgent(owner)
           stderr(`session ${sessionId} is driven elsewhere; mirroring it instead of streaming`)
         }
       }
@@ -4740,75 +4653,23 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const sessionId = String((session as { id?: unknown }).id ?? '')
       if (sessionId.length === 0) return
       const eventType = (event as { type: string }).type
-      if (eventType === 'turn/start') {
-        startMirrorTurn(sessionId)
-        return
-      }
       if (eventType === 'turn/end') {
-        void finishMirrorTurn(sessionId)
-        return
-      }
-      if (event.type === 'tool/call') {
-        recordMirrorProcess(sessionId, {
-          id: `tool:${String(event.data.callId)}`,
-          kind: 'tool',
-          label: toolLabel(event.data.name, event.data.arguments),
-          status: 'running',
+        // flush whatever the mirrored turn left in the sink
+        const key = [...runtimes.entries()].find(([, candidate]) => {
+          const found = bindingForSession(sessionId)
+          return found !== undefined && candidate.chatId === found.chatId && candidate.threadId === found.threadId
         })
-        return
-      }
-      if (event.type === 'tool/result') {
-        const reason = event.data.error?.reason
-        completeMirrorProcess(
-          sessionId,
-          `tool:${String(event.data.message.toolCallId)}`,
-          event.data.message.isError === true ? 'error' : 'done',
-          reason === undefined ? undefined : redactPreview(reason),
-        )
-        return
-      }
-      if (eventType === 'command/run') {
-        const data = (event as unknown as { data: { commandId?: unknown; name?: unknown; args?: unknown } }).data
-        if (typeof data.name === 'string') {
-          recordMirrorProcess(sessionId, {
-            id: `command:${String(data.commandId)}`,
-            kind: 'command',
-            label: commandLabel(data.name, typeof data.args === 'string' ? data.args : undefined),
-            status: 'running',
-          })
-        }
-        return
-      }
-      if (eventType === 'command/done') {
-        const data = (event as unknown as { data: { commandId?: unknown; kind?: string; text?: unknown } }).data
-        completeMirrorProcess(
-          sessionId,
-          `command:${String(data.commandId)}`,
-          data.kind === 'success' ? 'done' : 'error',
-          data.kind === 'success' ? undefined : redactPreview(typeof data.text === 'string' ? data.text : 'command failed'),
-        )
-        const state = mirrorProcesses.get(sessionId)
-        if (state !== undefined && state.turnStarted !== true) void finishMirrorTurn(sessionId)
+        if (key !== undefined) void finishStream(key[1])
         return
       }
       if (event.type === 'user/message') {
-        const source = (event.data as { source?: { kind?: string; name?: string } }).source
-        if (source?.kind === 'skill-invocation' && typeof source.name === 'string') {
-          recordMirrorProcess(sessionId, {
-            id: `skill:${source.name}:${String((event as { seq?: unknown }).seq ?? Date.now())}`,
-            kind: 'skill',
-            label: skillLabel(source.name),
-            status: 'done',
-          })
-          return
-        }
         const pending = injected.get(sessionId)
         if (pending !== undefined) {
           injected.delete(sessionId)
           return
         }
-        // Only a human prompt is mirrored. DSH also records injected model
-        // context (time readings, skill content, notices) as user/message.
+        // Only a human prompt is mirrored; DSH records injected model context
+        // (time readings, skill content, notices) as user/message too.
         const text = promptText(event.data)
         if (text !== undefined) mirror(sessionId, text, true)
         return
@@ -4932,7 +4793,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (/active write handle|already owned/i.test(message)) {
         // Another client holds the session. Mirror it, and say so instead of
         // rendering this as a mysterious interrupted turn.
-        runtime.foreign = true
+        releaseAgent(runtime)
         void (async () => {
           await finishStream(runtime)
           await finishProcessTurn(runtime, '↪️ Session moved to the web UI')
@@ -4957,14 +4818,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return
     }
 
-    const sessionId = String((payload.agent as unknown as { session?: { id?: unknown } }).session?.id ?? '')
-    if (sessionId.length === 0) return
-    const mirrorState = mirrorProcesses.get(sessionId)
-    if (mirrorState === undefined) return
-    mirrorState.items = mirrorState.items.map((item) => item.status === 'running'
-      ? { ...item, status: 'error' as const, detail: redactPreview(message) }
-      : item)
-    void finishMirrorTurn(sessionId, '⚠️ Process interrupted')
+
   })
 
   ctx.effect(() => {
