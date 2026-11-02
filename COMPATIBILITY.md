@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.2-0.4.4 | `0.2.1-rc.2` | tested | maintenance release; setup fix: a port change no longer starts a stopped component; the setup repo ships `v0.2.1-rc.2-0.4.4` |
+| 0.2.1-rc.2-0.4.5 | `0.2.1-rc.2` | tested | maintenance release; setup fix: components are reached over the shared network and the post-change probe is advisory; the setup repo ships `v0.2.1-rc.2-0.4.5` |
+| 0.2.1-rc.2-0.4.4 | `0.2.1-rc.2` | previous | a port change no longer starts a stopped component |
 | 0.2.1-rc.2-0.4.3 | `0.2.1-rc.2` | previous | the setup installs dsh-penpot-plugin with the design component |
 | 0.2.1-rc.2-0.4.2 | `0.2.1-rc.2` | previous | design stack uses the in-repo penpot CLI instead of an MCP bridge |
 | 0.2.1-rc.2-0.4.1 | `0.2.1-rc.2` | previous | setup fix that built the design MCP bridge locally |
@@ -16,7 +17,7 @@ every release.
 | 0.2.1-rc.2-0.2.1 | `0.2.1-rc.2` | previous | maintenance release; setup supervisor-test fix |
 | 0.2.1-rc.2-0.2.0 | `0.2.1-rc.2` | previous | two-mode installer release (no connector change) |
 | 0.2.1-rc.2-0.1.19 | `0.2.1-rc.2` | previous | process summaries/live cards + live host-command and skill bridge |
-| 0.2.1-rc.2-0.4.4 | `>=0.1.0-rc.6 <0.3.0-0` | declared peer range | outside the tested version, expect drift |
+| 0.2.1-rc.2-0.4.5 | `>=0.1.0-rc.6 <0.3.0-0` | declared peer range | outside the tested version, expect drift |
 
 `/about` in the bot chat prints the connector version, the detected runtime
 version and the declared peer range.
@@ -32,7 +33,7 @@ purpose.
 ## Version line
 
 Connector versions are `<dsh-version>-<major>.<minor>.<patch>`, for example
-`0.2.1-rc.2-0.4.4`, and match the setup repo tag. The product part starts at
+`0.2.1-rc.2-0.4.5`, and match the setup repo tag. The product part starts at
 `0.0.0` for each new DSH alignment; `0.x` is the compatible line and a new major
 (`1.0.0`) marks an incompatible change. Same-major updates may jump between
 releases; crossing a major or a DSH line needs the explicit

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.5
+
+Maintenance release for the setup fix that reaches Penpot over the shared
+network and no longer fails a component change on an unreachable probe. No
+connector behavior change.
+
 ## 0.2.1-rc.2-0.4.4
 
 Maintenance release for the setup fix that stops a port change from starting a
