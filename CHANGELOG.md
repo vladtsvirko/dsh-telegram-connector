@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.7.2
+
+Maintenance release; no connector change. Aligned with the setup fix for the
+native prepare working directory.
+
 ## 0.2.1-rc.2-0.7.1
 
 Maintenance release; no connector change. It exists because the setup repo ships
