@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.7.1
+
+Maintenance release; no connector change. It exists because the setup repo ships
+one aligned tag and 0.7.1 fixes that repository's native smoke workflow.
+
 ## 0.2.1-rc.2-0.7.0
 
 ### Added
