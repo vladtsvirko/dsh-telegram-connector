@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.1
+
+Maintenance release for the setup's local-build fix of the design stack. No
+connector behavior change.
+
 ## 0.2.1-rc.2-0.4.0
 
 - `/system manage` lists the optional components the setup registers and posts a
