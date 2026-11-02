@@ -251,10 +251,18 @@ export class Outbox {
         return
       }
       if (this.isMembershipError(error)) {
-        this.pool.markMissing(bot, item.chatId, true)
-        this.pool.block(bot, item.chatId)
-        await rename(sending, pending).catch(() => undefined)
-        this.requeueFront(item)
+        // The main bot is the poller and the only one that can post in a private
+        // chat: its absence means the chat is gone or the bot was removed, and
+        // the reconcile that clears this flag never checks the main bot. Retry
+        // once, then report instead of blocking it forever.
+        if (!bot.main) {
+          this.pool.markMissing(bot, item.chatId, true)
+          this.pool.block(bot, item.chatId)
+          await rename(sending, pending).catch(() => undefined)
+          this.requeueFront(item)
+          return
+        }
+        await this.quarantine(item, `telegram refused it: ${String(error)}`, sending)
         return
       }
       if (this.isDefinite(error)) {
@@ -293,13 +301,18 @@ export class Outbox {
     }
   }
 
+  /**
+   * A bot that is not in the chat at all. "Not enough rights" is deliberately
+   * not here: the bot is a member and Telegram refused one message (closed
+   * topic, restricted member). Treating that as membership marked a bot missing
+   * and silenced the whole group for an hour.
+   */
   private isMembershipError(error: unknown): boolean {
     if (!(error instanceof TelegramApiError) || error.errorCode !== 400 && error.errorCode !== 403) return false
     const text = `${error.description}`.toLowerCase()
     return text.includes('not a member')
       || text.includes('chat not found')
       || text.includes('was kicked')
-      || text.includes('not enough rights')
       || text.includes('bot is not a member')
   }
 

@@ -121,19 +121,40 @@ one-tap `?startgroup=` link — you create the group, the bot binds it.
 
 ## Install
 
+The supported path is the setup repository, which installs the runtime, this
+connector at the matching tag, and a supervisor that can restart it from
+Telegram:
+
 ```sh
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector
+git clone https://github.com/vladtsvirko/dsh-tg-docker-setup
+cd dsh-tg-docker-setup
+./install.sh            # asks for the bot token, the model and the key
 ```
 
-The package is a plugin bundle: `cordis.patch.yml` mounts one row. Put the token
-in the environment (never in the YAML):
+`./install.sh --check` prints the whole plan and changes nothing. The setup
+pins the connector tag to its own `VERSION`, so the two never drift.
+
+Installing by hand into an existing runtime works too, but pin the tag and grant
+the build script, or the install aborts before any code exists:
 
 ```sh
+# 1. allow the git package's build (its `prepare` compiles src/ into lib/)
+cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
+allowBuilds:
+  dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
+YAML
+
+# 2. add the plugin at an exact tag
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.2-0.4.11
+
+# 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
 ```
 
-Installing from git runs the package's `prepare` build; pnpm ≥ 10 may ask you to
-allow that build step. Restart the runtime after adding the plugin.
+The package is a plugin bundle: `cordis.patch.yml` mounts one row. Installing
+from git runs the package's `prepare` build; pnpm ≥ 10 refuses that build until
+the `allowBuilds` entry above exists (pnpm prints the exact key). Restart the
+runtime after adding the plugin.
 
 ## Configuration
 

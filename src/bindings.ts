@@ -149,23 +149,42 @@ export function bindingsPath(dshHome: string): string {
 }
 
 export async function loadBindings(file: string): Promise<Bindings> {
+  let raw: string
   try {
-    const parsed = JSON.parse(await readFile(file, 'utf8')) as Partial<Bindings>
-    if (parsed.version !== 2) return structuredClone(EMPTY)
-    return {
-      version: 2,
-      ...(typeof parsed.controlChatId === 'number' ? { controlChatId: parsed.controlChatId } : {}),
-      ...(typeof parsed.lastUpdateId === 'number' ? { lastUpdateId: parsed.lastUpdateId } : {}),
-      ...(isTrialMessage(parsed.trialMessage) ? { trialMessage: parsed.trialMessage } : {}),
-      ...(isUpdate(parsed.update) ? { update: parsed.update } : {}),
-      ...(typeof parsed.timezone === 'string' ? { timezone: parsed.timezone } : {}),
-      ...(isReactions(parsed.reactions) ? { reactions: parsed.reactions } : {}),
-      ...(isProcessCards(parsed.processCards) ? { processCards: parsed.processCards } : {}),
-      workspaces: parsed.workspaces ?? {},
-      sessions: parsed.sessions ?? {},
+    raw = await readFile(file, 'utf8')
+  } catch (error) {
+    // First boot has no file; any other read failure is worth naming.
+    if ((error as { code?: unknown }).code !== 'ENOENT') {
+      console.error(`dsh-telegram-connector: cannot read ${file}: ${String(error)}`)
     }
-  } catch {
     return structuredClone(EMPTY)
+  }
+  const keep = async (suffix: string, reason: string): Promise<Bindings> => {
+    // A corrupt or older file used to be replaced by an empty document and then
+    // overwritten on the next save — every binding gone, silently. Keep it.
+    const backup = `${file}.${suffix}-${String(Date.now())}`
+    await rename(file, backup).catch(() => undefined)
+    console.error(`dsh-telegram-connector: ${file} ${reason}; kept it as ${backup} and started empty`)
+    return structuredClone(EMPTY)
+  }
+  let parsed: Partial<Bindings>
+  try {
+    parsed = JSON.parse(raw) as Partial<Bindings>
+  } catch (error) {
+    return keep('corrupt', `is not valid JSON (${String(error)})`)
+  }
+  if (parsed.version !== 2) return keep(`v${String(parsed.version)}`, `is version ${String(parsed.version)}, expected 2`)
+  return {
+    version: 2,
+    ...(typeof parsed.controlChatId === 'number' ? { controlChatId: parsed.controlChatId } : {}),
+    ...(typeof parsed.lastUpdateId === 'number' ? { lastUpdateId: parsed.lastUpdateId } : {}),
+    ...(isTrialMessage(parsed.trialMessage) ? { trialMessage: parsed.trialMessage } : {}),
+    ...(isUpdate(parsed.update) ? { update: parsed.update } : {}),
+    ...(typeof parsed.timezone === 'string' ? { timezone: parsed.timezone } : {}),
+    ...(isReactions(parsed.reactions) ? { reactions: parsed.reactions } : {}),
+    ...(isProcessCards(parsed.processCards) ? { processCards: parsed.processCards } : {}),
+    workspaces: parsed.workspaces ?? {},
+    sessions: parsed.sessions ?? {},
   }
 }
 

@@ -13,8 +13,13 @@
  */
 
 export const MAX_MESSAGE = 4096
-/** Leave room for the tags a split can add (pre/code reopen). */
-export const SAFE_LENGTH = 3800
+/**
+ * Leave room for what a split adds or conversion expands: reopening a fence,
+ * and the HTML escape/markup inflation that made a 3,780-character /man chunk
+ * 4,396 characters once converted (Telegram then refused it and the reply fell
+ * back to plain text). 3400 keeps typical prose formatted.
+ */
+export const SAFE_LENGTH = 3400
 
 /** Telegram's rich-message ceiling, kept here for callers that want the headroom. */
 export const MAX_RICH_MESSAGE = 32768
@@ -601,4 +606,37 @@ export function splitMessage(text: string, limit = SAFE_LENGTH): string[] {
     chunks.push(inFence ? `${current}\n\`\`\`` : current)
   }
   return chunks.filter((chunk) => chunk.length > 0)
+}
+
+/**
+ * Split so every chunk still fits after conversion to Telegram HTML.
+ *
+ * The markdown length is a poor proxy: 3,400 characters of bold and escaped
+ * text can become 4,900 characters of HTML, and Telegram refuses the whole
+ * chunk. Splitting again on the converted length keeps the formatting instead
+ * of letting the reply fall back to plain text.
+ *
+ * @param text - the whole message, in Telegram-flavoured markdown.
+ * @param convert - the conversion the sender will use, normally `toTelegramHtml`.
+ * @returns chunks whose converted form fits one Telegram message.
+ */
+export function splitForHtml(text: string, convert: (chunk: string) => string = toTelegramHtml): string[] {
+  const out: string[] = []
+  const queue = splitMessage(text)
+  while (queue.length > 0) {
+    const chunk = queue.shift()
+    if (chunk === undefined) break
+    if (convert(chunk).length <= MAX_MESSAGE || chunk.length <= 200) {
+      out.push(chunk)
+      continue
+    }
+    const halves = splitMessage(chunk, Math.max(400, Math.floor(chunk.length / 2)))
+    if (halves.length <= 1) {
+      // a single unbreakable line: send it and let the caller's fallback decide
+      out.push(chunk)
+      continue
+    }
+    queue.unshift(...halves)
+  }
+  return out
 }

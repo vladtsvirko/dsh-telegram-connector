@@ -21,7 +21,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 
 import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgMessage } from './telegram.js'
-import { splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
+import { splitForHtml, splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
 import { installTelegramPrompt, registerTelegramSkill } from './telegram-prompt.js'
 import {
   attachmentPlaceholder,
@@ -63,7 +63,7 @@ import {
 import { SupervisorClient, deadlineText, parseTrialCallback, trialCallbackData, type SupervisorStatus } from './supervisor.js'
 import { hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag, unknownHelp, type Surface } from './help.js'
 import { resolveTimeZone, validTimeZone } from './time.js'
-import { connectorVersion, runtimeVersion } from './about.js'
+import { connectorVersion, runtimeVersion, supportedRange } from './about.js'
 import { BotPool, type BotHandle } from './bots.js'
 import { Outbox, type ItemPriority, type OutboxItem } from './outbox.js'
 import { isFreshInput, SessionBridge, type TurnRecord } from './bridge.js'
@@ -245,6 +245,18 @@ function registryOf(ctx: Context): WorkspaceRegistry | undefined {
   return serviceOf<WorkspaceRegistry>(ctx, 'workspaceRegistry')
 }
 
+/**
+ * Whether Telegram said the topic itself is gone.
+ *
+ * Only this may drop a session binding. A 429, a 5xx or a transport failure must
+ * not: `/sync` would orphan a healthy topic and mint a duplicate next to it.
+ */
+function isTopicGone(error: unknown): boolean {
+  if (!(error instanceof TelegramApiError)) return false
+  if (error.errorCode !== 400 && error.errorCode !== 404) return false
+  return /message thread not found|topic[_ ]?(deleted|closed)|thread.*(not found|deleted)/i.test(error.description)
+}
+
 interface TopicRuntime {
   chatId: number
   threadId: number
@@ -276,6 +288,10 @@ interface TopicRuntime {
   flushChain?: Promise<void>
   /** Last buffer that was delivered completely; avoids a redundant final edit. */
   lastFlushed?: string
+  /** Delivery of a mirrored prompt; the answer waits for it before sending. */
+  gate?: Promise<void>
+  /** When a lost chunk was last reported in this topic; keeps the notice rare. */
+  lastLossNotice?: number
   flushTimer?: NodeJS.Timeout
   /** Whether the session has been attached to its workspace. */
   attached?: boolean
@@ -283,6 +299,10 @@ interface TopicRuntime {
   bot?: BotHandle
   /** Prompt that started this turn, kept for the bridge journal. */
   lastPrompt?: string
+  /** When that prompt was sent; a refusal only re-journals a recent one. */
+  lastPromptAt?: number
+  /** Prompt already re-journaled after a refusal, so a repeat error is quiet. */
+  lastPromptJournaled?: string
   /** Journaled turn waiting for its first message to be acknowledged. */
   pendingTurnId?: string
   /** Safe tool/command/skill rows for the current turn; summarized at turn end. */
@@ -865,6 +885,35 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
+  /**
+   * Like `sendTo`, but resolves when Telegram acknowledged the message (or the
+   * wait gave up). A mirrored prompt uses it so the answer, which is streamed
+   * through the sink, cannot overtake the prompt when the two race for a bot.
+   */
+  const sendToConfirmed = async (chatId: number, threadId: number, markdown: string): Promise<void> => {
+    for (const chunk of splitForHtml(markdown)) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 15_000)
+        const settle = (): void => {
+          clearTimeout(timer)
+          resolve()
+        }
+        void outbox.enqueue({
+          id: randomUUID(),
+          chatId,
+          threadId,
+          text: chunk,
+          priority: 'normal',
+          createdAt: Date.now(),
+          onSent: settle,
+        }).catch((error: unknown) => {
+          logger.warn(`dsh-telegram-connector: cannot queue message: ${String(error)}`)
+          settle()
+        })
+      })
+    }
+  }
+
   /** Everything that can wait goes through the outbox and its bot pool. */
   const sendTo = async (
     chatId: number,
@@ -872,7 +921,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     markdown: string,
     priority: ItemPriority = 'normal',
   ): Promise<void> => {
-    for (const chunk of splitMessage(markdown)) {
+    // Split against the HTML the outbox will send: a chunk that fits in markdown
+    // can exceed 4096 once escaped, and Telegram then refuses it.
+    for (const chunk of splitForHtml(markdown)) {
       await outbox.enqueue({
         id: randomUUID(),
         chatId,
@@ -889,7 +940,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   /** Send immediately from the main bot; used just before a restart, where the
    * reply must not sit in a queue that outlives this process. */
   const replyNow = async (message: TgMessage, markdown: string): Promise<void> => {
-    for (const chunk of splitMessage(markdown)) {
+    for (const chunk of splitForHtml(markdown)) {
       await botPool.takeMain(message.chat.id)
       await sendChunkVia(botPool.main, message.chat.id, message.message_thread_id ?? 0, chunk)
         .catch((error: unknown) => logger.warn(`dsh-telegram-connector: immediate send failed: ${String(error)}`))
@@ -1393,6 +1444,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, lines.join('\n'))
     }
     if (sub === 'manage' || sub === 'components') return manageComponents(message, tail)
+    if (sub === 'cancel') {
+      // The card's ✖ button was the only way out of a pending update; a card
+      // deleted from the chat left the bot refusing every message.
+      if (bindings.update === undefined) return reply(message, 'no update is pending.')
+      await finishUpdateStatus('❌ setup update cancelled.')
+      return
+    }
     if (sub === 'restart') return restartRuntime(message, mode)
     if (sub === 'confirm') return confirmTrial(message)
     if (sub === 'rollback') return rollbackTrial(message)
@@ -1428,6 +1486,52 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
+  /** Where the browser can reach this instance, read from the setup's env. */
+  /** The Web GUI's advertised root and a signed link into it, when mounted. */
+  const webLink = (): { root: string; signed?: string; reason?: string } => {
+    const webApp = serviceOf<{ getAdvertisedUrl(): string }>(ctx, 'webApp')
+    if (webApp === undefined) {
+      return { root: '', reason: 'this runtime serves no web UI (the web profile is not mounted)' }
+    }
+    let root = ''
+    try {
+      root = webApp.getAdvertisedUrl()
+    } catch (error) {
+      return { root: '', reason: `the web server did not report a URL: ${String(error)}` }
+    }
+    const connection = serviceOf<{ authenticatedUrl(base: string): string }>(ctx, 'connection')
+    if (connection === undefined) return { root }
+    try {
+      return { root, signed: connection.authenticatedUrl(root) }
+    } catch {
+      return { root }
+    }
+  }
+
+  /** `/web`: the second surface, reachable from the device the user actually has. */
+  const showWebLink = async (message: TgMessage): Promise<void> => {
+    const link = webLink()
+    if (link.root.length === 0) return reply(message, `no web UI: ${link.reason ?? 'unknown'}`)
+    if (link.signed === undefined) {
+      return reply(message, `web UI: ${link.root}\n\nopen it from a browser that can reach this host.`)
+    }
+    return reply(message, [
+      '🔗 **web UI** — this link signs you in, so treat it like a password.',
+      link.signed,
+      '',
+      'The topics there are the same sessions as here: driving one in the browser hands the session over, and `/system restart now` returns it to Telegram.',
+    ].join('\n'))
+  }
+
+  /** A line for `/about` and `/system status`; never the signing token. */
+  const webLine = (): string => {
+    const link = webLink()
+    if (link.root.length === 0) return `web: none — ${link.reason ?? 'not mounted'}`
+    return link.signed === undefined
+      ? `web: ${link.root}`
+      : `web: ${link.root} · \`/web\` for a signed link`
+  }
+
   const aboutText = async (): Promise<string> => {
     const runtime = runtimeVersion()
     const status = await supervisorStatus()
@@ -1435,6 +1539,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return [
       `**dsh-telegram-connector** ${connectorVersion()}`,
       `dsh runtime: ${runtime === undefined ? 'unknown' : `\`${runtime}\``}`,
+      `declared peer range: ${supportedRange() === undefined ? 'unknown' : `\`${supportedRange()}\``}`,
+      webLine(),
       `updater: ${await updaterLine()}`,
       `supervisor: ${status === undefined ? 'none' : `present · trial ${String(trialMinutes ?? 0)} min`}`,
       `plugin manager: ${pluginManager() === undefined ? 'none' : 'present'}`,
@@ -2251,11 +2357,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const isNotModified = (error: unknown): boolean =>
     error instanceof TelegramApiError && /message is not modified/i.test(error.description)
 
+  /** One line that says what Telegram refused, for the log and the user. */
+  const describeSendError = (error: unknown): string =>
+    error instanceof TelegramApiError ? `${String(error.errorCode)} ${error.description}` : String(error)
+
   const flushNow = async (runtime: TopicRuntime): Promise<void> => {
     const text = runtime.buffer
     if (text.trim().length === 0) return
     if (runtime.lastFlushed === text) return
-    stderr(`flush: chat=${String(runtime.chatId)} thread=${String(runtime.threadId)} chars=${String(text.length)} parts=${String(runtime.parts.length)}`)
+    if (runtime.gate !== undefined) {
+      // A mirrored prompt is still on its way: deliver it first.
+      const gate = runtime.gate
+      runtime.gate = undefined
+      await gate
+    }
     if (runtime.bot === undefined) {
       const bot = await botPool.reserve(runtime.chatId)
       if (bot === undefined) {
@@ -2283,11 +2398,39 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           await editStreamChunk(bot, runtime, existing, chunk, index)
         }
       } catch (error) {
-        if (!(error instanceof TelegramApiError)) logger.warn(`dsh-telegram-connector: flush failed: ${String(error)}`)
-        if (!isNotModified(error)) failed = true
+        // A reply is never dropped silently. Rich/HTML parsing is the usual
+        // reason Telegram refuses text a user can read, so retry the chunk as
+        // plain text before giving up, and say so if even that fails.
+        if (isNotModified(error)) continue
+        logger.warn(`dsh-telegram-connector: reply chunk ${String(index + 1)}/${String(chunks.length)} failed: ${describeSendError(error)}`)
+        try {
+          if (existing === undefined) {
+            const sent = await sendChunkVia(bot, runtime.chatId, runtime.threadId, chunk)
+            runtime.parts[index] = sent.message_id
+            runtime.partRich[index] = false
+          } else {
+            await bot.client.editMessageText(runtime.chatId, existing, toPlainText(chunk))
+            runtime.partRich[index] = false
+          }
+        } catch (retryError) {
+          logger.warn(`dsh-telegram-connector: reply chunk ${String(index + 1)}/${String(chunks.length)} lost: ${describeSendError(retryError)}`)
+          failed = true
+        }
       }
     }
-    if (!failed) runtime.lastFlushed = text
+    if (!failed) {
+      runtime.lastFlushed = text
+      return
+    }
+    // Say it where the user is looking, at most once per ten minutes per topic.
+    if (Date.now() - (runtime.lastLossNotice ?? 0) > 600_000) {
+      runtime.lastLossNotice = Date.now()
+      void sendTo(
+        runtime.chatId,
+        runtime.threadId,
+        '⚠️ Part of this reply could not be delivered — Telegram refused it. The full text is in the session.',
+      )
+    }
   }
 
   /** A timer and a turn end must never send the same chunk twice. */
@@ -2731,44 +2874,70 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       ? '(bot username unknown)'
       : `https://t.me/${botUsername}?startgroup=${STARTGROUP_PREFIX}${workspaceId}`
 
-  const clearChatSessions = async (chatId: number): Promise<void> => {
+  /**
+   * Drop every session binding in a group. The runtime goes first: disposing it
+   * flushes a half-finished answer, and flushing into a topic that was just
+   * deleted loses it.
+   */
+  const clearChatSessions = async (chatId: number, options: { deleteTopics?: boolean } = {}): Promise<void> => {
     clearStagedForChat(chatId)
     for (const [threadId, bound] of sessionsOfChat(bindings, chatId)) {
-      await deleteTopic(chatId, threadId)
-      forgetProcessCard(bound.sessionId)
-      removeSession(bindings, chatId, threadId)
       const runtime = runtimes.get(runtimeKey(chatId, threadId))
       if (runtime !== undefined) {
         await disposeRuntime(runtime)
         runtimes.delete(runtimeKey(chatId, threadId))
       }
+      if (options.deleteTopics !== false) await deleteTopic(chatId, threadId)
+      forgetProcessCard(bound.sessionId)
+      removeSession(bindings, chatId, threadId)
     }
   }
 
-  /** Attach a group to a workspace. Any previous content in that group is cleared. */
+  /**
+   * Attach a group to a workspace.
+   *
+   * Idempotent on purpose: this runs from a chat link a user can tap twice, and
+   * it used to delete every topic in the group on the second tap. A group that
+   * already hosts another workspace is refused, not seized — the other
+   * workspace's owner has to `/unbind` it first.
+   */
   const bindGroup = async (message: TgMessage, workspaceId: string): Promise<void> => {
     const workspace = bindings.workspaces[workspaceId]
     if (workspace === undefined) {
       return reply(message, `unknown workspace \`${workspaceId}\` — see /workspaces in the bot chat`)
     }
+    const chatId = message.chat.id
+    if (workspace.chatId === chatId) {
+      return sendTo(chatId, 0, dashboardText(workspaceId, workspace))
+    }
+    const existingOwner = workspaceIdByChat(bindings, chatId)
+    if (existingOwner !== undefined && existingOwner !== workspaceId) {
+      return reply(
+        message,
+        [
+          `this group already hosts workspace \`${existingOwner}\`.`,
+          'Nothing was changed. To hand this group over, run `/unbind` here first, then tap the link again.',
+        ].join('\n'),
+      )
+    }
 
     // a workspace lives in exactly one group
     const previousChat = workspace.chatId
-    const existingOwner = workspaceIdByChat(bindings, message.chat.id)
-    if (existingOwner !== undefined && existingOwner !== workspaceId) {
-      delete bindings.workspaces[existingOwner]
-      await clearChatSessions(message.chat.id)
-    }
-
-    await clearChatSessions(message.chat.id)
-    workspace.chatId = message.chat.id
+    // the group being linked is fresh to this workspace: drop whatever a
+    // previous install left in it
+    await clearChatSessions(chatId)
+    workspace.chatId = chatId
     bindings.workspaces[workspaceId] = workspace
-    await groupTitle(message.chat.id, workspace.title)
-    await persist()
-    if (previousChat !== message.chat.id && previousChat !== 0) {
-      logger.info(`dsh-telegram-connector: workspace ${workspaceId} moved group ${previousChat} → ${message.chat.id}`)
+    await groupTitle(chatId, workspace.title)
+    // the old group keeps no bindings: its topics reply "not attached", but the
+    // conversation history stays where it is instead of being deleted
+    if (previousChat !== 0 && previousChat !== chatId) {
+      await clearChatSessions(previousChat, { deleteTopics: false })
+      await sendTo(previousChat, 0, `this group no longer hosts **${workspace.title}** — the workspace moved.`)
+      logger.info(`dsh-telegram-connector: workspace ${workspaceId} moved group ${previousChat} → ${chatId}`)
     }
-    await sendTo(message.chat.id, 0, dashboardText(workspaceId, workspace))
+    await persist()
+    await sendTo(chatId, 0, dashboardText(workspaceId, workspace))
   }
 
   const dashboardText = (workspaceId: string, workspace: WorkspaceBinding): string => {
@@ -2819,6 +2988,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (hasHelpFlag(rest)) {
       return reply(message, lookupText([command ?? '', ...stripHelpFlag(rest)].join(' '), 'control') ?? indexText('control'))
     }
+
+    if (command === '/web') return showWebLink(message)
 
     if (command === '/workspaces') {
       const entries = Object.entries(bindings.workspaces)
@@ -2884,10 +3055,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             logger.warn(`dsh-telegram-connector: workspace delete failed: ${String(error)}`)
           })
         }
+        const topics = found[1].chatId === 0 ? 0 : sessionsOfChat(bindings, found[1].chatId).length
         if (found[1].chatId !== 0) await clearChatSessions(found[1].chatId)
         delete bindings.workspaces[found[0]]
         await persist()
-        return reply(message, 'removed from DSH. The directory, its sessions and the group are untouched.')
+        return reply(
+          message,
+          topics === 0
+            ? 'removed from DSH. The directory, its sessions and the group are untouched.'
+            : `removed from DSH, and ${String(topics)} topic(s) in its group were deleted. The directory, its sessions and the group are untouched.`,
+        )
       }
 
       return reply(message, 'usage: `/workspace new|link|rm …`')
@@ -3141,6 +3318,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       } catch (error) {
         return reply(message, `cannot unarchive: ${String(error)}`)
       }
+      // `/close` archives a session but keeps its topic, so a session usually
+      // still has one. Reusing it is the only way the mirror and `/sync` keep
+      // pointing at the place the user is actually looking.
+      const already = sessionsOfChat(bindings, message.chat.id).find(([, bound]) => bound.sessionId === match)
+      if (already !== undefined) {
+        const [threadId] = already
+        await client.reopenForumTopic(message.chat.id, threadId).catch(() => undefined)
+        await backfill(message.chat.id, threadId, match)
+        return reply(message, `restored \`${match}\` in its existing topic ${threadId}`)
+      }
       const topic = await createTopic(message.chat.id, `session ${match.slice(-6)}`)
       if (topic.threadId === undefined) {
         return reply(message, `restored, but the topic could not be created: ${topic.error ?? 'unknown error'}`)
@@ -3218,6 +3405,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       let created = 0
       let skipped = 0
       let purged = 0
+      let kept = 0
       let live = 0
       /** Sessions that still need a topic, kept in the workspace's manual order. */
       const pending: string[] = []
@@ -3272,18 +3460,31 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         if (existing !== undefined) {
           const [threadId] = existing
           let alive = true
+          let gone = false
           try {
             const probe = await paced(() => client.sendMessage(message.chat.id, '.', { threadId }))
             await deleteMessage(message.chat.id, probe.message_id).catch(() => undefined)
-          } catch {
+          } catch (error) {
             alive = false
+            // Only a definite "this thread does not exist" is allowed to drop a
+            // binding. A rate limit, a 5xx or a network blip would otherwise
+            // unbind a healthy topic and mint a duplicate one next to it.
+            gone = isTopicGone(error)
           }
           if (alive) {
             if (agents.get(SessionId(sessionId)) !== undefined) live += 1
             continue
           }
+          if (!gone) {
+            kept += 1
+            continue
+          }
+          const runtime = runtimes.get(runtimeKey(message.chat.id, threadId))
+          if (runtime !== undefined) {
+            await disposeRuntime(runtime)
+            runtimes.delete(runtimeKey(message.chat.id, threadId))
+          }
           removeSession(bindings, message.chat.id, threadId)
-          runtimes.delete(runtimeKey(message.chat.id, threadId))
           purged += 1
           await persist()
         }
@@ -3324,6 +3525,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         message,
         [
           `adopted ${created}; ${skipped} archived skipped; ${purged} dead binding(s) replaced.`,
+          kept > 0 ? `${kept} topic(s) could not be probed (rate limit or network) — kept as they are.` : '',
           live > 0 ? `${live} are open in a web UI: their topics mirror that tab, and Telegram prompts are refused until it closes.` : '',
           provisional > 0 ? `${provisional} had no title: name them with \`/rename <session> <title>\`.` : '',
         ]
@@ -3356,10 +3558,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (command === '/unbind') {
+      const topics = sessionsOfChat(bindings, message.chat.id).length
       await clearChatSessions(message.chat.id)
       delete bindings.workspaces[workspaceId]
       await persist()
-      return reply(message, 'detached. The workspace still exists in DSH; the group is yours to keep or delete.')
+      return reply(
+        message,
+        `detached. \`${String(topics)}\` topic(s) deleted with their bindings; the workspace still exists in DSH, and the group is yours to keep or delete.`,
+      )
     }
 
     if (command === '/plugins' || command === '/plugin') {
@@ -3430,6 +3636,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await finishStream(runtime)
       resetStream(runtime)
       runtime.lastPrompt = text
+      runtime.lastPromptAt = Date.now()
+      runtime.lastPromptJournaled = undefined
       // Optimistic: this turn should be ours. If the runtime refuses it
       // because a web tab holds the handle, agent/error marks it foreign again.
       runtime.foreign = false
@@ -3947,6 +4155,17 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await reply(message, await commandsText(runtime))
       return
     }
+    // `/help` promises `<command> --help` on every surface; honour it here too,
+    // before the connector-command refusal below turns the flag into an argument.
+    if (hasHelpFlag(text.trim().split(/\s+/).slice(1))) {
+      await stageSlashMedia(message, threadId, media, groupItems)
+      const words = text.trim().split(/\s+/).slice(1)
+      await reply(
+        message,
+        lookupText([name, ...stripHelpFlag(words)].join(' '), 'session') ?? unknownHelp(name),
+      )
+      return
+    }
     if (name === 'skills') {
       await stageSlashMedia(message, threadId, media, groupItems)
       await reply(message, await skillsText(workspace))
@@ -4034,7 +4253,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     if (bindings.update !== undefined) {
       const command = (text ?? media?.caption ?? '').trim()
-      if (!/^\/(?:system\s+status|about|help|man|start)\b/.test(command)) {
+      // Recovery commands stay reachable while a drain is pending: the update
+      // gate used to block the very command that clears a stuck drain.
+      if (!/^\/(?:system\s+(?:status|cancel|restart|confirm|rollback)|system|about|help|man|start)\b/.test(command)) {
         const now = Date.now()
         const last = blockedNotified.get(message.chat.id) ?? 0
         if (now - last > 60_000) {
@@ -4639,19 +4860,28 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return undefined
   }
 
-  /**
-   * Mirror a conversation driven elsewhere (the web UI) into its topic.
-   */
+  /** Where a session bound to a topic would be mirrored to. */
+  const mirrorTarget = (
+    sessionId: string,
+  ): { chatId: number; threadId: number; workspace: WorkspaceBinding; bound: SessionBinding } | undefined => {
+    const found = bindingForSession(sessionId)
+    if (found === undefined) return undefined
+    const workspace = bindings.workspaces[found.bound.workspaceId]
+    if (workspace === undefined) return undefined
+    return { chatId: found.chatId, threadId: found.threadId, workspace, bound: found.bound }
+  }
+
   /**
    * Mirror a conversation driven elsewhere into its topic.
    *
    * Same sink as a Telegram turn — buffer, flush, edits — so both surfaces look
-   * alike. The only differences are declared on the sink: no process card, and
-   * the user's prompt is echoed because Telegram never saw it.
+   * alike. The prompt is echoed because Telegram never saw it, and the answer
+   * follows in a message of its own: a mirrored turn ends with a fresh sink
+   * (see `turn/start` below), never with the previous turn's message list.
    */
   const mirror = (sessionId: string, text: string, fromUser: boolean): void => {
-    const found = bindingForSession(sessionId)
-    if (found === undefined) return
+    const target = mirrorTarget(sessionId)
+    if (target === undefined) return
     // A Telegram turn that actually holds this topic is already posting; a
     // runtime without an agent is a failed attempt, not a claim.
     const claimed = claimsTopic(
@@ -4661,19 +4891,23 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         hasAgent: candidate.agent !== undefined,
         foreign: candidate.foreign === true,
       })),
-      found.chatId,
-      found.threadId,
+      target.chatId,
+      target.threadId,
     )
-    stderr(`mirror: session=${sessionId} user=${String(fromUser)} claimed=${String(claimed)} chars=${String(text.length)}`)
     if (claimed) return
-    const workspace = bindings.workspaces[found.bound.workspaceId]
-    if (workspace === undefined) return
+    const sink = sinkForBinding(target.chatId, target.threadId, target.workspace, target.bound)
+    const name = target.workspace.title ?? 'workspace'
     if (fromUser) {
-      const name = workspace.title ?? 'workspace'
-      void sendTo(found.chatId, found.threadId, `💬 **you (web)** · ${name}\n${text}`)
+      // A mirrored prompt is its own message, and it opens a new turn: releasing
+      // the agent leaves the old sink in place, so without this reset the answer
+      // would be edited into the previous Telegram turn's reply.
+      if (sink.parts.length > 0 || sink.buffer.length > 0) resetStream(sink)
+      sink.mirror = true
+      sink.gate = sendToConfirmed(target.chatId, target.threadId, `💬 **you (web)** · ${name}\n${text}`)
       return
     }
-    const sink = sinkForBinding(found.chatId, found.threadId, workspace, found.bound)
+    // The answer streams through the sink, so the topic shows it the way a
+    // Telegram turn looks: one message, edited as the text arrives.
     sink.buffer = sink.buffer.length === 0 ? text : `${sink.buffer}\n\n${text}`
     scheduleFlush(sink)
   }
@@ -4702,13 +4936,30 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const sessionId = String((session as { id?: unknown }).id ?? '')
       if (sessionId.length === 0) return
       const eventType = (event as { type: string }).type
+      const target = (): TopicRuntime | undefined => {
+        const found = mirrorTarget(sessionId)
+        if (found === undefined) return undefined
+        return sinkForBinding(found.chatId, found.threadId, found.workspace, found.bound)
+      }
+      if (eventType === 'turn/start') {
+        const sink = target()
+        if (sink === undefined) return
+        sink.mirror = true
+        sink.foreign = true
+        // A turn that starts with nothing buffered (a scheduler or goal turn
+        // has no prompt to mirror) gets a fresh message instead of editing the
+        // previous answer. Anything still buffered is left alone: it belongs to
+        // the turn that is only now finishing.
+        if (sink.buffer.trim() === (sink.lastFlushed ?? '').trim()) resetStream(sink)
+        return
+      }
       if (eventType === 'turn/end') {
         // flush whatever the mirrored turn left in the sink
-        const key = [...runtimes.entries()].find(([, candidate]) => {
-          const found = bindingForSession(sessionId)
+        const sink = [...runtimes.values()].find((candidate) => {
+          const found = mirrorTarget(sessionId)
           return found !== undefined && candidate.chatId === found.chatId && candidate.threadId === found.threadId
         })
-        if (key !== undefined) void finishStream(key[1])
+        if (sink !== undefined) void finishStream(sink)
         return
       }
       if (event.type === 'user/message') {
@@ -4847,11 +5098,34 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           await finishStream(runtime)
           await finishProcessTurn(runtime, '↪️ Session moved to the web UI')
         })()
-        void sendTo(
+        // The prompt that provoked this never reached the agent, and the normal
+        // path already marked it delivered — journal it again so the Take over
+        // button really delivers it.
+        const prompt = runtime.lastPrompt
+        const recent = runtime.lastPromptAt !== undefined && Date.now() - runtime.lastPromptAt < 5 * 60 * 1000
+        const queued = prompt !== undefined
+          && prompt.length > 0
+          && recent
+          && runtime.lastPromptJournaled !== prompt
+        if (queued) {
+          runtime.lastPromptJournaled = prompt
+          void bridge.recordInput(runtime.session.sessionId, prompt).catch((error: unknown) => {
+            stderr(`cannot journal a held prompt: ${String(error)}`)
+          })
+        }
+        void client.sendMessage(
           runtime.chatId,
-          runtime.threadId,
-          'this session is open in a web UI tab, so prompts from Telegram are refused until it closes. This topic now mirrors that tab.',
-        )
+          toTelegramHtml(queued
+            ? `${OWNERSHIP_HINT}\n\nYour message is queued: take over and it is delivered after the restart.`
+            : 'this session is open in a web UI tab, so prompts from Telegram are refused until it closes. This topic now mirrors that tab.'),
+          {
+            parseMode: 'HTML',
+            ...(runtime.threadId === 0 ? {} : { threadId: runtime.threadId }),
+            ...(queued
+              ? { replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over', callback_data: 'own:take' }]] } }
+              : {}),
+          },
+        ).catch((error: unknown) => stderr(`cannot post the take-over card: ${String(error)}`))
         return
       }
       if (runtime.processActive === true) {

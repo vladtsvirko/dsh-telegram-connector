@@ -76,8 +76,10 @@ connector refuses to disable or remove itself.
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
 | `/system manage [<component> <enable|disable|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form |
+| `/system cancel` | abandon a pending update and unblock the bot (same as the card's ✖) |
 | `/status` | model route, workspace/session counts, poller, timezone, supervisor |
-| `/about` | connector version, runtime version, updater state |
+| `/about` | connector version, runtime version, web root, peer range, updater state |
+| `/web` | a signed link into the web UI for the same sessions (bot chat only) |
 | `/reactions` | show the read, streaming and staged-media reactions |
 | `/reactions read <emoji>` | set the prompt reaction; `off` disables it |
 | `/reactions streaming <emoji>` | set the in-progress reply reaction; `off` disables it |

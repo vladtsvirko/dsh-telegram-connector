@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -31,6 +31,27 @@ describe('bindings v2', () => {
     const file = bindingsPath(dir)
     await saveBindings(file, { version: 2, workspaces: {}, sessions: {} })
     expect((await loadBindings(file)).version).toBe(2)
+  })
+
+  it('keeps a corrupt file aside instead of overwriting it with an empty document', async () => {
+    const dir = await temp()
+    const file = bindingsPath(dir)
+    await saveBindings(file, { version: 2, workspaces: {}, sessions: {} })
+    await writeFile(file, '{"version":2,"workspaces":{')
+    expect((await loadBindings(file)).workspaces).toEqual({})
+    const kept = (await readdir(join(dir, 'telegram-connector'))).filter((name) => name.includes('.corrupt-'))
+    expect(kept).toHaveLength(1)
+    expect(await readFile(join(dir, 'telegram-connector', kept[0]!), 'utf8')).toBe('{"version":2,"workspaces":{')
+  })
+
+  it('keeps a file from another version aside instead of dropping its bindings', async () => {
+    const dir = await temp()
+    const file = bindingsPath(dir)
+    await saveBindings(file, { version: 2, workspaces: {}, sessions: {} })
+    await writeFile(file, JSON.stringify({ version: 1, workspaces: { a: { chatId: -1 } } }))
+    expect((await loadBindings(file)).workspaces).toEqual({})
+    const kept = (await readdir(join(dir, 'telegram-connector'))).filter((name) => name.includes('.v1-'))
+    expect(kept).toHaveLength(1)
   })
 
   it('round-trips workspaces and sessions', async () => {

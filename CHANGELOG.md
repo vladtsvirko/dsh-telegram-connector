@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.2.1-rc.2-0.5.0
+
+### Fixed
+
+- **A mirrored web answer arrives as its own message.** Releasing a session to
+  the web UI left the topic's sink in place, so the answer was appended to the
+  previous Telegram turn and edited into that message — which sits above the
+  echo, changes silently, and looks like no answer at all. A mirrored prompt now
+  resets the sink, and the answer is gated behind the echo so it cannot overtake
+  it. Covered by an integration test that drives the real plugin.
+- **A reply is never dropped silently.** A refused chunk used to disappear: no
+  log, no retry, no notice. It is logged with Telegram's code, retried once as
+  plain text, and reported in the topic if that also fails.
+- **A permission error no longer silences a group.** A 400 "not enough rights"
+  was classified as "bot is not a member", which marked the bot missing and
+  blocked the chat for an hour; the main bot was never re-checked. Only real
+  membership failures do that now.
+- **Re-tapping the startgroup link no longer wipes a group.** Binding was not
+  idempotent: a second tap deleted every topic in the group, disposed live
+  agents mid-answer and dropped every binding. Re-linking the same workspace now
+  just prints the dashboard, a group that hosts another workspace is refused
+  instead of seized, and moving a workspace clears the old group's bindings
+  without deleting its history.
+- **A prompt refused after a take-over is queued, not lost.** When the refusal
+  arrived as an `agent/error` (the agent already existed), the prompt was never
+  journaled, so the Take over button delivered nothing. It is journaled now and
+  the card is posted with the button.
+- **`/sync` keeps a healthy topic.** Any probe error (429, 5xx, network) counted
+  as "topic deleted" and unbound the topic, leaked the agent and created a
+  duplicate. Only a definite "message thread not found" purges a binding now,
+  the runtime is disposed before the binding goes, and the summary counts the
+  ones it could not probe.
+- **`/unarchive <id>` reuses the session's topic** instead of binding one session
+  to two topics (the mirror kept posting to the archived one).
+- **A stuck `/system update all` drain can be cleared.** The update gate blocked
+  every message including `/system restart`; `/system cancel` and the recovery
+  commands now pass, and `/system cancel` is a text command, not just a button.
+- **A corrupt or older `bindings.json` is kept, not overwritten.** It used to be
+  replaced by an empty document and then overwritten on the next save — every
+  binding gone, silently. It is now set aside as `bindings.json.corrupt-<ts>`
+  with a log line.
+- **Long formatted replies stay formatted.** A chunk that fits 3,800 markdown
+  characters can exceed Telegram's 4,096 once converted to HTML (`/man` did), and
+  the whole chunk fell back to plain text. Splitting now checks the converted
+  length; `SAFE_LENGTH` is 3,400.
+
+### Added
+
+- **`/web`** prints a signed link into the web UI for the same sessions, with
+  what handing a session over means. It is only available in the bot chat, so
+  the link never lands in a group. `/about` and `/system status` now name the web
+  root (without the token) and the declared peer range.
+- `<command> --help` works in session topics too, as `/help` promised.
+
 ## 0.2.1-rc.2-0.4.11
 
 - Diagnostics for the mirror: the user echo reaches Telegram but the answer does

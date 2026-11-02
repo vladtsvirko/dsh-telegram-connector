@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { escapeHtml, hasTable, splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from '../src/render.js'
+import { escapeHtml, hasTable, splitForHtml, splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from '../src/render.js'
 
 describe('escapeHtml', () => {
   it('escapes the three characters Telegram cares about', () => {
@@ -173,6 +173,16 @@ describe('splitMessage', () => {
       if (!chunk.includes('row')) continue
       expect(chunk).toContain('| H1 | H2 |')
       expect(chunk).toContain('|----|----|')
+    }
+  })
+it("keeps converted chunks inside Telegram's limit", () => {
+    // A /man-sized manual full of markup is where this broke: the markdown fit,
+    // the HTML did not, and Telegram refused the chunk.
+    const text = ("**bold** and `code` and <a> & friends ".repeat(40) + "\n\n").repeat(12)
+    const chunks = splitForHtml(text)
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const chunk of chunks) {
+      expect(toTelegramHtml(chunk).length).toBeLessThanOrEqual(4096)
     }
   })
 })

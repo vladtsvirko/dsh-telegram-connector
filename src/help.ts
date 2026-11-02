@@ -316,6 +316,16 @@ const COMMANDS: CommandDoc[] = [
     group: 'runtime',
   },
   {
+    path: 'web',
+    usage: '/web',
+    summary: 'a signed link into the web UI — the same sessions from a browser',
+    details:
+      'Prints a link that signs the browser in, so treat it like a password. The web UI shares the sessions: opening a topic there and sending a prompt hands that session over, and Telegram prompts are refused until it is released with `/system restart now`. Sent only in the bot chat, never in a group.',
+    examples: ['/web'],
+    surfaces: ['control'],
+    group: 'runtime',
+  },
+  {
     path: 'about',
     usage: '/about',
     summary: 'connector, runtime and updater state',
@@ -433,7 +443,7 @@ const COMMANDS: CommandDoc[] = [
     usage: '/forget <session>',
     summary: 'drop the topic→session binding',
     details: 'The session and the topic are left intact; the topic stops being a session.',
-    surfaces: ['dashboard', 'session'],
+    surfaces: ['dashboard'],
     group: 'sessions',
   },
   {
