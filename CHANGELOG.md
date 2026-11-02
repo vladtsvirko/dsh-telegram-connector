@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.10
+
+- A refused Telegram prompt is no longer lost. It is journaled and the reply
+  offers **Take over**: the supervisor restarts the runtime, every write handle is
+  released, and the boot replay delivers the queued text without a retype.
+- The journal replay drops prompts older than an hour, so a take-over that was
+  never taken does not resurface days later.
+
 ## 0.2.1-rc.2-0.4.9
 
 - One delivery path for a topic. A mirrored web turn now feeds the same sink as

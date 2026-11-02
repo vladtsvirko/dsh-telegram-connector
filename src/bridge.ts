@@ -28,6 +28,14 @@ export interface TurnRecord {
   at: number
 }
 
+/** How long a journaled prompt may wait for a restart before it is dropped. */
+export const INPUT_MAX_AGE_MS = 60 * 60 * 1000
+
+/** Whether a journaled prompt is still worth delivering after a reboot. */
+export function isFreshInput(at: number, now: number = Date.now(), maxAgeMs: number = INPUT_MAX_AGE_MS): boolean {
+  return now - at <= maxAgeMs
+}
+
 export interface InputRecord {
   id: string
   sessionId: string

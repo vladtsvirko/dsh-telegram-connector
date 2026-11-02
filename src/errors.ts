@@ -10,6 +10,14 @@
  * @module dsh-telegram-connector/errors
  */
 
+/** The runtime refused because another client holds the session's write handle. */
+export class SessionHeldError extends Error {
+  constructor(message: string = OWNERSHIP_HINT) {
+    super(message)
+    this.name = 'SessionHeldError'
+  }
+}
+
 /** True when the runtime refused because another client owns the session. */
 export function isOwnershipError(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error)

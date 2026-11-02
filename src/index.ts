@@ -66,9 +66,9 @@ import { resolveTimeZone, validTimeZone } from './time.js'
 import { connectorVersion, runtimeVersion } from './about.js'
 import { BotPool, type BotHandle } from './bots.js'
 import { Outbox, type ItemPriority, type OutboxItem } from './outbox.js'
-import { SessionBridge, type TurnRecord } from './bridge.js'
+import { isFreshInput, SessionBridge, type TurnRecord } from './bridge.js'
 import { claimsTopic, isForeignPrompt, messageText, promptText } from './mirror.js'
-import { isOwnershipError, OWNERSHIP_HINT } from './errors.js'
+import { isOwnershipError, OWNERSHIP_HINT, SessionHeldError } from './errors.js'
 import {
   commandLabel,
   formatLiveProcess,
@@ -1322,6 +1322,25 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, await postComponent(name, 'configure', port))
     }
     return reply(message, 'usage: `/system manage [<component> <enable|disable|port> [<port>]]`')
+  }
+
+  /**
+   * Take a session back from another client. The runtime offers no way to drop a
+   * foreign write handle, so the only lever is a restart: every handle is
+   * released, and the journaled prompt is replayed on boot.
+   */
+  const handleTakeOver = async (query: TgCallbackQuery): Promise<void> => {
+    if (supervisor === undefined) {
+      await client.answerCallbackQuery(query.id, 'no supervisor here — restart the runtime from the host').catch(() => undefined)
+      return
+    }
+    await client.answerCallbackQuery(query.id, 'restarting…').catch(() => undefined)
+    try {
+      await supervisor.restart(false)
+    } catch (error) {
+      await client.answerCallbackQuery(query.id, 'restart failed').catch(() => undefined)
+      stderr(`take-over restart failed: ${String(error)}`)
+    }
   }
 
   const handleComponentButton = async (query: TgCallbackQuery): Promise<void> => {
@@ -2630,7 +2649,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         },
       })
     } catch (error) {
-      if (isOwnershipError(error)) throw new Error(OWNERSHIP_HINT)
+      if (isOwnershipError(error)) throw new SessionHeldError()
       if (!/already exists/i.test(String(error))) throw error
       stderr(`resuming persisted session ${runtime.session.sessionId}`)
       try {
@@ -2655,7 +2674,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       })
       } catch (error) {
         // resume takes the write handle too, and a closed tab may still hold it
-        if (isOwnershipError(error)) throw new Error(OWNERSHIP_HINT)
+        if (isOwnershipError(error)) throw new SessionHeldError()
         throw error
       }
     }
@@ -3427,6 +3446,23 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // A runtime with no agent is a failed attempt, not a claimed topic: drop it
       // so the mirror can still reach this topic.
       if (runtime.agent === undefined) runtimes.delete(runtimeKey(runtime.chatId, runtime.threadId))
+      if (error instanceof SessionHeldError) {
+        // Hold the prompt in the bridge journal. A take-over restart clears every
+        // write handle, and the boot replay delivers it without a retype.
+        await bridge.recordInput(runtime.session.sessionId, text).catch((journalError: unknown) => {
+          stderr(`cannot journal a held prompt: ${String(journalError)}`)
+        })
+        await client.sendMessage(
+          message.chat.id,
+          toTelegramHtml(`${OWNERSHIP_HINT}\n\nYour message is queued: take over and it is delivered after the restart.`),
+          {
+            parseMode: 'HTML',
+            ...(message.message_thread_id === undefined ? {} : { threadId: message.message_thread_id }),
+            replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over', callback_data: 'own:take' }]] },
+          },
+        ).catch((sendError: unknown) => stderr(`cannot post the take-over card: ${String(sendError)}`))
+        return
+      }
       await reply(message, `⚠️ ${detail}`)
     }
   }
@@ -4273,6 +4309,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
               await handleComponentButton(query)
               continue
             }
+            if (query.data?.startsWith('own:take')) {
+              await handleTakeOver(query)
+              continue
+            }
             await handleTrialButton(query)
             continue
           }
@@ -4379,6 +4419,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   /** Re-inject prompts that were journaled but never acknowledged. */
   const replayBridgeInputs = async (): Promise<void> => {
     for (const input of bridge.pendingInputs()) {
+      // A refused prompt waits for a take-over restart, not for weeks.
+      if (!isFreshInput(input.at)) {
+        await bridge.completeInput(input.id).catch(() => undefined)
+        stderr(`bridge: dropping a stale queued prompt (${input.id})`)
+        continue
+      }
       const found = bindingForSession(input.sessionId)
       if (found === undefined) continue
       const workspace = bindings.workspaces[found.bound.workspaceId]

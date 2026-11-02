@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { SessionBridge } from '../src/bridge.js'
+import { SessionBridge, isFreshInput } from '../src/bridge.js'
 
 describe('SessionBridge', () => {
   it('journals turns and inputs, and survives a restart', async () => {
@@ -43,5 +43,15 @@ describe('SessionBridge', () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('isFreshInput', () => {
+  it('delivers a prompt queued a minute ago', () => {
+    expect(isFreshInput(Date.now() - 60_000)).toBe(true)
+  })
+
+  it('drops one that waited past the hour', () => {
+    expect(isFreshInput(Date.now() - 61 * 60_000)).toBe(false)
   })
 })
