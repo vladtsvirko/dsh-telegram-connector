@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.7.4
+
+Maintenance release; no connector change. Aligned with the setup fix for the
+native smoke workflow.
+
 ## 0.2.1-rc.2-0.7.3
 
 Maintenance release; no connector change. Aligned with the setup fix for the
