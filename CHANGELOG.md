@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.3
+
+Maintenance release for the setup change that installs the Penpot plugin when
+the design component is enabled. No connector behavior change.
+
 ## 0.2.1-rc.2-0.4.2
 
 Maintenance release for the setup change that replaces the design MCP bridge
