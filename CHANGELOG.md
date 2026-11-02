@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.2
+
+Maintenance release for the setup change that replaces the design MCP bridge
+with the in-repo `penpot` CLI. No connector behavior change.
+
 ## 0.2.1-rc.2-0.4.1
 
 Maintenance release for the setup's local-build fix of the design stack. No
