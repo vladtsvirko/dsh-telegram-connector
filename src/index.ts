@@ -2255,6 +2255,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const text = runtime.buffer
     if (text.trim().length === 0) return
     if (runtime.lastFlushed === text) return
+    stderr(`flush: chat=${String(runtime.chatId)} thread=${String(runtime.threadId)} chars=${String(text.length)} parts=${String(runtime.parts.length)}`)
     if (runtime.bot === undefined) {
       const bot = await botPool.reserve(runtime.chatId)
       if (bot === undefined) {
@@ -4653,7 +4654,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (found === undefined) return
     // A Telegram turn that actually holds this topic is already posting; a
     // runtime without an agent is a failed attempt, not a claim.
-    if (claimsTopic(
+    const claimed = claimsTopic(
       [...runtimes.values()].map((candidate) => ({
         chatId: candidate.chatId,
         threadId: candidate.threadId,
@@ -4662,7 +4663,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       })),
       found.chatId,
       found.threadId,
-    )) return
+    )
+    stderr(`mirror: session=${sessionId} user=${String(fromUser)} claimed=${String(claimed)} chars=${String(text.length)}`)
+    if (claimed) return
     const workspace = bindings.workspaces[found.bound.workspaceId]
     if (workspace === undefined) return
     if (fromUser) {

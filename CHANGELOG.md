@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.11
+
+- Diagnostics for the mirror: the user echo reaches Telegram but the answer does
+  not, and the decision points are silent. `mirror:` logs whether the topic was
+  claimed, and `flush:` logs every flush that actually sends. Temporary; remove
+  once the cause is known.
+
 ## 0.2.1-rc.2-0.4.10
 
 - A refused Telegram prompt is no longer lost. It is journaled and the reply
