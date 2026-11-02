@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.6
+
+- A session taken over by a web UI tab is mirrored into its topic again. The
+  connector used to keep streaming into an agent handle it no longer owned, so
+  the topic went silent while Telegram prompts failed with the ownership error
+  under a misleading "Process interrupted" card.
+- The takeover is detected from a prompt the connector did not send, and the
+  session is marked foreign until a Telegram prompt lands again.
+- The refusal now says what happened ("this session is open in a web UI tab,
+  so prompts from Telegram are refused until it closes") instead of looking
+  like a crash.
+
 ## 0.2.1-rc.2-0.4.5
 
 Maintenance release for the setup fix that reaches Penpot over the shared

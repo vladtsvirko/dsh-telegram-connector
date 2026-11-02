@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MirrorQueue, messageText, promptText } from '../src/mirror.js'
+import { MirrorQueue, messageText, promptText, isForeignPrompt } from '../src/mirror.js'
 
 const timeContext = [
   'Time sampled while preparing turn 2, step 1:',
@@ -81,5 +81,20 @@ describe('MirrorQueue', () => {
     })
     expect(errors).toHaveLength(1)
     expect(sent).toEqual(['next'])
+  })
+})
+
+describe('isForeignPrompt', () => {
+  it('treats an unrecorded user prompt as another client', () => {
+    expect(isForeignPrompt(false, 'user')).toBe(true)
+  })
+
+  it('keeps a prompt this plugin recorded out of the mirror', () => {
+    expect(isForeignPrompt(true, 'user')).toBe(false)
+  })
+
+  it('ignores harness-injected context and non-user sources', () => {
+    expect(isForeignPrompt(false, 'skill-invocation')).toBe(false)
+    expect(isForeignPrompt(false, undefined)).toBe(false)
   })
 })

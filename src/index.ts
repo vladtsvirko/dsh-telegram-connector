@@ -67,7 +67,7 @@ import { connectorVersion, runtimeVersion } from './about.js'
 import { BotPool, type BotHandle } from './bots.js'
 import { Outbox, type ItemPriority, type OutboxItem } from './outbox.js'
 import { SessionBridge, type TurnRecord } from './bridge.js'
-import { MirrorQueue, messageText, promptText } from './mirror.js'
+import { isForeignPrompt, MirrorQueue, messageText, promptText } from './mirror.js'
 import {
   commandLabel,
   formatLiveProcess,
@@ -250,6 +250,12 @@ interface TopicRuntime {
   workspace: WorkspaceBinding
   session: SessionBinding
   agent?: Agent
+  /**
+   * Set when another client (a web UI tab) takes the session's write handle.
+   * Until the next prompt this plugin lands, the topic mirrors that client
+   * instead of streaming into a handle it no longer owns.
+   */
+  foreign?: boolean
   dispose?: () => Promise<void>
   buffer: string
   parts: number[]
@@ -3367,6 +3373,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await finishStream(runtime)
       resetStream(runtime)
       runtime.lastPrompt = text
+      // Optimistic: this turn should be ours. If the runtime refuses it
+      // because a web tab holds the handle, agent/error marks it foreign again.
+      runtime.foreign = false
       void client.setTyping(message.chat.id, threadId)
       injected.set(runtime.session.sessionId, Date.now())
       const input = await bridge.recordInput(runtime.session.sessionId, text).catch((error: unknown) => {
@@ -4701,7 +4710,19 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   ctx.on('session/event', (session, event: SessionEvent) => {
     const owner = [...runtimes.values()].find((candidate) => candidate.agent?.session === session)
-    if (owner === undefined) {
+    if (owner !== undefined && owner.foreign !== true) {
+      const sessionId = String((session as { id?: unknown }).id ?? '')
+      if (event.type === 'user/message' && sessionId.length > 0) {
+        const pending = injected.get(sessionId)
+        if (pending !== undefined) injected.delete(sessionId)
+        const source = (event.data as { source?: { kind?: string } }).source
+        if (isForeignPrompt(pending !== undefined, source?.kind)) {
+          owner.foreign = true
+          stderr(`session ${sessionId} is driven elsewhere; mirroring it instead of streaming`)
+        }
+      }
+    }
+    if (owner === undefined || owner.foreign === true) {
       const sessionId = String((session as { id?: unknown }).id ?? '')
       if (sessionId.length === 0) return
       const eventType = (event as { type: string }).type
@@ -4894,6 +4915,21 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const message = payload.error instanceof Error ? payload.error.message : String(payload.error)
     const runtime = [...runtimes.values()].find((candidate) => candidate.agent === payload.agent)
     if (runtime !== undefined) {
+      if (/active write handle|already owned/i.test(message)) {
+        // Another client holds the session. Mirror it, and say so instead of
+        // rendering this as a mysterious interrupted turn.
+        runtime.foreign = true
+        void (async () => {
+          await finishStream(runtime)
+          await finishProcessTurn(runtime, '↪️ Session moved to the web UI')
+        })()
+        void sendTo(
+          runtime.chatId,
+          runtime.threadId,
+          'this session is open in a web UI tab, so prompts from Telegram are refused until it closes. This topic now mirrors that tab.',
+        )
+        return
+      }
       if (runtime.processActive === true) {
         runtime.process = runtime.process.map((item) => item.status === 'running'
           ? { ...item, status: 'error' as const, detail: redactPreview(message) }

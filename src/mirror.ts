@@ -56,6 +56,24 @@ export function isInjectedContext(text: string): boolean {
  * else (time context, skill content, file-change notices, goal continuations)
  * is model input.
  */
+/**
+ * Whether a \`user/message\` on a session this plugin already has an agent for
+ * came from somewhere else (the web UI) instead of the plugin itself.
+ *
+ * DSH lets one client hold a session's write handle at a time. When a web tab
+ * takes over, the plugin still has its own agent object, so "I have a runtime
+ * for this session" no longer means "I am driving it". Every prompt this plugin
+ * sends is recorded first; anything else is foreign, and the session must fall
+ * back to mirroring.
+ *
+ * @param pending - whether the plugin recorded a prompt it is about to send.
+ * @param sourceKind - the recorded \`source.kind\` of the message.
+ * @returns true when the prompt came from another client.
+ */
+export function isForeignPrompt(pending: boolean, sourceKind: string | undefined): boolean {
+  return !pending && sourceKind === 'user'
+}
+
 export function promptText(message: MirrorMessage | undefined): string | undefined {
   if (message?.source?.kind !== 'user') return undefined
   const text = messageText(message)
