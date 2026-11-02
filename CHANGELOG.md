@@ -26,18 +26,6 @@
   reverse of what a stuck drain needs. The rule is now an explicit list with its
   own tests.
 
-### Tests
-
-- `tests/binding.integration.test.ts`: re-linking a group changes nothing, a
-  group hosting another workspace is refused, moving a workspace clears the old
-  bindings, `/unarchive` reuses its topic, `/sync` keeps a topic on a 5xx.
-- The harness can refuse a Bot API call (`failSend`), and `waitFor` awaits async
-  predicates.
-
-## 0.2.1-rc.2-0.5.0
-
-### Fixed
-
 - **A mirrored web answer arrives as its own message.** Releasing a session to
   the web UI left the topic's sink in place, so the answer was appended to the
   previous Telegram turn and edited into that message — which sits above the
@@ -87,6 +75,14 @@
   the link never lands in a group. `/about` and `/system status` now name the web
   root (without the token) and the declared peer range.
 - `<command> --help` works in session topics too, as `/help` promised.
+
+### Tests
+
+- `tests/binding.integration.test.ts`: re-linking a group changes nothing, a
+  group hosting another workspace is refused, moving a workspace clears the old
+  bindings, `/unarchive` reuses its topic, `/sync` keeps a topic on a 5xx.
+- The harness can refuse a Bot API call (`failSend`), and `waitFor` awaits async
+  predicates.
 
 ## 0.2.1-rc.2-0.4.11
 
