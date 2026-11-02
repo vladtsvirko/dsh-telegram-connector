@@ -346,6 +346,20 @@ export class TelegramClient {
     return new Uint8Array(await response.arrayBuffer())
   }
 
+  /**
+   * Publish the command menu. `scope` defaults to all private chats; the group
+   * scope is a separate call because Telegram keeps them apart.
+   */
+  setMyCommands(
+    commands: readonly { command: string; description: string }[],
+    options: { scope?: { type: string } } = {},
+  ): Promise<boolean> {
+    return this.call<boolean>('setMyCommands', {
+      commands: commands.map((entry) => ({ command: entry.command, description: entry.description })),
+      ...(options.scope === undefined ? {} : { scope: options.scope }),
+    })
+  }
+
   getUpdates(offset: number, timeoutSeconds: number): Promise<TgUpdate[]> {
     return this.call<TgUpdate[]>('getUpdates', {
       offset,

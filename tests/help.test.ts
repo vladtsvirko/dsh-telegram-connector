@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag } from '../src/help.js'
+import { hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag,
+  commandMenu,
+} from '../src/help.js'
 
 describe('help registry', () => {
   it('lists control commands and keeps dashboard commands out', () => {
@@ -71,5 +73,40 @@ describe('help registry', () => {
     expect(hasHelpFlag(['-h'])).toBe(true)
     expect(hasHelpFlag(['add'])).toBe(false)
     expect(stripHelpFlag(['add', '--help'])).toEqual(['add'])
+  })
+})
+
+describe('commandMenu', () => {
+  it('offers the private commands to the bot chat', () => {
+    const menu = commandMenu('private')
+    const names = menu.map((entry) => entry.command)
+    expect(names).toContain('system')
+    expect(names).toContain('web')
+    expect(names).toContain('plugins')
+    // Commands that only exist in a group must not appear in the bot chat menu.
+    expect(names).not.toContain('sync')
+    expect(names).not.toContain('bind')
+  })
+
+  it('offers the group commands to groups, and nothing for the bot chat only', () => {
+    const names = commandMenu('group').map((entry) => entry.command)
+    expect(names).toContain('help')
+    expect(names).toContain('commands')
+    expect(names).not.toContain('plugins')
+    expect(names).not.toContain('system')
+  })
+
+  it('fits what Telegram accepts', () => {
+    for (const scope of ['private', 'group']) {
+      const menu = commandMenu(scope)
+      expect(menu.length).toBeLessThanOrEqual(100)
+      for (const entry of menu) {
+        expect(entry.command.length).toBeGreaterThan(0)
+        expect(entry.command.length).toBeLessThanOrEqual(32)
+        expect(entry.command).not.toContain(' ')
+        expect(entry.description.length).toBeLessThanOrEqual(256)
+      }
+      expect(new Set(menu.map((entry) => entry.command)).size).toBe(menu.length)
+    }
   })
 })

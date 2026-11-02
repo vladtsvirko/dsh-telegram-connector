@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.2.1-rc.2-0.8.0
+
+### Added
+
+- **The command menu.** Telegram's menu above the input box was empty; it is now
+  published for the bot chat and for groups, from the same registry as `/help`,
+  so it cannot drift from the manual. Two calls on boot, one per scope.
+- **`/system takechat`**: make the current private chat the control chat.
+  Notices, update reports and failure cards go there, and moving it is explicit.
+- **`/bind` is documented** (`/help bind`) — it was a real command in no help.
+
+### Fixed
+
+- **The control chat no longer follows the last DM.** It is claimed by the first
+  private chat and stays there; an allowed colleague writing to the bot could
+  earlier redirect someone else's notices — and the content in them — by
+  messaging once. Only the admin moves it, with `/system takechat`.
+- **Attaching a group is administration.** `/bind` and `/workspace new|link|rm`
+  now need the admin: they decide what every user in a group can reach. The
+  first-run `?startgroup=` link still works before the bot chat is claimed, so a
+  fresh install cannot lock itself out.
+- **A host command of the same name works in a session topic.** `/bind`,
+  `/cleanup` and `/archived` exist on both sides; the connector's reservation
+  used to refuse them outright instead of letting the host command run.
+- **`agent/error` is redacted** before it reaches a group: a provider error can
+  quote the key it rejected.
+- **A failed attachment is reported to the user**, not only to the agent in the
+  prompt.
+- **`/plugin del` works** — it resolved in help but had no dispatcher.
+- **`/unarchive` points at a command that works**: it said `/rename` "inside it",
+  where `/rename` is refused; it now gives the full form to run from the dashboard.
+- **A hard cut never splits a surrogate pair**, so an emoji at the 4,096 boundary
+  stays one character.
+
+### Notes
+
+- With no `DSH_ADMIN_USER_ID` and no claimed bot chat, any allowed user may
+  administer — otherwise a hand-written config could not bind its first group.
+  `/about` says which rule is in effect.
 ## 0.2.1-rc.2-0.7.4
 
 Maintenance release; no connector change. Aligned with the setup fix for the

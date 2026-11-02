@@ -181,3 +181,71 @@ describe('who may administer', () => {
     expect(callText(answer)).not.toContain('changes the deployment for everyone')
   }, 20_000)
 })
+
+describe('the command menu is published', () => {
+  it('sets a private and a group menu at boot', async () => {
+    const harness = await start(await boot())
+    await harness.waitFor(
+      () => harness.calls.filter((call) => call.method === 'setMyCommands').length >= 2,
+      'both setMyCommands calls',
+      6000,
+    )
+    const calls = harness.calls.filter((call) => call.method === 'setMyCommands')
+    const scopes = calls.map((call) => (call.params.scope as { type?: string } | undefined)?.type ?? 'default')
+    expect(scopes).toContain('default')
+    expect(scopes).toContain('all_group_chats')
+    const commands = calls[0]!.params.commands as { command: string }[]
+    expect(commands.some((entry) => entry.command === 'system')).toBe(true)
+  }, 20_000)
+})
+
+describe('the control chat', () => {
+  it('stays where it was claimed, and the admin can move it deliberately', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-control-'))
+    const workspaceRoot = join(dir, 'workspace')
+    const seeded = makeBindings(workspaceRoot)
+    // 43 is the admin; 42 is an ordinary allowed user.
+    const harness = await start(await boot({ workspaceRoot, adminUserId: 43, allowedUserIds: [42, 43] }, { dir, bindings: seeded }))
+    const from = (chatId: number, text: string) => harness.makeUpdate({
+      text,
+      chatId,
+      userId: chatId,
+      threadId: 0,
+      extra: { chat: { id: chatId, type: 'private' }, is_topic_message: false },
+    })
+
+    // The first DM claims the control chat, whoever sent it.
+    harness.pushUpdate(from(42, '/about'))
+    await harness.waitFor(() => harness.sent.some((call) => call.params.chat_id === 42), 'the first answer', 6000)
+
+    // The admin writes from their own DM: that alone must not move it, or the
+    // notices would follow whoever wrote last.
+    harness.pushUpdate(from(43, '/about'))
+    await harness.waitFor(() => harness.sent.some((call) => call.params.chat_id === 43), 'the admin answer', 6000)
+    let state = JSON.parse(await readFile(harness.bindingsFile, 'utf8')) as { controlChatId?: number }
+    expect(state.controlChatId).toBe(42)
+
+    // Moving it is explicit.
+    harness.pushUpdate(from(43, '/system takechat'))
+    await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('now the control chat')),
+      'the takechat confirmation',
+      6000,
+    )
+    state = JSON.parse(await readFile(harness.bindingsFile, 'utf8')) as { controlChatId?: number }
+    expect(state.controlChatId).toBe(43)
+  }, 25_000)
+})
+
+describe('binding is administration', () => {
+  it('refuses /bind from a user who is not the admin', async () => {
+    const harness = await start(await boot({ adminUserId: 7 }))
+    harness.pushUpdate(harness.makeUpdate({ text: `/bind ${WORKSPACE_ID}`, chatId: OTHER_CHAT, threadId: 0 }))
+    const refusal = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('only admin 7')),
+      'the admin refusal for /bind',
+      6000,
+    )
+    expect(callText(refusal)).toContain('changes the deployment for everyone')
+  }, 20_000)
+})

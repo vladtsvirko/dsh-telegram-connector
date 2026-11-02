@@ -186,3 +186,19 @@ it("keeps converted chunks inside Telegram's limit", () => {
     }
   })
 })
+
+describe('hard cuts', () => {
+  it('never splits a surrogate pair', () => {
+    // An emoji is two code units; cutting between them leaves half a character,
+    // which Telegram renders as a replacement glyph.
+    const line = `${'a'.repeat(44)}😀${'b'.repeat(44)}`
+    const chunks = splitMessage(line, 45)
+    for (const chunk of chunks) {
+      const last = chunk.charCodeAt(chunk.length - 1)
+      const first = chunk.charCodeAt(0)
+      expect(last >= 0xd800 && last <= 0xdbff).toBe(false)
+      expect(first >= 0xdc00 && first <= 0xdfff).toBe(false)
+    }
+    expect(chunks.join('')).toBe(line)
+  })
+})

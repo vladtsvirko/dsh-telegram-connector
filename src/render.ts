@@ -580,11 +580,16 @@ export function splitMessage(text: string, limit = SAFE_LENGTH): string[] {
       }
     }
 
-    // a single pathological line longer than the limit gets hard-cut
+    // a single pathological line longer than the limit gets hard-cut, but never
+    // through a surrogate pair: half an emoji is not text, and Telegram renders
+    // it as a replacement character.
     let rest = line
     while (rest.length > limit) {
-      chunks.push(rest.slice(0, limit))
-      rest = rest.slice(limit)
+      let cut = limit
+      const code = rest.charCodeAt(cut - 1)
+      if (code >= 0xd800 && code <= 0xdbff) cut -= 1
+      chunks.push(rest.slice(0, cut))
+      rest = rest.slice(cut)
     }
     place(rest)
 

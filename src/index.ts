@@ -61,7 +61,7 @@ import {
   type PluginManagerService,
 } from './plugins.js'
 import { SupervisorClient, deadlineText, parseTrialCallback, trialCallbackData, type SupervisorStatus } from './supervisor.js'
-import { hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag, unknownHelp, type Surface } from './help.js'
+import { commandMenu, hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag, unknownHelp, type Surface } from './help.js'
 import { resolveTimeZone, validTimeZone } from './time.js'
 import { connectorVersion, runtimeVersion, supportedRange } from './about.js'
 import { BotPool, type BotHandle } from './bots.js'
@@ -468,7 +468,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     // No admin configured (an upgraded deployment, or one set up by hand): the
     // owner of the control chat is the admin, so an upgrade cannot lock anyone
     // out. In a private chat the chat id *is* the user id.
-    return bindings.controlChatId !== undefined && bindings.controlChatId === userId
+    if (bindings.controlChatId !== undefined) return bindings.controlChatId === userId
+    // Nobody has used the bot chat yet, so the owner is not known — and refusing
+    // everything would brick the first-run group link. An allowed user may
+    // administer until the chat is claimed; the installer sets an admin anyway.
+    return isAllowed(userId)
   }
 
   /** True when the sender may run a mutating command; replies when not. */
@@ -1245,7 +1249,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     try {
       await waitForDrain()
       if (bindings.update === undefined) return
-      const response = await updaterFetch('/update', { mode })
+      // The updater refuses a target that crosses a DSH line or a product major
+      // unless the caller says so: "available" is a mode, not a permission, so
+      // the flag has to travel with the request.
+      const response = await updaterFetch('/update', { mode, incompatible: mode === 'available' })
       if (response.status !== 202) {
         const detail = await response.text().catch(() => '')
         await finishUpdateStatus(`❌ setup update was not accepted: ${detail.slice(0, 300)}`)
@@ -1490,6 +1497,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       return reply(message, lines.join('\n'))
     }
+    if (sub === 'takechat') {
+      // Moving the control chat is deliberate: it decides where every notice and
+      // every failure report goes.
+      if (bindings.controlChatId === message.chat.id) return reply(message, 'this is already the control chat.')
+      bindings.controlChatId = message.chat.id
+      await persist()
+      return reply(message, 'this chat is now the control chat — notices and update reports come here.')
+    }
     if (sub === 'manage' || sub === 'components') return manageComponents(message, tail)
     if (sub === 'cancel') {
       // The card's ✖ button was the only way out of a pending update; a card
@@ -1522,7 +1537,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       return reply(message, 'usage: `/system update <connector|all> [now]`')
     }
-    return reply(message, 'usage: `/system <status|restart|update|confirm|rollback>`')
+    return reply(message, 'usage: `/system <status|restart|update|confirm|rollback|cancel|manage|takechat>`')
   }
 
   /** Ask the sidecar to stop its running job; true when it had one. */
@@ -1592,7 +1607,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   /** Who may run profile-global commands, and how that was decided. */
   const adminLine = (): string => config.adminUserId === undefined
-    ? 'admin: the owner of this chat (set `DSH_ADMIN_USER_ID` to name one explicitly)'
+    ? bindings.controlChatId === undefined
+      ? 'admin: any allowed user until the bot chat is used (set `DSH_ADMIN_USER_ID` to name one)'
+      : 'admin: the owner of this chat (set `DSH_ADMIN_USER_ID` to name one explicitly)'
     : `admin: ${String(config.adminUserId)}`
 
   /** The provider key this deployment is supposed to have. */
@@ -2258,6 +2275,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         return beginPluginInstall(message, argument)
       case 'remove':
       case 'rm':
+      case 'del':
         return argument.length === 0 ? reply(message, 'usage: `/plugin remove <name>`') : beginPluginRemove(message, argument)
       case 'enable':
         return argument.length === 0 ? reply(message, 'usage: `/plugin enable <name>`') : beginPluginBundle(message, argument, true)
@@ -3012,6 +3030,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * workspace's owner has to `/unbind` it first.
    */
   const bindGroup = async (message: TgMessage, workspaceId: string): Promise<void> => {
+    // Attaching a group decides which workspace everything in it can reach, and
+    // a group message can come from any member. Same rule as the other
+    // deployment-wide commands.
+    if (!requireAdmin(message)) return
     const workspace = bindings.workspaces[workspaceId]
     if (workspace === undefined) {
       return reply(message, `unknown workspace \`${workspaceId}\` — see /workspaces in the bot chat`)
@@ -3085,7 +3107,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   }
 
   const handleControl = async (message: TgMessage, text: string): Promise<void> => {
-    if (bindings.controlChatId !== message.chat.id) {
+    // The control chat is where notices, failures and takeover cards land. It
+    // used to follow whichever DM was last written to, so an allowed colleague
+    // could redirect another user's notices (and their content) by messaging the
+    // bot once. It is set on the first private chat and only the admin may move
+    // it, with `/system takechat`.
+    if (bindings.controlChatId === undefined) {
       bindings.controlChatId = message.chat.id
       await persist()
     }
@@ -3116,6 +3143,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (command === '/workspace') {
       const [sub, ...tail] = rest
       const target = tail.join(' ').trim()
+
+      if (sub === 'new' || sub === 'link' || sub === 'rm') {
+        // Creating, adopting or forgetting a workspace changes what every user
+        // in every group can reach.
+        if (!requireAdmin(message)) return
+      }
 
       if (sub === 'new') {
         if (target.length === 0) return reply(message, 'usage: `/workspace new <title>`')
@@ -3446,7 +3479,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId: match, title: `session ${match.slice(-6)}` })
       await persist()
       await backfill(message.chat.id, threadId, match)
-      return reply(message, `restored \`${match}\` as topic ${threadId} — \`/rename\` inside it to name it`)
+      return reply(message, `restored \`${match}\` as topic ${threadId} — name it from this topic with \`/rename ${match} <title>\``)
     }
 
     if (command === '/rename' || command === '/forget' || command === '/model' || command === '/close' || command === '/reopen') {
@@ -3930,6 +3963,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     const prompt = text.trim().length > 0 ? text.trim() : attachmentPlaceholder(items)
     const downloaded = await downloadAttachments(items, 'attached')
+    if (downloaded.errors.length > 0) {
+      // The agent is told in the prompt, but the user is the one who has to send
+      // the file again — and used to be told nothing.
+      await reply(message, `⚠️ some attachments could not be read:\n${downloaded.errors.map((line) => `· ${line}`).join('\n')}`)
+    }
     const fullPrompt = downloaded.errors.length > 0
       ? `${prompt}\n\n[Attachment errors: ${downloaded.errors.join('; ')}]`
       : prompt
@@ -4315,6 +4353,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         await reply(message, 'that one is profile-global — the private chat with the bot has it.')
         return
       }
+      // Reserved means the connector's own command wins, not that a host command
+      // with the same name disappears: `/bind`, `/cleanup` and `/archived` exist
+      // on both sides, and the session topic used to refuse them outright.
+      const runtime = await topicRuntimeFor(message, workspaceId, workspace, threadId)
+      if (await executeHostCommand(message, runtime, name, parsed.args.trim(), `/${name}`, false)) return
       await reply(
         message,
         `this is a session topic — connector commands live in the system topic. Try \`/commands\` or \`/skills\` here.`,
@@ -4924,10 +4967,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     void client
       .getMe()
-      .then((me) => {
+      .then(async (me) => {
         botUsername = me.username
         logger.info(`dsh-telegram-connector: @${me.username ?? me.id} connected`)
         stderr(`connected as @${me.username ?? me.id}`)
+        // The command menu: Telegram shows it above the input box, and an empty
+        // one is the first thing a new user notices. Two scopes, because the
+        // private chat and the groups accept different commands.
+        const privateMenu = commandMenu('private')
+        await client.setMyCommands(privateMenu).catch((error: unknown) => {
+          stderr(`cannot set the private command menu: ${String(error)}`)
+        })
+        await client
+          .setMyCommands(commandMenu('group'), { scope: { type: 'all_group_chats' } })
+          .catch((error: unknown) => stderr(`cannot set the group command menu: ${String(error)}`))
       })
       .catch((error: unknown) => {
         logger.warn(`dsh-telegram-connector: cannot reach Telegram: ${String(error)}`)
@@ -5279,7 +5332,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         await finishStream(runtime)
         await finishProcessTurn(runtime, '⚠️ Process interrupted')
       })()
-      void sendTo(runtime.chatId, runtime.threadId, `⚠️ Agent error: ${message}`)
+      // The error text can quote a provider response, which occasionally echoes
+      // the key it rejected: redact before it reaches a group.
+      void sendTo(runtime.chatId, runtime.threadId, `⚠️ Agent error: ${redactPreview(message)}`)
       return
     }
 

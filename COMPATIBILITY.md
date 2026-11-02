@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.2-0.7.4 | `0.2.1-rc.2` | tested | maintenance: same connector code, aligned with the setup release |
+| 0.2.1-rc.2-0.8.0 | `0.2.1-rc.2` | tested | command menu, pinned control chat, admin-guarded binding, redacted errors, attachment notices |
+| 0.2.1-rc.2-0.7.4 | `0.2.1-rc.2` | previous | maintenance: same connector code, aligned with the setup release |
 | 0.2.1-rc.2-0.7.3 | `0.2.1-rc.2` | previous | maintenance: same connector code, aligned with the setup release |
 | 0.2.1-rc.2-0.7.2 | `0.2.1-rc.2` | previous | maintenance: same connector code, aligned with the setup fix |
 | 0.2.1-rc.2-0.7.1 | `0.2.1-rc.2` | previous | maintenance: same connector code as 0.7.0, aligned with the setup release |

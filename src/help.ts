@@ -225,11 +225,21 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system',
-    usage: '/system <status|restart|update|confirm|rollback|manage>',
+    usage: '/system <status|restart|update|confirm|rollback|cancel|manage|takechat>',
     summary: 'runtime lifecycle: status, restarts, connector and setup updates, optional components',
     details:
       'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update all` drains agents and moves the setup image through the updater sidecar. `confirm` and `rollback` close the profile trial; rollback does not move the image. `manage` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
     examples: ['/system status', '/system restart now', '/system update connector'],
+    surfaces: ['control'],
+    group: 'system',
+  },
+  {
+    path: 'system takechat',
+    usage: '/system takechat',
+    summary: 'make this private chat the control chat',
+    details:
+      'Notices, update reports and failure cards go to the control chat. It is set on the first private chat you use and does not follow later DMs; this command moves it deliberately. Admin only.',
+    examples: ['/system takechat'],
     surfaces: ['control'],
     group: 'system',
   },
@@ -447,6 +457,16 @@ const COMMANDS: CommandDoc[] = [
     group: 'sessions',
   },
   {
+    path: 'bind',
+    usage: '/bind <workspace id or title>',
+    summary: 'attach this group to a workspace (the startgroup link does the same)',
+    details:
+      'One group hosts one workspace, and one workspace lives in one group. The workspace must exist and be unclaimed; moving a workspace here clears the old group\'s bindings but leaves its conversation history. Only the admin can attach a group.',
+    examples: ['/bind landing-page', '/bind 9cb8f1a2…'],
+    surfaces: ['dashboard'],
+    group: 'workspace',
+  },
+  {
     path: 'unbind',
     usage: '/unbind',
     summary: 'detach this group from the workspace',
@@ -604,4 +624,39 @@ export function hasHelpFlag(args: readonly string[]): boolean {
 /** Strip the help flag so the remaining words address a command. */
 export function stripHelpFlag(args: readonly string[]): string[] {
   return args.filter((arg) => arg !== '--help' && arg !== '-h')
+}
+
+export interface MenuEntry {
+  /** Telegram command name: 1–32 characters, no slash. */
+  command: string
+  /** One line, shown under the command in the menu. */
+  description: string
+}
+
+/**
+ * The command menu Telegram shows above the input box.
+ *
+ * Built from the same registry as `/help`, so the menu cannot drift from the
+ * manual. Telegram rejects names longer than 32 characters, descriptions longer
+ * than 256, and more than 100 entries; subcommands (`system manage`) cannot be
+ * menu entries at all, so only the top-level names appear.
+ *
+ * @param scope - `private` for the bot chat, `group` for workspace groups.
+ * @returns entries in registry order, ready for `setMyCommands`.
+ */
+export function commandMenu(scope: 'private' | 'group'): MenuEntry[] {
+  const seen = new Set<string>()
+  const entries: MenuEntry[] = []
+  for (const doc of COMMANDS) {
+    if (doc.path.includes(' ')) continue
+    const shown = scope === 'private'
+      ? doc.surfaces.includes('control')
+      : doc.surfaces.some((surface) => surface === 'dashboard' || surface === 'session')
+    if (!shown) continue
+    const command = doc.path.replace(/^\/+/, '').slice(0, 32)
+    if (command.length === 0 || seen.has(command)) continue
+    seen.add(command)
+    entries.push({ command, description: doc.summary.slice(0, 256) })
+  }
+  return entries.slice(0, 100)
 }
