@@ -9,6 +9,8 @@
  * `tests/harness.ts`.
  */
 
+import { readFile, readdir } from 'node:fs/promises'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   boot,
@@ -262,5 +264,40 @@ describe('ownership refusal', () => {
       6000,
     )
     expect(answer.messageId).toBeGreaterThan(echo.messageId!)
+  }, 20_000)
+})
+
+describe('mirrored turns are journaled', () => {
+  it('keeps the answer in the bridge when Telegram refuses the send', async () => {
+    // Every send to the group is refused: the echo cannot be delivered either,
+    // so the sink never gets a message id and the turn stays pending. That is
+    // exactly the state a restart would otherwise lose.
+    const harness = await start(await boot({}, {
+      failSend: (call) => (call.method === 'sendMessage' || call.method === 'sendRichMessage'
+        ? 'Bad Request: chat not found'
+        : undefined),
+    }))
+    // No runtime holds this session: the topic mirrors it, which is the path
+    // that has to journal the turn.
+    const session = { id: SESSION_ID }
+    harness.emitSessionEvent(session, turnStart())
+    harness.emitSessionEvent(session, userMessage('web prompt'))
+    harness.emitSessionEvent(session, assistantMessage('undeliverable answer'))
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    harness.emitSessionEvent(session, turnEnd())
+
+    const out = join(harness.dir, 'telegram-connector', 'bridge', 'out')
+    const files = await harness.waitFor(async () => {
+      const names = await readdir(out).catch(() => [] as string[])
+      return names.filter((name) => name.endsWith('.json')).length > 0 ? names : false
+    }, 'the mirrored turn to be journaled', 6000)
+    const record = JSON.parse(await readFile(join(out, files[0]!), 'utf8')) as {
+      sessionId: string
+      assistant: string
+      user?: string
+    }
+    expect(record.sessionId).toBe(SESSION_ID)
+    expect(record.assistant).toContain('undeliverable answer')
+    expect(record.user).toBe('web prompt')
   }, 20_000)
 })

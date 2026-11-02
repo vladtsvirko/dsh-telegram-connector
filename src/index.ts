@@ -81,6 +81,7 @@ import {
   type ProcessItem,
 } from './process.js'
 import {
+  allowedDuringUpdate,
   isReservedConnectorCommand,
   normalizeSlashInput,
   parseSlash,
@@ -114,6 +115,9 @@ export const Config = Schema.object({
   model: Schema.string(),
   editIntervalMs: Schema.number().default(1200),
   pollTimeoutSeconds: Schema.number().default(25),
+  /** Deadline for one Bot API call; a hung call must not freeze a topic. */
+  requestTimeoutSeconds: Schema.number().default(60),
+  downloadTimeoutSeconds: Schema.number().default(120),
   reconcileIntervalSeconds: Schema.number().default(60),
   processMode: Schema.union(['off', 'summary', 'live']).default('live'),
   agentPreset: Schema.string(),
@@ -131,6 +135,10 @@ export interface ConnectorConfig {
   model?: string
   editIntervalMs?: number
   pollTimeoutSeconds?: number
+  /** Deadline for one Bot API call, in seconds. */
+  requestTimeoutSeconds?: number
+  /** Deadline for a Telegram file download, in seconds. */
+  downloadTimeoutSeconds?: number
   reconcileIntervalSeconds?: number
   /**
    * `off` hides process rows; `summary` sends one collapsed summary per turn;
@@ -373,7 +381,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return typeof get === 'function' ? (get.call(ctx, 'agentPresets') as AgentPresetService | undefined) : undefined
   }
 
-  const client = new TelegramClient(config.botToken)
+  const requestTimeoutMs = Math.max(5, config.requestTimeoutSeconds ?? 60) * 1000
+  const pollTimeoutMs = Math.max(5, config.pollTimeoutSeconds ?? 25) * 1000 + 30_000
+  const downloadTimeoutMs = Math.max(10, config.downloadTimeoutSeconds ?? 120) * 1000
+  const client = new TelegramClient(config.botToken, { requestTimeoutMs, pollTimeoutMs, downloadTimeoutMs })
   const agents = ctx.agents
 
   // Publisher bots are send-only; the main bot stays the only poller. Tokens come
@@ -386,7 +397,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     { label: 'main', client, main: true },
     ...publisherTokens.map((token, index) => ({
       label: `publisher ${index + 1}`,
-      client: new TelegramClient(token),
+      client: new TelegramClient(token, { requestTimeoutMs, downloadTimeoutMs }),
       main: false,
     })),
   ]
@@ -1448,7 +1459,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // The card's ✖ button was the only way out of a pending update; a card
       // deleted from the chat left the bot refusing every message.
       if (bindings.update === undefined) return reply(message, 'no update is pending.')
-      await finishUpdateStatus('❌ setup update cancelled.')
+      // The sidecar is the side that is actually running update.sh: a local card
+      // reset alone leaves a build running and the updater's only job slot busy.
+      const stopped = await cancelUpdaterJob()
+      await finishUpdateStatus(stopped
+        ? '❌ setup update cancelled; the updater stopped the job.'
+        : '❌ setup update cancelled (the updater had no running job).')
       return
     }
     if (sub === 'restart') return restartRuntime(message, mode)
@@ -1471,6 +1487,21 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, 'usage: `/system update <connector|all> [now]`')
     }
     return reply(message, 'usage: `/system <status|restart|update|confirm|rollback>`')
+  }
+
+  /** Ask the sidecar to stop its running job; true when it had one. */
+  const cancelUpdaterJob = async (): Promise<boolean> => {
+    if (updaterToken.length === 0) return false
+    try {
+      const response = await updaterFetch('/cancel', {})
+      if (response.status === 202) return true
+      if (response.status === 409) return false
+      logger.warn(`dsh-telegram-connector: updater cancel answered ${String(response.status)}`)
+      return false
+    } catch (error) {
+      logger.warn(`dsh-telegram-connector: cannot reach the updater to cancel: ${String(error)}`)
+      return false
+    }
   }
 
   const updaterLine = async (): Promise<string> => {
@@ -1622,6 +1653,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (supervisor === undefined) return reply(message, 'no supervisor is configured.')
     try {
       await flushOffset()
+      // Check first: the supervisor refuses a rollback while another operation
+      // runs, and a promise the runtime cannot keep is worse than a refusal.
+      const status = await supervisor.status().catch(() => undefined)
+      if (status !== undefined && status.busy === true) {
+        return reply(message, '⚠️ the supervisor is busy with another operation — try again when it finishes; `/system status` shows it.')
+      }
       const retired = await retireStoredTrialMessage('↩️ rolling back to the last committed state…')
       if (!retired) await replyNow(message, 'rolling back to the last committed state — the bot will be back in a moment.')
       await supervisor.rollback('rollback requested from Telegram')
@@ -4253,9 +4290,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     if (bindings.update !== undefined) {
       const command = (text ?? media?.caption ?? '').trim()
-      // Recovery commands stay reachable while a drain is pending: the update
-      // gate used to block the very command that clears a stuck drain.
-      if (!/^\/(?:system\s+(?:status|cancel|restart|confirm|rollback)|system|about|help|man|start)\b/.test(command)) {
+      // Recovery commands stay reachable while a drain is pending; the list and
+      // the reason live next to the slash parser, where it is tested.
+      if (!allowedDuringUpdate(command)) {
         const now = Date.now()
         const last = blockedNotified.get(message.chat.id) ?? 0
         if (now - last > 60_000) {
@@ -4903,6 +4940,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // would be edited into the previous Telegram turn's reply.
       if (sink.parts.length > 0 || sink.buffer.length > 0) resetStream(sink)
       sink.mirror = true
+      sink.lastPrompt = text
+      sink.lastPromptAt = Date.now()
       sink.gate = sendToConfirmed(target.chatId, target.threadId, `💬 **you (web)** · ${name}\n${text}`)
       return
     }
@@ -4954,12 +4993,26 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         return
       }
       if (eventType === 'turn/end') {
-        // flush whatever the mirrored turn left in the sink
         const sink = [...runtimes.values()].find((candidate) => {
           const found = mirrorTarget(sessionId)
           return found !== undefined && candidate.chatId === found.chatId && candidate.threadId === found.threadId
         })
-        if (sink !== undefined) void finishStream(sink)
+        if (sink === undefined) return
+        // Journal the turn like a Telegram one: without it a restart inside the
+        // flush window loses the answer, and the catch-up digest never sees it.
+        const text = sink.buffer.trim()
+        if (text.length > 0) {
+          void bridge.recordTurn(sink.session.sessionId, text, sink.lastPrompt)
+            .then((turn) => {
+              if (sink.parts.length > 0) {
+                void bridge.completeTurn(turn.id)
+                return
+              }
+              sink.pendingTurnId = turn.id
+            })
+            .catch((error: unknown) => stderr(`bridge: cannot record mirrored turn: ${String(error)}`))
+        }
+        void finishStream(sink)
         return
       }
       if (event.type === 'user/message') {

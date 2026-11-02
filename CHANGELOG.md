@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.2.1-rc.2-0.6.0
+
+### Fixed
+
+- **A hung Bot API call no longer freezes a topic.** No `fetch` carried a
+  deadline, so one stalled connection left the topic's flush chain unsettled and
+  that topic stopped updating until the process restarted. Every call now has a
+  timeout: 60 s by default (`requestTimeoutSeconds`), the long poll extends
+  Telegram's own hold time, and downloads get their own
+  (`downloadTimeoutSeconds`, 120 s).
+- **A mirrored turn survives a restart.** The answer lived only in the sink; a
+  restart inside the flush window lost it and the catch-up digest never saw it.
+  Mirrored turns are journaled and completed like Telegram turns.
+- **`/system rollback` no longer promises what the supervisor refuses.** While
+  another operation was running the supervisor answered `200` and did nothing,
+  so the connector retired the card and the rollback became unreachable. The
+  route now answers `409` (or `202` when it accepts), `/status` reports `busy`,
+  and the connector checks before posting.
+- **`/system cancel` stops the job, not just the card.** It asks the updater to
+  cancel the running `update.sh` (the sidecar also stops a job that exceeds
+  `DSH_UPDATE_TIMEOUT_SECONDS`, 30 minutes by default).
+- **The update gate allows the recovery commands.** It matched on a prefix, so
+  `/system update all` slipped through while `/system restart` was blocked — the
+  reverse of what a stuck drain needs. The rule is now an explicit list with its
+  own tests.
+
+### Tests
+
+- `tests/binding.integration.test.ts`: re-linking a group changes nothing, a
+  group hosting another workspace is refused, moving a workspace clears the old
+  bindings, `/unarchive` reuses its topic, `/sync` keeps a topic on a 5xx.
+- The harness can refuse a Bot API call (`failSend`), and `waitFor` awaits async
+  predicates.
+
 ## 0.2.1-rc.2-0.5.0
 
 ### Fixed

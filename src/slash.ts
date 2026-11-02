@@ -112,3 +112,22 @@ export function unescapeLeadingSlash(text: string): { text: string; escaped: boo
 export function isReservedConnectorCommand(name: string): boolean {
   return RESERVED_CONNECTOR_COMMANDS.has(name)
 }
+
+/**
+ * Commands that stay reachable while an update is pending.
+ *
+ * The gate used to block every message except `/system status`, which included
+ * the commands that clear a stuck drain and the restart that releases a held
+ * session — the bot looked dead with no way out from Telegram. Everything here
+ * is read-only or a documented recovery path; anything that starts work (a new
+ * session, a plugin change, an update) stays blocked.
+ */
+const ALLOWED_SUBCOMMANDS = /^\/system\s+(?:status|cancel|restart|confirm|rollback)(?:\s|$)/
+
+export function allowedDuringUpdate(text: string): boolean {
+  const command = text.trim()
+  // `/system` on its own is `/system status`; `/system update all` is not.
+  if (command === '/system') return true
+  if (ALLOWED_SUBCOMMANDS.test(command)) return true
+  return /^\/(?:about|help|man|start)(?:\s|$)/.test(command)
+}

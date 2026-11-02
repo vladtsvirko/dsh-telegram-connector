@@ -276,14 +276,40 @@ export function isRichRejected(error: unknown): boolean {
     || description.includes('unknown method')
 }
 
-export class TelegramClient {
-  constructor(private readonly token: string) {}
+export interface TelegramClientOptions {
+  /** Any ordinary Bot API call. */
+  requestTimeoutMs?: number
+  /** `getUpdates` holds the connection for its long-poll timeout, so it needs more. */
+  pollTimeoutMs?: number
+  /** File downloads are large and slow. */
+  downloadTimeoutMs?: number
+}
 
-  async call<T>(method: string, body: Record<string, unknown> = {}): Promise<T> {
+/** Read as: the long poll Telegram was asked for, plus a slow round trip. */
+const secondsToMs = (seconds: number): number => Math.max(1, Math.round(seconds)) * 1000
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000
+
+export class TelegramClient {
+  constructor(
+    private readonly token: string,
+    private readonly options: TelegramClientOptions = {},
+  ) {}
+
+  /**
+   * One Bot API call.
+   *
+   * Every call carries a deadline: without one a hung connection leaves the
+   * caller's promise — and the topic's flush chain behind it — unsettled for
+   * ever, so that topic silently stops updating.
+   */
+  async call<T>(method: string, body: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
     const response = await fetch(`${TG_API}/bot${this.token}/${method}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs ?? this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS),
     })
     const envelope = (await response.json()) as TgEnvelope<T>
     if (!envelope.ok) {
@@ -311,7 +337,9 @@ export class TelegramClient {
     if (file.file_path === undefined || file.file_path.length === 0) {
       throw new Error('Telegram returned no file_path for this file')
     }
-    const response = await fetch(`${TG_API}/file/bot${this.token}/${file.file_path}`)
+    const response = await fetch(`${TG_API}/file/bot${this.token}/${file.file_path}`, {
+      signal: AbortSignal.timeout(this.options.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS),
+    })
     if (!response.ok) {
       throw new Error(`Telegram file download failed (${String(response.status)})`)
     }
@@ -326,7 +354,7 @@ export class TelegramClient {
       // the offset would advance past messages we never saw. Button presses are
       // updates too, so they have to be named explicitly.
       allowed_updates: ['message', 'callback_query'],
-    })
+    }, (this.options.pollTimeoutMs ?? secondsToMs(timeoutSeconds) + 30_000))
   }
 
   sendMessage(chatId: number, text: string, options: SendOptions = {}): Promise<TgMessage> {

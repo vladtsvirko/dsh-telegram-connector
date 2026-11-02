@@ -69,13 +69,15 @@ export function callText(call: TgCall): string {
 
 /** Poll `predicate` until it returns a truthy value; throws after `timeoutMs`. */
 export async function waitFor<T>(
-  predicate: () => T | false | null | undefined,
+  predicate: () => T | false | null | undefined | Promise<T | false | null | undefined>,
   label = 'condition',
   timeoutMs = 3000,
 ): Promise<T> {
   const started = Date.now()
   for (;;) {
-    const value = predicate()
+    // Awaited on purpose: an async predicate is the natural way to wait for a
+    // file to appear, and treating its Promise as truthy returns at once.
+    const value = await predicate()
     if (value) return value
     if (Date.now() - started >= timeoutMs) {
       throw new Error(`waitFor(${label}) timed out after ${timeoutMs}ms`)
@@ -97,6 +99,14 @@ interface FakeTelegram {
   restore: () => void
 }
 
+/** A refusal the way Telegram sends one: HTTP 400 and an `ok:false` envelope. */
+function jsonError(description: string, errorCode = 400): Response {
+  return new Response(JSON.stringify({ ok: false, error_code: errorCode, description }), {
+    status: errorCode,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
 function json(result: unknown): Response {
   return new Response(JSON.stringify({ ok: true, result }), {
     status: 200,
@@ -109,7 +119,10 @@ function json(result: unknown): Response {
  * plugin did not wrap explicitly: unknown methods answer `{ok:true,result:true}`
  * rather than throwing, so a future plugin call cannot make the harness lie.
  */
-function installFakeTelegram(initialUpdates: TgUpdate[] = []): FakeTelegram {
+function installFakeTelegram(
+  initialUpdates: TgUpdate[] = [],
+  failSend?: (call: TgCall) => string | undefined,
+): FakeTelegram {
   const originalFetch = globalThis.fetch
   const calls: TgCall[] = []
   const sent: TgCall[] = []
@@ -135,6 +148,9 @@ function installFakeTelegram(initialUpdates: TgUpdate[] = []): FakeTelegram {
     }
     const call: TgCall = { method, params, url, at: Date.now() }
     calls.push(call)
+    // A test can make a send fail the way Telegram does, without a real network.
+    const refusal = failSend?.(call)
+    if (refusal !== undefined) return jsonError(refusal)
 
     switch (method) {
       case 'getMe':
@@ -468,6 +484,8 @@ export interface BootOptions {
   bindings?: Bindings
   /** Incoming updates queued before the poll loop starts. */
   updates?: TgUpdate[]
+  /** Fail a Bot API call: return Telegram's description, or undefined to allow it. */
+  failSend?: (call: TgCall) => string | undefined
   /** Make the fake agent service refuse `create`/`resume`. */
   agent?: {
     failCreateWith?: Error
@@ -547,7 +565,7 @@ export async function boot(
   process.env.DSH_SUPERVISOR_URL = ''
   process.env.DSH_SUPERVISOR_TOKEN = ''
 
-  const telegram = installFakeTelegram(options.updates)
+  const telegram = installFakeTelegram(options.updates, options.failSend)
   const agents = new FakeAgents()
   agents.failCreateWith = options.agent?.failCreateWith
   agents.failResumeWith = options.agent?.failResumeWith

@@ -21,6 +21,8 @@ export interface SupervisorTrial {
 
 export interface SupervisorStatus {
   child: 'running' | 'stopped'
+  /** Another operation holds the supervisor; a rollback would be refused. */
+  busy?: boolean
   profile?: string
   stable: boolean
   stableAt?: number | null

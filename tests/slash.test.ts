@@ -4,6 +4,7 @@ import {
   normalizeSlashInput,
   parseSlash,
   unescapeLeadingSlash,
+  allowedDuringUpdate,
 } from '../src/slash.js'
 
 describe('parseSlash', () => {
@@ -86,5 +87,30 @@ describe('leading slash escape', () => {
       escaped: false,
     })
     expect(unescapeLeadingSlash('/etc/hosts')).toEqual({ text: '/etc/hosts', escaped: false })
+  })
+})
+
+describe('allowedDuringUpdate', () => {
+  it('keeps the recovery commands reachable', () => {
+    for (const command of [
+      '/system status',
+      '/system cancel',
+      '/system restart now',
+      '/system confirm',
+      '/system rollback',
+      '/system',
+      '/about',
+      '/help',
+      '/man',
+      '/start',
+    ]) {
+      expect(allowedDuringUpdate(command)).toBe(true)
+    }
+  })
+
+  it('blocks anything that starts work', () => {
+    for (const command of ['/new', '/sync', '/system update all', '/system manage', '/plugin add x', 'hello', '/workspace new x']) {
+      expect(allowedDuringUpdate(command)).toBe(false)
+    }
   })
 })

@@ -105,3 +105,39 @@ describe('isRichRejected', () => {
     expect(isRichRejected(new TypeError('fetch failed'))).toBe(false)
   })
 })
+
+describe('timeouts', () => {
+  const capture = (reply) => {
+    const signals = []
+    vi.stubGlobal('fetch', async (url, init) => {
+      signals.push(init.signal)
+      return reply(url)
+    })
+    return signals
+  }
+
+  it('attaches a deadline to an ordinary call', async () => {
+    const signals = capture(() => new Response(JSON.stringify({ ok: true, result: true }), { status: 200 }))
+    await new TelegramClient('tok', { requestTimeoutMs: 1234 }).sendMessage(1, 'hi')
+    expect(signals).toHaveLength(1)
+    expect(signals[0]).toBeInstanceOf(AbortSignal)
+  })
+
+  it('gives a download its own, longer deadline', async () => {
+    const signals = capture((url) => (url.includes('/file/')
+      ? new Response(new Uint8Array([1, 2, 3]))
+      : new Response(JSON.stringify({ ok: true, result: { file_id: 'f', file_path: 'photos/x.jpg' } }), { status: 200 })))
+    const data = await new TelegramClient('tok', { downloadTimeoutMs: 5000 }).downloadFile('f')
+    expect(data.byteLength).toBe(3)
+    expect(signals).toHaveLength(2)
+    expect(signals[1]).toBeInstanceOf(AbortSignal)
+  })
+
+  it('fails instead of hanging when the call never answers', async () => {
+    vi.stubGlobal('fetch', (_url, init) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+    }))
+    const client = new TelegramClient('tok', { requestTimeoutMs: 20 })
+    await expect(client.sendMessage(1, 'hi')).rejects.toThrow()
+  })
+})
