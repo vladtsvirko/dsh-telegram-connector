@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MirrorQueue, messageText, promptText, isForeignPrompt } from '../src/mirror.js'
+import { MirrorQueue, messageText, promptText, isForeignPrompt, claimsTopic, type TopicClaim } from '../src/mirror.js'
 
 const timeContext = [
   'Time sampled while preparing turn 2, step 1:',
@@ -96,5 +96,28 @@ describe('isForeignPrompt', () => {
   it('ignores harness-injected context and non-user sources', () => {
     expect(isForeignPrompt(false, 'skill-invocation')).toBe(false)
     expect(isForeignPrompt(false, undefined)).toBe(false)
+  })
+})
+
+describe('claimsTopic', () => {
+  const claim = (overrides: Partial<TopicClaim> = {}): TopicClaim => ({
+    chatId: 1, threadId: 2, hasAgent: true, foreign: false, ...overrides,
+  })
+
+  it('a live Telegram turn claims its topic', () => {
+    expect(claimsTopic([claim()], 1, 2)).toBe(true)
+  })
+
+  it('a failed attempt without an agent does not claim it', () => {
+    expect(claimsTopic([claim({ hasAgent: false })], 1, 2)).toBe(false)
+  })
+
+  it('a session taken over by the web UI does not claim it', () => {
+    expect(claimsTopic([claim({ foreign: true })], 1, 2)).toBe(false)
+  })
+
+  it('another topic does not claim this one', () => {
+    expect(claimsTopic([claim({ threadId: 9 })], 1, 2)).toBe(false)
+    expect(claimsTopic([claim({ chatId: 9 })], 1, 2)).toBe(false)
   })
 })

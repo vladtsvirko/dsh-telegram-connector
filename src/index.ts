@@ -67,7 +67,7 @@ import { connectorVersion, runtimeVersion } from './about.js'
 import { BotPool, type BotHandle } from './bots.js'
 import { Outbox, type ItemPriority, type OutboxItem } from './outbox.js'
 import { SessionBridge, type TurnRecord } from './bridge.js'
-import { isForeignPrompt, MirrorQueue, messageText, promptText } from './mirror.js'
+import { claimsTopic, isForeignPrompt, MirrorQueue, messageText, promptText } from './mirror.js'
 import { isOwnershipError, OWNERSHIP_HINT } from './errors.js'
 import {
   commandLabel,
@@ -3390,6 +3390,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (input !== undefined) await bridge.completeInput(input.id)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
+      // A runtime with no agent is a failed attempt, not a claimed topic: drop it
+      // so the mirror can still reach this topic.
+      if (runtime.agent === undefined) runtimes.delete(runtimeKey(runtime.chatId, runtime.threadId))
       await reply(message, `⚠️ ${detail}`)
     }
   }
@@ -4575,8 +4578,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (found === undefined) return
     // Thread ids are only unique inside one group; matching on the thread alone
     // would drop a General-topic mirror whenever another group has one.
-    const claimed = (): boolean => [...runtimes.values()]
-      .some((candidate) => candidate.chatId === found.chatId && candidate.threadId === found.threadId)
+    const claimed = (): boolean => claimsTopic(
+      [...runtimes.values()].map((candidate) => ({
+        chatId: candidate.chatId,
+        threadId: candidate.threadId,
+        hasAgent: candidate.agent !== undefined,
+        foreign: candidate.foreign === true,
+      })),
+      found.chatId,
+      found.threadId,
+    )
     if (claimed()) return
     const name = bindings.workspaces[found.bound.workspaceId]?.title ?? 'workspace'
     const markdown = fromUser ? `💬 **you (web)** · ${name}\n${text}` : text

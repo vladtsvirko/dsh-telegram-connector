@@ -70,6 +70,28 @@ export function isInjectedContext(text: string): boolean {
  * @param sourceKind - the recorded \`source.kind\` of the message.
  * @returns true when the prompt came from another client.
  */
+/** One topic runtime's view of a chat/thread, for the claim decision. */
+export interface TopicClaim {
+  chatId: number
+  threadId: number
+  /** Whether this runtime actually holds an agent for the topic. */
+  hasAgent: boolean
+  /** Whether another client took the session over. */
+  foreign: boolean
+}
+
+/**
+ * Whether a Telegram turn currently owns a topic, which would make a mirror a
+ * duplicate. A runtime created by a *failed* prompt attempt (no agent) must not
+ * claim the topic, or the topic stays silent forever after one refusal.
+ */
+export function claimsTopic(claims: readonly TopicClaim[], chatId: number, threadId: number): boolean {
+  return claims.some((claim) => claim.chatId === chatId
+    && claim.threadId === threadId
+    && claim.hasAgent
+    && !claim.foreign)
+}
+
 export function isForeignPrompt(pending: boolean, sourceKind: string | undefined): boolean {
   return !pending && sourceKind === 'user'
 }

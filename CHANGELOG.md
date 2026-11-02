@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.8
+
+- A failed Telegram prompt no longer silences the topic. The attempt created a
+  runtime entry before the runtime refused it, and "this topic has a runtime"
+  was enough to drop every web turn mirror. A topic is now claimed only by a
+  runtime that actually holds an agent and has not been taken over.
+- The leftover entry from a failed attempt is dropped, so it cannot claim the
+  topic later either.
+
 ## 0.2.1-rc.2-0.4.7
 
 - A session held by another client now says so from both paths. The refusal came
