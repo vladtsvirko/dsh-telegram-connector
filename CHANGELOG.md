@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.4
+
+Maintenance release for the setup fix that stops a port change from starting a
+stopped component. No connector behavior change.
+
 ## 0.2.1-rc.2-0.4.3
 
 Maintenance release for the setup change that installs the Penpot plugin when
