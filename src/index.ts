@@ -68,6 +68,7 @@ import { BotPool, type BotHandle } from './bots.js'
 import { Outbox, type ItemPriority, type OutboxItem } from './outbox.js'
 import { SessionBridge, type TurnRecord } from './bridge.js'
 import { isForeignPrompt, MirrorQueue, messageText, promptText } from './mirror.js'
+import { isOwnershipError, OWNERSHIP_HINT } from './errors.js'
 import {
   commandLabel,
   formatLiveProcess,
@@ -2595,13 +2596,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         },
       })
     } catch (error) {
-      if (/active write handle|already owned/i.test(String(error))) {
-        throw new Error(
-          'this session is open elsewhere (a web UI tab owns it). Close it there, or start a new session with /new in General.',
-        )
-      }
+      if (isOwnershipError(error)) throw new Error(OWNERSHIP_HINT)
       if (!/already exists/i.test(String(error))) throw error
       stderr(`resuming persisted session ${runtime.session.sessionId}`)
+      try {
       handle = await agents.resume({
         resumeSessionId: sessionId,
         agentOptions,
@@ -2621,6 +2619,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           await presets.mount(agentCtx, resolved.id)
         },
       })
+      } catch (error) {
+        // resume takes the write handle too, and a closed tab may still hold it
+        if (isOwnershipError(error)) throw new Error(OWNERSHIP_HINT)
+        throw error
+      }
     }
     runtime.agent = handle.agent
     runtime.dispose = () => handle.dispose()

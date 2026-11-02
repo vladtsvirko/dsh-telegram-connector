@@ -206,7 +206,9 @@ One topic = one session, no exceptions.
   session exists with the right cwd but the UI files it under "Ungrouped".
   Attachment is retried at turn end if the session header is not persisted yet.
 - **One live agent per session.** If a web UI tab owns it, a Telegram prompt
-  gets a readable error instead of a hijack.
+  gets a readable error instead of a hijack. The write handle is a kernel lock
+  with no expiry, and a closed tab does not always release it, so the advice is
+  `/system restart now` rather than "close the tab".
 
 ## 8. Message pipeline
 

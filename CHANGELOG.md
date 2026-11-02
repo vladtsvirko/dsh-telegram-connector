@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1-rc.2-0.4.7
+
+- A session held by another client now says so from both paths. The refusal came
+  from `resume` (the session exists on disk), which was outside the friendly
+  mapping, so the raw runtime error leaked to the chat.
+- The advice is the one that works: the write handle is a kernel lock with no
+  expiry, and a closed tab does not always release it, so `/system restart now`
+  clears every handle. "Close the tab" was wrong when there was no tab.
+
 ## 0.2.1-rc.2-0.4.6
 
 - A session taken over by a web UI tab is mirrored into its topic again. The

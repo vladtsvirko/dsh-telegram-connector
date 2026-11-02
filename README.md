@@ -368,7 +368,7 @@ and offers no reorder method, so it can drift as topics see activity.
 | bot ignores plain messages in topics | privacy mode is on — BotFather → `/setprivacy` → Disable |
 | `could not create the session topic` | bot is not admin, or lacks *Manage Topics* |
 | `/sync` reports `adopted 0` | every session is archived, already bound to a live topic, or the workspace id does not match — check `/list archived` and the dashboard |
-| `this session is open elsewhere` | a web tab owns it; close it there or start a new session with `/new` |
+| `this session is held by another client` | a web UI tab owns the session's write handle, and a closed tab does not always release it. `/system restart now` clears every handle; `/new` starts a fresh session |
 | nothing happens after adding the plugin | token is empty — the connector logs a warning and stays idle |
 | group title never follows a rename | bot lacks *Change Info* in that group |
 | `this runtime exposes no plugin manager` | the profile is not base-backed, or `@deepseek-ai/dsh-plugin-manager` is not mounted |
