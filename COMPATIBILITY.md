@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.2-0.7.2 | `0.2.1-rc.2` | tested | maintenance: same connector code, aligned with the setup fix |
+| 0.2.1-rc.2-0.7.3 | `0.2.1-rc.2` | tested | maintenance: same connector code, aligned with the setup release |
+| 0.2.1-rc.2-0.7.2 | `0.2.1-rc.2` | previous | maintenance: same connector code, aligned with the setup fix |
 | 0.2.1-rc.2-0.7.1 | `0.2.1-rc.2` | previous | maintenance: same connector code as 0.7.0, aligned with the setup release |
 | 0.2.1-rc.2-0.7.0 | `0.2.1-rc.2` | previous | one admin account, live status probes, bindings warning in chat |
 | 0.2.1-rc.2-0.6.0 | `0.2.1-rc.2` | previous | the review release: mirror answers delivered, never-silent replies, idempotent group binding, `/web`, bot API timeouts, journaled mirrors, honest rollback/cancel, update-gate fix, `--uninstall` in the setup |
