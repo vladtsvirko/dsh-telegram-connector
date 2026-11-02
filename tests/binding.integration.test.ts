@@ -146,3 +146,38 @@ describe('session bookkeeping', () => {
     expect(harness.calls.some((call) => call.method === 'createForumTopic')).toBe(false)
   }, 20_000)
 })
+
+describe('who may administer', () => {
+  it('refuses /system update to anyone but the admin, and still answers /about', async () => {
+    const harness = await start(await boot({ adminUserId: 7 }))
+    // 42 is allowed to use the agent, 7 is the admin.
+    harness.pushUpdate(harness.makeUpdate({ text: '/system update all', chatId: 42, threadId: 0, extra: { chat: { id: 42, type: 'private', first_name: 'Tester' }, is_topic_message: false, message_thread_id: undefined } }))
+    const refusal = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('only admin 7')),
+      'the admin refusal',
+      6000,
+    )
+    expect(callText(refusal)).toContain('changes the deployment for everyone')
+    // Read-only is still available to everyone.
+    harness.pushUpdate(harness.makeUpdate({ text: '/about', chatId: 42, threadId: 0, extra: { chat: { id: 42, type: 'private', first_name: 'Tester' }, is_topic_message: false, message_thread_id: undefined } }))
+    await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('dsh-telegram-connector')),
+      'the about text for a normal user',
+      6000,
+    )
+  }, 20_000)
+
+  it('falls back to the chat owner when no admin is configured', async () => {
+    // An upgraded deployment has no DSH_ADMIN_USER_ID; the owner of the control
+    // chat must still be able to administer it, or the upgrade locks them out.
+    const harness = await start(await boot())
+    harness.pushUpdate(harness.makeUpdate({ text: '/system restart now', chatId: 42, threadId: 0, extra: { chat: { id: 42, type: 'private', first_name: 'Tester' }, is_topic_message: false, message_thread_id: undefined } }))
+    const answer = await harness.waitFor(
+      () => harness.sent.find((call) => /only |restart/i.test(callText(call))),
+      'an answer to the restart request',
+      6000,
+    )
+    // It may fail for lack of a supervisor, but it must not be a permission wall.
+    expect(callText(answer)).not.toContain('changes the deployment for everyone')
+  }, 20_000)
+})

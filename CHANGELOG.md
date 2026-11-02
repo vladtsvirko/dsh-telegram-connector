@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.2.1-rc.2-0.7.0
+
+### Added
+
+- **One admin account.** `DSH_ADMIN_USER_ID` (connector config `adminUserId`)
+  names the account that may run `/system update|restart|rollback|confirm|cancel|manage`
+  and `/plugin add|remove|enable|disable`. Everyone in `ALLOWED_USER_IDS` keeps
+  full use of the agent and every session. Every allowed user could update or
+  roll back the deployment for everyone before this.
+- **`/status` answers the two questions it could not.** `web: 127.0.0.1:<port>
+  answered 200|401|unreachable`, `key: set (OPENCODE_GO_API_KEY)|missing (…)`,
+  and the last agent error with its time. `/about` and `/system status` name the
+  admin and say how it was decided.
+- **The bindings warning reaches the chat.** A `bindings.json` that cannot be
+  read is kept aside and announced once, with the recovery step, instead of
+  leaving every group answering "not attached" for no visible reason.
+
+### Fixed
+
+- **`/system` and `/plugin` are guarded on both entry paths**, including the
+  inline-button callbacks.
+
+### Notes
+
+- No lockout on upgrade: with no `DSH_ADMIN_USER_ID`, the owner of the bot chat
+  is the admin. New installs always set it (the installer defaults it to the
+  first allowed id).
+- Native mode now runs a real install → update → uninstall in CI
+  (`.github/workflows/native-smoke.yml`, on every tag and weekly), and the image
+  is built on every release tag.
+
 ## 0.2.1-rc.2-0.6.0
 
 ### Fixed

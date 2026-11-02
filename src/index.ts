@@ -110,6 +110,7 @@ export const inject = ['agents', 'sessions']
 export const Config = Schema.object({
   botToken: Schema.string().default(''),
   allowedUserIds: Schema.array(Schema.number()).default([]),
+  adminUserId: Schema.number(),
   workspaceRoot: Schema.string().default(''),
   provider: Schema.string(),
   model: Schema.string(),
@@ -130,6 +131,8 @@ export const Config = Schema.object({
 export interface ConnectorConfig {
   botToken: string
   allowedUserIds: number[]
+  /** The one account that may run update/restart/rollback/plugin commands. */
+  adminUserId?: number
   workspaceRoot?: string
   provider?: string
   model?: string
@@ -446,8 +449,38 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     logger.warn('dsh-telegram-connector: allowedUserIds is empty; every message will be refused')
   }
 
+  /** Last error an agent reported, shown by `/system status`. */
+  let lastAgentError: string | undefined
+
   const isAllowed = (userId: number | undefined): boolean =>
     userId !== undefined && config.allowedUserIds.includes(userId)
+
+  /**
+   * Who may run profile-global commands (update, restart, rollback, plugins).
+   *
+   * Access and administration are different questions: every allowed user can
+   * talk to the agent and use every session, but one account — the declared
+   * admin — owns the commands that change the deployment for everyone.
+   */
+  const isAdmin = (userId: number | undefined): boolean => {
+    if (userId === undefined) return false
+    if (config.adminUserId !== undefined) return userId === config.adminUserId
+    // No admin configured (an upgraded deployment, or one set up by hand): the
+    // owner of the control chat is the admin, so an upgrade cannot lock anyone
+    // out. In a private chat the chat id *is* the user id.
+    return bindings.controlChatId !== undefined && bindings.controlChatId === userId
+  }
+
+  /** True when the sender may run a mutating command; replies when not. */
+  const requireAdmin = (message: TgMessage): boolean => {
+    const sender = message.from?.id
+    if (isAdmin(sender)) return true
+    const who = config.adminUserId === undefined
+      ? 'the owner of this chat (`DSH_ADMIN_USER_ID` is not set)'
+      : `admin ${String(config.adminUserId)}`
+    void reply(message, `only ${who} can do that — it changes the deployment for everyone.`)
+    return false
+  }
 
   /** Diagnostics go to stderr: the harness logger is not visible in container logs. */
   const stderr = (line: string): void => {
@@ -1445,8 +1478,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const handleSystem = async (message: TgMessage, args: readonly string[]): Promise<void> => {
     const [sub, ...tail] = args
     const mode = tail.join(' ').trim()
+    // Everything except a status read changes the deployment for every user.
+    const mutating = sub !== undefined && sub !== 'status' && sub !== 'help'
+    if (mutating && !requireAdmin(message)) return
     if (sub === undefined || sub === 'status') {
-      const lines = [`**system**`, await aboutText()]
+      const lines = [`**system**`, await aboutText(), adminLine(), ...await statusProbes()]
       if (bindings.update !== undefined && drainState !== undefined) {
         lines.push('', `updating: ${drainState.mode} · waiting for ${String(drainState.blockers.length)} session(s)`)
         for (const blocker of drainState.blockers.slice(0, 10)) lines.push(`· ${blocker}`)
@@ -1554,6 +1590,39 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     ].join('\n'))
   }
 
+  /** Who may run profile-global commands, and how that was decided. */
+  const adminLine = (): string => config.adminUserId === undefined
+    ? 'admin: the owner of this chat (set `DSH_ADMIN_USER_ID` to name one explicitly)'
+    : `admin: ${String(config.adminUserId)}`
+
+  /** The provider key this deployment is supposed to have. */
+  const providerKeyNames = (): string[] => {
+    const declared = (process.env.DSH_PROVIDER_API_KEY_ENV ?? '').trim()
+    const provider = config.provider ?? (process.env.DSH_PROVIDER ?? 'opencode-go').trim()
+    const fallback = provider === 'deepseek-official' ? 'DEEPSEEK_API_KEY' : 'OPENCODE_GO_API_KEY'
+    return [...new Set([declared, fallback].filter((name) => name.length > 0))]
+  }
+
+  /**
+   * The two questions a status report has to answer: is the web UI serving, and
+   * can the agent actually answer? Both are cheap, local, and were missing.
+   */
+  const statusProbes = async (): Promise<string[]> => {
+    const port = (process.env.DSH_PORT ?? '4310').trim() || '4310'
+    let web = 'unreachable'
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) })
+      web = String(response.status)
+    } catch {
+      web = 'unreachable'
+    }
+    const names = providerKeyNames()
+    const missing = names.filter((name) => (process.env[name] ?? '').trim().length === 0)
+    const key = missing.length === 0 ? `set (${names[0] ?? 'unknown'})` : `missing (${missing.join(', ')})`
+    const last = lastAgentError === undefined ? 'none' : lastAgentError
+    return [`web: 127.0.0.1:${port} answered ${web}`, `key: ${key}`, `last agent error: ${last}`]
+  }
+
   /** A line for `/about` and `/system status`; never the signing token. */
   const webLine = (): string => {
     const link = webLink()
@@ -1572,6 +1641,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       `dsh runtime: ${runtime === undefined ? 'unknown' : `\`${runtime}\``}`,
       `declared peer range: ${supportedRange() === undefined ? 'unknown' : `\`${supportedRange()}\``}`,
       webLine(),
+      adminLine(),
       `updater: ${await updaterLine()}`,
       `supervisor: ${status === undefined ? 'none' : `present · trial ${String(trialMinutes ?? 0)} min`}`,
       `plugin manager: ${pluginManager() === undefined ? 'none' : 'present'}`,
@@ -2175,6 +2245,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const handlePlugin = async (message: TgMessage, rest: readonly string[]): Promise<void> => {
     const [sub = '', ...tail] = rest
     const argument = tail.join(' ').trim()
+    // Listing and inspecting are read-only; add/remove/enable/disable/confirm
+    // change what every session can do.
+    if (!['list', 'info', ''].includes(sub) && !requireAdmin(message)) return
     switch (sub) {
       case 'list':
         return pluginList(message)
@@ -4784,7 +4857,22 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   }
 
   const start = async (): Promise<void> => {
-    bindings = await loadBindings(file)
+    // A file that could not be read is set aside by the loader; say so in the
+    // chat, once, instead of letting the bot answer "not attached" forever.
+    let loadWarning = ''
+    bindings = await loadBindings(file, (line) => { loadWarning = line })
+    if (loadWarning.length > 0) {
+      void (async () => {
+        const chat = bindings.controlChatId
+        if (chat === undefined) return
+        await sendTo(
+          chat,
+          0,
+          `⚠️ **bindings.json could not be used** — ${loadWarning}.\n\nEvery topic binding is gone; run \`/sync\` in each group to rebuild them.`,
+          'control',
+        )
+      })()
+    }
     startStagedSweep()
     startProcessCardSweep()
     await closeAllProcessCards('⚠️ Connector restarted — process view closed.')
@@ -5141,6 +5229,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   ctx.on('agent/error', (payload: { agent: Agent; error: unknown }) => {
     const message = payload.error instanceof Error ? payload.error.message : String(payload.error)
+    lastAgentError = `${new Date().toISOString().slice(11, 19)} ${redactPreview(message)}`
     const runtime = [...runtimes.values()].find((candidate) => candidate.agent === payload.agent)
     if (runtime !== undefined) {
       if (/active write handle|already owned/i.test(message)) {

@@ -148,7 +148,14 @@ export function bindingsPath(dshHome: string): string {
   return `${dshHome.replace(/\/+$/, '')}/telegram-connector/bindings.json`
 }
 
-export async function loadBindings(file: string): Promise<Bindings> {
+/**
+ * Load the topic↔session map.
+ *
+ * A file that exists but cannot be used is kept aside and reported through
+ * `warn`: starting empty is recoverable (one /sync), starting empty *silently*
+ * is not — the user loses every topic binding without knowing why.
+ */
+export async function loadBindings(file: string, warn?: (line: string) => void): Promise<Bindings> {
   let raw: string
   try {
     raw = await readFile(file, 'utf8')
@@ -164,7 +171,9 @@ export async function loadBindings(file: string): Promise<Bindings> {
     // overwritten on the next save — every binding gone, silently. Keep it.
     const backup = `${file}.${suffix}-${String(Date.now())}`
     await rename(file, backup).catch(() => undefined)
-    console.error(`dsh-telegram-connector: ${file} ${reason}; kept it as ${backup} and started empty`)
+    const line = `${file} ${reason}; kept it as ${backup} and started empty`
+    console.error(`dsh-telegram-connector: ${line}`)
+    warn?.(line)
     return structuredClone(EMPTY)
   }
   let parsed: Partial<Bindings>

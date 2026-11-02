@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.2-0.6.0 | `0.2.1-rc.2` | tested | the review release: mirror answers delivered, never-silent replies, idempotent group binding, `/web`, bot API timeouts, journaled mirrors, honest rollback/cancel, update-gate fix, `--uninstall` in the setup |
+| 0.2.1-rc.2-0.7.0 | `0.2.1-rc.2` | tested | one admin account, live status probes, bindings warning in chat |
+| 0.2.1-rc.2-0.6.0 | `0.2.1-rc.2` | previous | the review release: mirror answers delivered, never-silent replies, idempotent group binding, `/web`, bot API timeouts, journaled mirrors, honest rollback/cancel, update-gate fix, `--uninstall` in the setup |
 | 0.2.1-rc.2-0.4.11 | `0.2.1-rc.2` | previous | diagnostics for the mirror path (temporary); the setup repo ships `v0.2.1-rc.2-0.4.11` |
 | 0.2.1-rc.2-0.4.10 | `0.2.1-rc.2` | previous | refused prompts are queued and delivered after a take-over restart |
 | 0.2.1-rc.2-0.4.9 | `0.2.1-rc.2` | previous | one delivery path for Telegram turns and web mirrors |

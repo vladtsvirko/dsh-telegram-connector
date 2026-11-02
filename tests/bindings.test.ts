@@ -108,3 +108,18 @@ describe('bindings v2', () => {
     expect(sessionKey(-100, 2)).toBe('-100:2')
   })
 })
+
+describe('a file that cannot be used', () => {
+  it('reports the fallback through the warning callback', async () => {
+    const dir = await temp()
+    const file = bindingsPath(dir)
+    await saveBindings(file, { version: 2, workspaces: {}, sessions: {} })
+    await writeFile(file, '{oops')
+    const warnings: string[] = []
+    const loaded = await loadBindings(file, (line) => warnings.push(line))
+    expect(loaded.workspaces).toEqual({})
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('not valid JSON')
+    expect(warnings[0]).toContain('.corrupt-')
+  })
+})
