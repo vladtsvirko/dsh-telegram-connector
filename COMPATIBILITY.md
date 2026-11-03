@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.3.0 | `0.2.1-rc.5` | tested | maintenance: same connector code, aligned with the setup release that warns about ufw on native hosts |
+| 0.2.1-rc.5-0.4.0 | `0.2.1-rc.5` | tested | `/firewall` and `/firewall allow <port>`; the update report carries the advisory |
+| 0.2.1-rc.5-0.3.0 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup release that warns about ufw on native hosts |
 | 0.2.1-rc.5-0.2.2 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup fix |
 | 0.2.1-rc.5-0.2.1 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup fix |
 | 0.2.1-rc.5-0.2.0 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the installer release |

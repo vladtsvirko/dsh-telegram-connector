@@ -110,3 +110,17 @@ describe('commandMenu', () => {
     }
   })
 })
+
+describe('firewall command', () => {
+  it('is documented and advertised in the private menu', () => {
+    expect(indexText('control')).toContain('/firewall')
+    expect(commandMenu('private').map((entry) => entry.command)).toContain('firewall')
+  })
+
+  it('says what the allow form can and cannot do', () => {
+    const text = lookupText('firewall', 'control') ?? ''
+    expect(text).toContain('ufw')
+    expect(text).toContain('allow <port>')
+    expect(text).toContain('never a command from the chat')
+  })
+})

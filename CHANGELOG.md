@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.1-rc.5-0.4.0
+
+### Added
+
+- **`/firewall` — see and fix the ufw hole from Telegram.** A native install's
+  web UI is only as reachable as ufw allows, and the fix used to need SSH.
+  `/firewall` lists the ports the deployment serves with their networks and
+  marks each allowed or blocked; `/firewall allow <port>` (admin only) asks the
+  updater to allow it. The updater accepts only a port the deployment already
+  serves from its `.env` and runs the fixed `ufw allow from <network> to any
+  port <port> proto tcp` — never a command from the chat.
+- A finished setup update now appends the same advisory to its report, so the
+  blocked state arrives without asking and without a `--status` command.
+- Docker deployments get "nothing to do": a published port is DNATed before
+  ufw's `INPUT` chain sees it, so a rule there changes nothing.
 ## 0.2.1-rc.5-0.3.0
 
 Maintenance release; no connector change. Aligned with the setup release that

@@ -234,6 +234,16 @@ const COMMANDS: CommandDoc[] = [
     group: 'system',
   },
   {
+    path: 'firewall',
+    usage: '/firewall [allow <port>]',
+    summary: 'check whether ufw lets the web UI through, and allow it from here',
+    details:
+      'Native installs only: a systemd service is gated by ufw, while a published Docker port is not, so docker deployments get "nothing to do". Reads the ports the deployment serves from its .env and names the network from the interface carrying DSH_BIND_IP. `allow <port>` is admin only and accepts only a port this deployment already serves — the updater runs the fixed `ufw allow from <network> to any port <port> proto tcp`, never a command from the chat.',
+    examples: ['/firewall', '/firewall allow 4310'],
+    surfaces: ['control'],
+    group: 'system',
+  },
+  {
     path: 'system takechat',
     usage: '/system takechat',
     summary: 'make this private chat the control chat',

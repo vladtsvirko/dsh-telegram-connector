@@ -31,6 +31,7 @@ export const RESERVED_CONNECTOR_COMMANDS: ReadonlySet<string> = new Set([
   'close',
   'commands',
   'dangerous',
+  'firewall',
   'forget',
   'help',
   'list',

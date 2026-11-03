@@ -78,6 +78,8 @@ connector refuses to disable or remove itself.
 | `/system manage [<component> <enable|disable|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form |
 | `/system cancel` | abandon a pending update and unblock the bot (same as the card's ✖) |
 | `/status` | model route, workspace/session counts, poller, timezone, supervisor |
+| `/firewall` | native only: whether ufw lets the web UI through, and the exact `/firewall allow <port>` to fix it |
+| `/firewall allow <port>` | admin only; asks the updater to allow that served port from the LAN |
 | `/about` | connector version, runtime version, web root, peer range, updater state |
 | `/web` | a signed link into the web UI for the same sessions (bot chat only) |
 | `/reactions` | show the read, streaming and staged-media reactions |

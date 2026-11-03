@@ -1482,6 +1482,65 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await client.answerCallbackQuery(query.id, 'unknown action').catch(() => undefined)
   }
 
+  /**
+   * Firewall, from Telegram.
+   *
+   * A native install's web UI is only as reachable as ufw allows, and the fix
+   * used to need SSH. The updater owns the privileged call (`/firewall`); this
+   * only renders its answer and, for the admin, asks it to allow one port —
+   * always a port the deployment already serves, never an arbitrary command.
+   */
+  const handleFirewall = async (message: TgMessage, args: readonly string[]): Promise<void> => {
+    const [sub, portArg] = args
+    if (sub === 'allow') {
+      if (!requireAdmin(message)) return
+      const port = Number(portArg)
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return reply(message, 'usage: `/firewall allow <port>`')
+      }
+      try {
+        const response = await updaterFetch('/firewall', { port })
+        const body = await response.json().catch(() => ({})) as {
+          error?: string
+          network?: string
+          already?: boolean
+        }
+        if (!response.ok) {
+          return reply(message, `⚠️ could not allow ${String(port)}: ${body.error ?? `HTTP ${String(response.status)}`}`)
+        }
+        return reply(message, body.already === true
+          ? `${String(port)}/tcp is already allowed from ${body.network ?? 'the LAN'}.`
+          : `✅ allowed ${String(port)}/tcp from ${body.network ?? 'the LAN'} — the web UI is reachable from the LAN now.`)
+      } catch (error) {
+        return reply(message, `⚠️ the updater is not reachable: ${String(error)}`)
+      }
+    }
+    if (sub !== undefined && sub !== '') {
+      return reply(message, 'usage: `/firewall` or `/firewall allow <port>`')
+    }
+    try {
+      const response = await updaterFetch('/firewall')
+      const body = await response.json() as {
+        applicable?: boolean
+        reason?: string
+        ports?: Array<{ port: number; network: string; allowed: boolean }>
+      }
+      if (!response.ok) return reply(message, `⚠️ the updater answered ${String(response.status)}`)
+      if (body.applicable !== true) {
+        return reply(message, `firewall: nothing to do — ${body.reason ?? 'not applicable'}`)
+      }
+      const lines = ['**firewall**']
+      for (const entry of body.ports ?? []) {
+        lines.push(entry.allowed
+          ? `✅ ${String(entry.port)}/tcp from ${entry.network} — allowed`
+          : `⚠️ ${String(entry.port)}/tcp from ${entry.network} — blocked; fix: \`/firewall allow ${String(entry.port)}\``)
+      }
+      return reply(message, lines.join('\n'))
+    } catch (error) {
+      return reply(message, `⚠️ the updater is not reachable: ${String(error)}`)
+    }
+  }
+
   const handleSystem = async (message: TgMessage, args: readonly string[]): Promise<void> => {
     const [sub, ...tail] = args
     const mode = tail.join(' ').trim()
@@ -3216,6 +3275,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (command === '/plugins') return pluginList(message)
     if (command === '/plugin') return handlePlugin(message, rest)
     if (command === '/system') return handleSystem(message, rest)
+    if (command === '/firewall') return handleFirewall(message, rest)
     if (command === '/timezone') return setTimeZone(message, argument)
     if (command === '/reactions') return handleReactions(message, rest)
     if (command === '/about') return reply(message, await aboutText())
