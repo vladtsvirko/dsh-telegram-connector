@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.2.1
+
+Maintenance release; no connector change. Aligned with the setup fix for the
+unattended install.
+
 ## 0.2.1-rc.5-0.2.0
 
 Maintenance release; no connector change. Aligned with the setup release that asks
