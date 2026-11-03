@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.5.0
+
+Maintenance release; no connector change. Aligned with the setup release that
+configures git and installs Docker when the design stack needs it.
+
 ## 0.2.1-rc.5-0.4.0
 
 ### Added
