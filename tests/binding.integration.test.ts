@@ -249,3 +249,23 @@ describe('binding is administration', () => {
     expect(callText(refusal)).toContain('changes the deployment for everyone')
   }, 20_000)
 })
+
+describe('/system status honesty', () => {
+  it('shows the runtime registry and the data directory next to the web and key lines', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-status-'))
+    const dataRoot = await mkdtemp(join(tmpdir(), 'dsh-status-root-'))
+    const harness = await start(await boot({}, { dir, dataRoot, instanceId: 'status-test' }))
+    harness.pushUpdate(harness.makeUpdate({ text: '/system status', chatId: 42, threadId: 0, extra: { chat: { id: 42, type: 'private', first_name: 'Tester' }, is_topic_message: false, message_thread_id: undefined } }))
+    const status = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('registry:')),
+      '/system status',
+      6000,
+    )
+    const text = callText(status)
+    // Both lists, so a disagreement is visible before a prompt fails.
+    expect(text).toMatch(/registry: 1 workspace\(s\) in the runtime · 1 bound to Telegram/)
+    // A marker from another live runtime would be named here; with none, the
+    // line still reports the directory it checked.
+    expect(text).toContain(`data: ${dataRoot}`)
+  }, 20_000)
+})

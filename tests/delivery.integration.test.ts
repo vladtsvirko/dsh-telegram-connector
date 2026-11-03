@@ -9,15 +9,19 @@
  * `tests/harness.ts`.
  */
 
-import { readFile, readdir } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   boot,
   callText,
   CHAT_ID,
+  makeBindings,
   SESSION_ID,
   THREAD_ID,
+  USER_ID,
+  WORKSPACE_ID,
   type FakeAgent,
   type Harness,
 } from './harness.js'
@@ -299,5 +303,99 @@ describe('mirrored turns are journaled', () => {
     expect(record.sessionId).toBe(SESSION_ID)
     expect(record.assistant).toContain('undeliverable answer')
     expect(record.user).toBe('web prompt')
+  }, 20_000)
+})
+
+async function harnessDir(): Promise<string> {
+  return await mkdtemp(join(tmpdir(), 'dsh-registry-repair-'))
+}
+
+describe('who holds a session', () => {
+  it('says another runtime owns the data directory, and offers no take-over that cannot work', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-held-process-'))
+    const dataRoot = await mkdtemp(join(tmpdir(), 'dsh-held-root-'))
+    // A live marker from a different instance: this process is not that runtime.
+    await writeFile(join(dataRoot, '.runtime.json'), JSON.stringify({
+      id: 'other-instance',
+      mode: 'docker',
+      pid: process.pid,
+      startedAt: '2026-01-01T00:00:00Z',
+    }))
+    const harness = await start(await boot({}, {
+      dir,
+      dataRoot,
+      instanceId: 'this-instance',
+      agent: { failCreateWith: new Error('session is already owned by an active write handle') },
+    }))
+    harness.pushUpdate(harness.makeUpdate({ text: 'telegram prompt while another runtime holds it' }))
+    const refusal = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('another process')),
+      'second-runtime refusal',
+      6000,
+    )
+    const text = callText(refusal)
+    expect(text).toContain('docker compose down')
+    expect(text).toContain('install.sh --doctor')
+    // A restart of this runtime cannot clear another process's kernel lock.
+    expect(refusal.params.reply_markup).toBeUndefined()
+  }, 20_000)
+
+  it('keeps the take-over card when the marker is this same runtime', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-held-self-'))
+    const dataRoot = await mkdtemp(join(tmpdir(), 'dsh-held-root-'))
+    await writeFile(join(dataRoot, '.runtime.json'), JSON.stringify({
+      id: 'this-instance',
+      mode: 'native',
+      pid: process.pid,
+      startedAt: '2026-01-01T00:00:00Z',
+    }))
+    const harness = await start(await boot({}, {
+      dir,
+      dataRoot,
+      instanceId: 'this-instance',
+      agent: { failCreateWith: new Error('session is already owned by an active write handle') },
+    }))
+    harness.pushUpdate(harness.makeUpdate({ text: 'telegram prompt while a tab holds it' }))
+    const refusal = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('held by another client')),
+      'client refusal',
+      6000,
+    )
+    expect(refusal.params.reply_markup).toEqual({
+      inline_keyboard: [[{ text: '↪️ Take over', callback_data: 'own:take' }]],
+    })
+  }, 20_000)
+})
+
+describe('runtime registry repair', () => {
+  it('restores a workspace the runtime lost while Telegram kept it, and re-attaches its session', async () => {
+    const { FakeRegistry } = await import('./harness.js')
+    const registry = new FakeRegistry(WORKSPACE_ID, '')
+    const dir = await harnessDir()
+    registry.path = join(dir, 'workspace')
+    registry.forgetWorkspace()
+    const bindings = makeBindings(registry.path)
+    bindings.controlChatId = USER_ID
+    const harness = await start(await boot({}, { dir, bindings, registry }))
+
+    // The notice names what was repaired: the user otherwise only sees that the
+    // web UI suddenly lists a workspace again.
+    const notice = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('workspace registry did not list')),
+      'registry repair notice',
+      6000,
+    )
+    expect(callText(notice)).toContain('the web UI lists them again')
+
+    // The binding moved to the id the registry issued, and the session was
+    // re-attached so the workspace shows it instead of an empty list.
+    const saved = JSON.parse(await readFile(harness.bindingsFile, 'utf8')) as {
+      workspaces: Record<string, { path: string }>
+      sessions: Record<string, { workspaceId: string }>
+    }
+    expect(Object.keys(saved.workspaces)).toEqual([registry.workspaceId])
+    expect(saved.workspaces[registry.workspaceId]?.path).toBe(registry.path)
+    expect(saved.sessions[`${CHAT_ID}:${THREAD_ID}`]?.workspaceId).toBe(registry.workspaceId)
+    expect(registry.attached).toContain(SESSION_ID)
   }, 20_000)
 })

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.2.1-rc.5-0.6.0
+
+Aligned with the setup release that adds `install.sh --doctor`, keeps the
+deployed provider key on a repair run, and refuses to run two runtimes over one
+data directory.
+
+### Fixed
+
+- **A held session now says who holds it.** The refusal named "a web UI tab" for
+  every case, so a session the *bot itself* still held in another topic, or one
+  held by a second runtime over the same data directory, was blamed on a tab the
+  user did not have — and `/system restart now` could not fix either. The
+  connector now distinguishes the three cases: another topic (send there, or
+  `/forget` this binding), a live client in this runtime (a tab; restart
+  clears it), and another dsh process (stop it first; `./install.sh --doctor`
+  names it). The take-over card is only offered when a restart can deliver.
+- **A refused prompt is not queued where it could never arrive.** When another
+  topic owns the session, replaying the prompt after a restart would hand it to
+  whichever topic resumed first. It is no longer journaled for that case.
+- **A re-bound topic no longer keeps the previous session's handle.** `/sync`
+  replacing a dead binding, or a session being forgotten and re-minted in the
+  same topic, left a runtime that still owned the old session; the next prompt
+  resumed it and failed with an ownership error that pointed at a phantom tab.
+
+### Added
+
+- **The runtime registry is repaired at boot.** The web UI lists the runtime's
+  workspace registry, while Telegram lists the connector's bindings; after a
+  crash or a storage reset those disagree, and the web UI shows no workspace
+  even though Telegram reports it and its sessions. A bound workspace whose
+  directory still exists is recreated, its sessions are re-attached, and the
+  control chat gets one notice. `/sync` does the same repair on demand instead
+  of answering "this composition exposes no workspace registry".
+- **`/system status` shows both lists and who owns the data directory.**
+  `registry: N workspace(s) in the runtime · M bound to Telegram` makes the
+  disagreement visible before a prompt fails, and `data:` names a second live
+  runtime over the same directory (the one case a restart cannot clear).
+
 ## 0.2.1-rc.5-0.5.1
 
 Maintenance release; no connector change. Aligned with the setup tag whose CI is

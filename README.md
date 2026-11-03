@@ -383,6 +383,31 @@ and offers no reorder method, so it can drift as topics see activity.
   at the host.
 - **Errors** from the agent are posted in the topic that caused them.
 
+## The web UI and Telegram must agree
+
+Both surfaces show the same runtime, from different records: the web UI lists the
+runtime's **workspace registry**, Telegram lists the connector's **bindings**.
+They can disagree after a crash during a registry write, after an upgrade that
+reset the storage domain, or after a boot under a different `DSH_HOME` — the bot
+still names the workspace and its topics, the web UI shows nothing, and a prompt
+has nowhere to land.
+
+The connector repairs that instead of reporting it. At boot it recreates a bound
+workspace whose directory still exists (under the id the registry issues, moving
+the binding and its sessions with it), re-attaches the sessions the workspace
+lost, and posts one line in the control chat. `/sync` does the same on demand,
+and `/system status` shows both counts before a prompt can fail:
+
+```
+registry: 2 workspace(s) in the runtime · 2 bound to Telegram
+data: /srv/dsh/data · this runtime (native)
+```
+
+The `data` line names a second live runtime over the same directory
+(`⚠ another docker runtime holds it (pid …, since …)`) — the one failure a
+restart cannot clear, because that process keeps the kernel lock on every
+session it has open.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
@@ -391,7 +416,7 @@ and offers no reorder method, so it can drift as topics see activity.
 | bot ignores plain messages in topics | privacy mode is on — BotFather → `/setprivacy` → Disable |
 | `could not create the session topic` | bot is not admin, or lacks *Manage Topics* |
 | `/sync` reports `adopted 0` | every session is archived, already bound to a live topic, or the workspace id does not match — check `/list archived` and the dashboard |
-| `this session is held by another client` | a web client owns the session's write handle. The refusal holds your message and offers **Take over**: the runtime restarts, every handle is released, and the queued text is delivered on boot. `/new` starts a fresh session without a restart |
+| `this session is held by another client` | something owns the session's write handle; the refusal says which. **Another topic of this group** already runs it — send there, or `/forget` this binding (no restart helps). **A web UI tab** — the message is queued and **Take over** restarts the runtime, releasing every handle. **Another dsh process** over the same data directory — stop it first (`docker compose down` or `systemctl stop dsh.service`); a restart of this runtime cannot clear its lock, and `./install.sh --doctor` names it |
 | nothing happens after adding the plugin | token is empty — the connector logs a warning and stays idle |
 | group title never follows a rename | bot lacks *Change Info* in that group |
 | `this runtime exposes no plugin manager` | the profile is not base-backed, or `@deepseek-ai/dsh-plugin-manager` is not mounted |

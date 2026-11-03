@@ -3,9 +3,20 @@
  *
  * The runtime lets exactly one client hold a session's write handle; a second
  * `create`/`resume` is refused with "already owned by an active write handle".
- * A closed browser tab does not always release it, and nothing in the agent API
- * lets a third party dispose another owner's handle — the only in-product
- * recovery is a runtime restart, which clears every agent.
+ * Who holds it decides what the user should do, and the connector can tell the
+ * three cases apart:
+ *
+ *   * a **web UI tab** in this same runtime — normal, and the tab is visible;
+ *   * **another topic** of the same bot — the connector holds its own session
+ *     twice, and the fix is in Telegram, not a restart;
+ *   * a **second runtime** over the same data directory — a native service left
+ *     running beside the Docker stack, or two containers from two checkouts.
+ *     Restarting one does not help: the other process keeps the kernel lock.
+ *
+ * The old advice said "a web UI tab" for all three, so a user with two runtimes
+ * was told to close a tab that did not exist, and `/system restart now` did not
+ * clear it. A closed tab also does not always release the handle, so the restart
+ * advice stays — but only when it can actually work.
  *
  * @module dsh-telegram-connector/errors
  */
@@ -25,8 +36,25 @@ export function isOwnershipError(error: unknown): boolean {
 }
 
 /**
- * What to tell the user. The advice is deliberate: "close the tab" alone is not
+ * What to tell the user when the holder is this runtime's web UI or an
+ * unidentified one. The advice is deliberate: "close the tab" alone is not
  * enough when a tab was closed without releasing the handle.
  */
 export const OWNERSHIP_HINT =
   'this session is held by another client (a web UI tab). If no tab is open, send `/system restart now` to clear it — a restart releases every session handle. `/new` in General also works for a fresh session.'
+
+/** The same bot holds this session in another topic: no restart, use that topic. */
+export function heldByAnotherTopic(threadId: number): string {
+  return `this session is already open in topic ${String(threadId)} of this group — that topic owns it. Send there, or run \`/forget\` here to drop this binding; a restart will not change it.`
+}
+
+/**
+ * Nothing in this process holds the session, so a second runtime over the same
+ * data directory does. Restarting this one cannot help.
+ */
+export const HELD_BY_OTHER_RUNTIME =
+  'this session is held by another process, not by a tab in this runtime. Two dsh runtimes are sharing one data directory — most often a native service left running beside the Docker stack (or two containers from two checkouts). Stop the other one (`docker compose down` or `sudo systemctl stop dsh.service`), then `/system restart now`; `./install.sh --doctor` names the holder.'
+
+/** The holder is this runtime, but no topic claims it: a leaked handle. */
+export const HELD_BY_ORPHAN =
+  'this session is held by an agent in this runtime that no topic owns (a leaked handle from an earlier failure). Only a restart releases it: `/system restart now`.'

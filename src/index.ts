@@ -14,6 +14,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -68,7 +69,7 @@ import { BotPool, type BotHandle } from './bots.js'
 import { Outbox, type ItemPriority, type OutboxItem } from './outbox.js'
 import { isFreshInput, SessionBridge, type TurnRecord } from './bridge.js'
 import { claimsTopic, isForeignPrompt, messageText, promptText } from './mirror.js'
-import { isOwnershipError, OWNERSHIP_HINT, SessionHeldError } from './errors.js'
+import { HELD_BY_OTHER_RUNTIME, heldByAnotherTopic, isOwnershipError, OWNERSHIP_HINT, SessionHeldError } from './errors.js'
 import {
   commandLabel,
   formatLiveProcess,
@@ -227,6 +228,10 @@ interface RegistryWorkspace {
 interface WorkspaceRegistry {
   list(): RegistryEntry[]
   get(workspaceId: string): RegistryWorkspace | undefined
+  /** Existing registration owning this canonical directory, if any. */
+  resolveByPath(path: string): Promise<RegistryWorkspace | undefined>
+  /** Register a directory (idempotent for the same canonical path). */
+  create(path: string, title?: string): Promise<RegistryWorkspace>
   readonly archivedSessionIds: string[]
   archiveSession(sessionId: string, options?: { stopActivity?: boolean }): Promise<void>
   unarchiveSession(sessionId: string): Promise<void>
@@ -1696,7 +1701,86 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const missing = names.filter((name) => (process.env[name] ?? '').trim().length === 0)
     const key = missing.length === 0 ? `set (${names[0] ?? 'unknown'})` : `missing (${missing.join(', ')})`
     const last = lastAgentError === undefined ? 'none' : lastAgentError
-    return [`web: 127.0.0.1:${port} answered ${web}`, `key: ${key}`, `last agent error: ${last}`]
+    const registry = registryOf(ctx)
+    let registryLine: string
+    if (registry === undefined) {
+      registryLine = 'unavailable (the workspace plugin did not mount)'
+    } else {
+      const listed = registry.list().length
+      const bound = Object.keys(bindings.workspaces).length
+      const missing = Object.keys(bindings.workspaces).filter((id) => registry.get(id) === undefined).length
+      registryLine = `${String(listed)} workspace(s) in the runtime · ${String(bound)} bound to Telegram`
+      if (missing > 0) registryLine += ` · ${String(missing)} missing — run /sync to restore`
+    }
+    return [
+      `web: 127.0.0.1:${port} answered ${web}`,
+      `key: ${key}`,
+      `registry: ${registryLine}`,
+      `data: ${dataDirectoryLine()}`,
+      `last agent error: ${last}`,
+    ]
+  }
+
+  /** The data root and the entrypoint's instance marker, when readable. */
+  const instanceInfo = (): { root: string; id?: string; mode?: string; pid?: number; startedAt?: string } => {
+    const home = process.env.DSH_HOME ?? process.env.HOME ?? process.cwd()
+    const root = process.env.DSH_DATA_ROOT && process.env.DSH_DATA_ROOT.length > 0
+      ? resolve(process.env.DSH_DATA_ROOT)
+      : resolve(home, '..')
+    try {
+      const marker = JSON.parse(readFileSync(join(root, '.runtime.json'), 'utf8')) as {
+        id?: string
+        mode?: string
+        pid?: number
+        startedAt?: string
+      }
+      return { root, id: marker.id, mode: marker.mode, pid: marker.pid, startedAt: marker.startedAt }
+    } catch {
+      return { root }
+    }
+  }
+
+  /**
+   * Whether this plugin process belongs to the runtime that wrote the marker.
+   *
+   * The pid cannot answer that: the entrypoint execs into the supervisor, and
+   * the supervisor spawns dsh as a child, so the plugin always has a different
+   * pid from the one in the marker. The entrypoint exports an instance id that
+   * survives both the exec and the spawn; that is the comparison.
+   */
+  const ownInstance = (info: { id?: string; pid?: number }): boolean => {
+    const mine = (process.env.DSH_INSTANCE_ID ?? '').trim()
+    if (info.id !== undefined && info.id.length > 0) return mine.length > 0 && info.id === mine
+    // Markers from before the id existed: the entrypoint pid is the best guess,
+    // and a false "another runtime" is worse than a missed one.
+    return info.pid === process.pid || mine.length > 0
+  }
+
+  /** The holder when it is a live *other* process over this data directory. */
+  const anotherRuntime = (): { mode?: string; pid: number; startedAt?: string } | undefined => {
+    const info = instanceInfo()
+    if (info.pid === undefined) return undefined
+    if (ownInstance(info)) return undefined
+    try {
+      process.kill(info.pid, 0)
+    } catch {
+      return undefined
+    }
+    return { mode: info.mode, pid: info.pid, startedAt: info.startedAt }
+  }
+
+  /**
+   * Who owns this runtime's data directory, read from the instance marker the
+   * entrypoint writes. A second runtime there is the one failure a restart
+   * cannot clear, so it belongs in /system status rather than in a log file.
+   */
+  const dataDirectoryLine = (): string => {
+    const info = instanceInfo()
+    if (info.pid === undefined) return `${info.root} (no instance marker)`
+    if (ownInstance(info)) return `${info.root} · this runtime (${info.mode ?? '?'})`
+    const other = anotherRuntime()
+    if (other === undefined) return `${info.root} · stale marker from pid ${String(info.pid)}`
+    return `${info.root} · ⚠ another ${other.mode ?? '?'} runtime holds it (pid ${String(other.pid)}, since ${other.startedAt ?? '?'}) — stop it, a restart cannot clear its session locks`
   }
 
   /** A line for `/about` and `/system status`; never the signing token. */
@@ -2481,6 +2565,49 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return created
   }
 
+  /**
+   * Who holds a session's write handle, as far as this process can tell.
+   *
+   * Three answers, because they need different advice:
+   *
+   *   topic   — another topic of this bot resumed it; no restart helps, the
+   *             user should send there (or /forget this binding).
+   *   client  — a live agent in this runtime that no topic claims: a web UI
+   *             tab, or a handle an earlier failure leaked. A restart clears it.
+   *   process — nothing in this runtime holds it, so a second runtime over the
+   *             same data directory does (native service beside Docker). A
+   *             restart of this one changes nothing.
+   */
+  const holderOf = (sessionId: string, ownThreadId: number): { kind: 'topic' | 'client' | 'process'; threadId?: number } => {
+    const live = agents.get(SessionId(sessionId))
+    // Nothing live in this process. That is either a web UI handle this accessor
+    // cannot see or a second runtime over the same data directory; the instance
+    // marker is the only thing that can tell them apart.
+    if (live === undefined) return anotherRuntime() === undefined ? { kind: 'client' } : { kind: 'process' }
+    for (const candidate of runtimes.values()) {
+      if (candidate.agent !== live) continue
+      if (candidate.session.sessionId !== sessionId) continue
+      // This topic's own runtime: the handle is live but not usable here, which
+      // is the same situation as a web tab (only a restart releases it).
+      if (candidate.threadId === ownThreadId) return { kind: 'client' }
+      return { kind: 'topic', threadId: candidate.threadId }
+    }
+    return { kind: 'client' }
+  }
+
+  /** The sentence to show, whether "Take over" can deliver, and why. */
+  const ownershipDiagnosis = (
+    sessionId: string,
+    ownThreadId: number,
+  ): { kind: 'topic' | 'client' | 'process'; message: string; takeover: boolean } => {
+    const holder = holderOf(sessionId, ownThreadId)
+    if (holder.kind === 'topic' && holder.threadId !== undefined) {
+      return { kind: 'topic', message: heldByAnotherTopic(holder.threadId), takeover: false }
+    }
+    if (holder.kind === 'process') return { kind: 'process', message: HELD_BY_OTHER_RUNTIME, takeover: false }
+    return { kind: 'client', message: OWNERSHIP_HINT, takeover: true }
+  }
+
   /** Send one streamed chunk, preferring Telegram's native rich Markdown. */
   const sendStreamChunk = async (
     bot: BotHandle,
@@ -2980,7 +3107,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         },
       })
     } catch (error) {
-      if (isOwnershipError(error)) throw new SessionHeldError()
+      if (isOwnershipError(error)) {
+        throw new SessionHeldError(ownershipDiagnosis(runtime.session.sessionId, runtime.threadId).message)
+      }
       if (!/already exists/i.test(String(error))) throw error
       stderr(`resuming persisted session ${runtime.session.sessionId}`)
       try {
@@ -3005,7 +3134,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       })
       } catch (error) {
         // resume takes the write handle too, and a closed tab may still hold it
-        if (isOwnershipError(error)) throw new SessionHeldError()
+        if (isOwnershipError(error)) {
+          throw new SessionHeldError(ownershipDiagnosis(runtime.session.sessionId, runtime.threadId).message)
+        }
         throw error
       }
     }
@@ -3138,10 +3269,19 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       : sessions
         .map(([threadId, session]) => `· \`${session.sessionId.slice(0, 18)}…\` — topic ${threadId}`)
         .join('\n')
+    // This list comes from the connector's bindings; the web UI reads the
+    // runtime's registry. Say when they disagree, otherwise the dashboard is
+    // the last place still "having" a workspace the UI already lost.
+    const registry = registryOf(ctx)
+    const known = registry === undefined
+      ? 'unknown (no workspace registry)'
+      : (registry.get(workspaceId) === undefined ? 'no — the web UI cannot list it' : 'yes')
+    const advice = known.startsWith('no') ? '\n`/sync` restores it in the runtime registry.' : ''
     return [
       `**${workspace.title}**`,
       `path: \`${workspace.path}\``,
       `workspace: \`${workspaceId}\``,
+      `in the runtime: ${known}${advice}`,
       '',
       rows,
       '',
@@ -3601,8 +3741,22 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     if (command === '/sync') {
       const registry = registryOf(ctx)
-      const target = registry?.get?.(workspaceId)
-      if (target === undefined) return reply(message, 'this composition exposes no workspace registry')
+      if (registry === undefined) return reply(message, 'this composition exposes no workspace registry')
+      let target = registry.get(workspaceId)
+      if (target === undefined) {
+        // The bindings survived but the runtime's registry did not. Recreate it
+        // from the bound path instead of refusing: that disagreement is exactly
+        // what makes the web UI list no workspace while Telegram lists topics.
+        const healed = await healRegistry()
+        target = registry.get(workspaceId)
+        if (target === undefined) {
+          return reply(message, [
+            `the runtime does not know workspace \`${workspaceId}\` (path \`${workspace.path}\`).`,
+            healed.rebinds > 0 ? 'Its registration was restored under a new id — run `/sync` again.' : '',
+            healed.rebinds === 0 ? 'Check that the path exists and is a directory, then run `/sync` again.' : '',
+          ].filter((line) => line.length > 0).join('\n'))
+        }
+      }
 
       const archived = new Set((registry?.archivedSessionIds ?? []).map(String))
       let created = 0
@@ -3832,6 +3986,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await persist()
     }
 
+    const stale = runtimes.get(runtimeKey(message.chat.id, threadId))
+    if (stale !== undefined && stale.session.sessionId !== session.sessionId) {
+      // The topic was re-bound (a dead binding was replaced, or the session was
+      // forgotten and a new one minted). Reusing the old runtime would resume
+      // the previous session, whose handle this or another topic may hold.
+      await disposeRuntime(stale)
+      runtimes.delete(runtimeKey(message.chat.id, threadId))
+    }
     const runtime = runtimeFor(message, workspace, session)
 
     try {
@@ -3859,24 +4021,121 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // so the mirror can still reach this topic.
       if (runtime.agent === undefined) runtimes.delete(runtimeKey(runtime.chatId, runtime.threadId))
       if (error instanceof SessionHeldError) {
-        // Hold the prompt in the bridge journal. A take-over restart clears every
-        // write handle, and the boot replay delivers it without a retype.
-        await bridge.recordInput(runtime.session.sessionId, text).catch((journalError: unknown) => {
-          stderr(`cannot journal a held prompt: ${String(journalError)}`)
-        })
+        const diagnosis = ownershipDiagnosis(runtime.session.sessionId, threadId)
+        // A queued prompt is only ever delivered to *this* topic, so queue it
+        // only when this topic has a path to the handle:
+        //   client/process — the user clears the holder, a restart replays it.
+        //   topic         — another topic owns the session; a restart would hand
+        //                   the prompt to whichever topic resumed first, which
+        //                   is exactly the surprise to avoid.
+        let queued = false
+        if (diagnosis.kind !== 'topic') {
+          queued = await bridge.recordInput(runtime.session.sessionId, text).then(
+            () => true,
+            (journalError: unknown) => {
+              stderr(`cannot journal a held prompt: ${String(journalError)}`)
+              return false
+            },
+          )
+        }
+        // The take-over button restarts *this* runtime, which is only the lever
+        // when this runtime can own the session again. Another process keeps
+        // the lock through any restart, so there the message alone is right —
+        // the prompt still waits in the journal.
+        const queuedLine = !queued
+          ? ''
+          : diagnosis.takeover
+            ? '\n\nYour message is queued: take over and it is delivered after the restart.'
+            : '\n\nYour message is queued and is delivered once this runtime owns the session again.'
         await client.sendMessage(
           message.chat.id,
-          toTelegramHtml(`${OWNERSHIP_HINT}\n\nYour message is queued: take over and it is delivered after the restart.`),
+          toTelegramHtml(`${diagnosis.message}${queuedLine}`),
           {
             parseMode: 'HTML',
             ...(message.message_thread_id === undefined ? {} : { threadId: message.message_thread_id }),
-            replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over', callback_data: 'own:take' }]] },
+            ...(queued && diagnosis.takeover
+              ? { replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over', callback_data: 'own:take' }]] } }
+              : {}),
           },
         ).catch((sendError: unknown) => stderr(`cannot post the take-over card: ${String(sendError)}`))
         return
       }
       await reply(message, `⚠️ ${detail}`)
     }
+  }
+
+  // --- runtime registry repair ---------------------------------------------
+
+  /**
+   * The runtime's workspace registry is what the web UI lists; the connector's
+   * bindings are what Telegram lists. They can disagree — after a crash during a
+   * registry write, after an upgrade that reset the storage domain, or after a
+   * boot under a different DSH_HOME. The user then sees the worst combination:
+   * Telegram reports the workspace and its topics, the web UI shows nothing, and
+   * the next prompt has nowhere to land because the session is not accounted.
+   *
+   * Recreate a registration whose directory still exists, and re-attach a bound
+   * session the workspace lost. Both calls validate the stored cwd, so a moved or
+   * deleted directory is reported instead of guessed at. Idempotent: a healthy
+   * deployment reaches the end having written nothing.
+   */
+  const healRegistry = async (): Promise<{ restored: number; attached: number; rebinds: number }> => {
+    const registry = registryOf(ctx)
+    if (registry === undefined) return { restored: 0, attached: 0, rebinds: 0 }
+    let restored = 0
+    let attached = 0
+    let rebinds = 0
+    for (const [workspaceId, workspace] of Object.entries(bindings.workspaces)) {
+      let entry = registry.get(workspaceId)
+      // Only a workspace with topics can be missing from something the user
+      // sees. A bare binding is a group that was linked before any session
+      // existed: recreating it would invent a workspace the user never had.
+      const bound = sessionsOfChat(bindings, workspace.chatId)
+      if (entry === undefined && bound.length === 0) continue
+      if (entry === undefined) {
+        try {
+          entry = await registry.resolveByPath(workspace.path)
+        } catch (error) {
+          stderr(`registry: workspace "${workspace.title}" path ${workspace.path} does not resolve: ${String(error)}`)
+          continue
+        }
+        if (entry === undefined) {
+          try {
+            entry = await registry.create(workspace.path, workspace.title)
+          } catch (error) {
+            stderr(`registry: cannot restore workspace "${workspace.title}": ${String(error)}`)
+            continue
+          }
+        }
+        restored += 1
+        if (entry.id !== workspaceId) {
+          // The registry issued a new id: move the binding and every session that
+          // points at it, so /sync and the mirror keep finding the same workspace.
+          // A different binding already owning that id wins — merging two chats
+          // onto one registration would make one of them a silent duplicate.
+          if (bindings.workspaces[entry.id] === undefined) bindings.workspaces[entry.id] = workspace
+          delete bindings.workspaces[workspaceId]
+          for (const [, session] of Object.entries(bindings.sessions)) {
+            if (session.workspaceId === workspaceId) session.workspaceId = entry.id
+          }
+          rebinds += 1
+          stderr(`registry: restored workspace "${workspace.title}" as ${entry.id} (was ${workspaceId})`)
+        }
+      }
+      const known = new Set((entry.sessionIds ?? []).map(String))
+      for (const [, session] of sessionsOfChat(bindings, workspace.chatId)) {
+        if (known.has(session.sessionId)) continue
+        try {
+          await entry.attachSession(session.sessionId)
+          known.add(session.sessionId)
+          attached += 1
+        } catch (error) {
+          stderr(`registry: cannot attach ${session.sessionId} to ${workspace.path}: ${String(error)}`)
+        }
+      }
+    }
+    if (restored > 0 || attached > 0) await persist()
+    return { restored, attached, rebinds }
   }
 
   // --- session slash bridge ------------------------------------------------
@@ -3898,6 +4157,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (existing === undefined) {
       setSession(bindings, message.chat.id, threadId, session)
       await persist()
+    }
+    const stale = runtimes.get(runtimeKey(message.chat.id, threadId))
+    if (stale !== undefined && stale.session.sessionId !== session.sessionId) {
+      await disposeRuntime(stale)
+      runtimes.delete(runtimeKey(message.chat.id, threadId))
     }
     return runtimeFor(message, workspace, session)
   }
@@ -5015,6 +5279,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         ? `bots: main + ${botPool.bots.length - 1} publisher(s)`
         : 'bots: main only (set DSH_TELEGRAM_PUBLISHER_TOKENS to add senders)',
     )
+    void healRegistry()
+      .then(async (healed) => {
+        if (healed.restored === 0 && healed.attached === 0) return
+        stderr(`registry: restored ${String(healed.restored)} workspace(s), re-attached ${String(healed.attached)} session(s)`)
+        const chat = bindings.controlChatId
+        if (chat === undefined) return
+        await sendTo(
+          chat,
+          0,
+          `♻️ the runtime's workspace registry did not list ${String(healed.restored)} workspace(s) / ${String(healed.attached)} session(s) that Telegram still had — they are back, and the web UI lists them again.`,
+          'control',
+        )
+      })
+      .catch((error: unknown) => stderr(`registry repair failed: ${String(error)}`))
     void pollLoop()
     void announceTrial()
     void flushBridgeTurns().catch((error: unknown) => stderr(`bridge flush failed: ${String(error)}`))
@@ -5349,9 +5627,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         // Another client holds the session. Mirror it, and say so instead of
         // rendering this as a mysterious interrupted turn.
         releaseAgent(runtime)
+        const diagnosis = ownershipDiagnosis(runtime.session.sessionId, runtime.threadId)
         void (async () => {
           await finishStream(runtime)
-          await finishProcessTurn(runtime, '↪️ Session moved to the web UI')
+          await finishProcessTurn(runtime, diagnosis.kind === 'topic' ? '↪️ Session moved to another topic' : '↪️ Session taken over by another client')
         })()
         // The prompt that provoked this never reached the agent, and the normal
         // path already marked it delivered — journal it again so the Take over
@@ -5370,13 +5649,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         }
         void client.sendMessage(
           runtime.chatId,
-          toTelegramHtml(queued
-            ? `${OWNERSHIP_HINT}\n\nYour message is queued: take over and it is delivered after the restart.`
-            : 'this session is open in a web UI tab, so prompts from Telegram are refused until it closes. This topic now mirrors that tab.'),
+          toTelegramHtml(queued && diagnosis.takeover
+            ? `${diagnosis.message}\n\nYour message is queued: take over and it is delivered after the restart.`
+            : diagnosis.message),
           {
             parseMode: 'HTML',
             ...(runtime.threadId === 0 ? {} : { threadId: runtime.threadId }),
-            ...(queued
+            ...(queued && diagnosis.takeover
               ? { replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over', callback_data: 'own:take' }]] } }
               : {}),
           },

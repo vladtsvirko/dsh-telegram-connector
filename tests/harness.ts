@@ -319,16 +319,33 @@ export class FakeSessions {
 
 /** The subset of `workspaceRegistry` used by `ensureAgent` and reconciliation. */
 export class FakeRegistry {
+  /** Sessions attached to the primary workspace; kept for the older tests. */
   readonly attached: string[] = []
   readonly archivedSessionIds: string[] = []
+  /** Set by forgetWorkspace(): the runtime lost the registration, bindings did not. */
+  private forgotten = false
+  private restoredId = 'ws-restored'
+  private nextId = 0
+  private readonly extra = new Map<string, { path: string; title: string; sessionIds: string[] }>()
 
   constructor(
-    readonly workspaceId: string,
-    readonly path: string,
+    public workspaceId: string,
+    public path: string,
   ) {}
 
+  /** Simulate a registry that no longer lists this workspace. */
+  forgetWorkspace(): void {
+    this.forgotten = true
+    this.attached.length = 0
+  }
+
   list(): Array<{ id: string; path: string; title: string; sessionIds: string[] }> {
-    return [{ id: this.workspaceId, path: this.path, title: 'Test Workspace', sessionIds: [...this.attached] }]
+    const rows: Array<{ id: string; path: string; title: string; sessionIds: string[] }> = []
+    if (!this.forgotten) {
+      rows.push({ id: this.workspaceId, path: this.path, title: 'Test Workspace', sessionIds: [...this.attached] })
+    }
+    for (const [id, entry] of this.extra) rows.push({ id, path: entry.path, title: entry.title, sessionIds: [...entry.sessionIds] })
+    return rows
   }
 
   get(id: string): {
@@ -337,15 +354,50 @@ export class FakeRegistry {
     sessionIds: string[]
     attachSession: (sessionId: string) => Promise<void>
   } | undefined {
-    if (id !== this.workspaceId) return undefined
-    return {
-      id,
-      path: this.path,
-      sessionIds: this.attached,
+    const view = (workspaceId: string, path: string, sessionIds: string[]): {
+      id: string
+      path: string
+      sessionIds: string[]
+      attachSession: (sessionId: string) => Promise<void>
+    } => ({
+      id: workspaceId,
+      path,
+      sessionIds,
       attachSession: async (sessionId: string) => {
-        this.attached.push(sessionId)
+        sessionIds.push(sessionId)
       },
+    })
+    if (!this.forgotten && id === this.workspaceId) return view(id, this.path, this.attached)
+    const entry = this.extra.get(id)
+    if (entry !== undefined) return view(id, entry.path, entry.sessionIds)
+    return undefined
+  }
+
+  async resolveByPath(path: string): Promise<{ id: string } | undefined> {
+    if (!this.forgotten && path === this.path) return this.get(this.workspaceId)
+    for (const [id, entry] of this.extra) if (entry.path === path) return this.get(id)
+    return undefined
+  }
+
+  /**
+   * Recreate a registration. A lost *primary* comes back under a new id (the
+   * real registry never reuses one); a path the fake has not seen becomes its
+   * own workspace, so a second group's workspace does not collapse into the
+   * first — which is what the binding tests assert about.
+   */
+  async create(path: string, title?: string): Promise<{ id: string; path: string; sessionIds: string[]; attachSession: (sessionId: string) => Promise<void> }> {
+    if (this.forgotten && path === this.path) {
+      this.forgotten = false
+      this.workspaceId = this.restoredId
+      const restored = this.get(this.workspaceId)
+      if (restored === undefined) throw new Error('FakeRegistry.create: cannot materialize the restored registration')
+      return restored
     }
+    const id = `ws-new-${++this.nextId}`
+    this.extra.set(id, { path, title: title ?? 'Restored Workspace', sessionIds: [] })
+    const created = this.get(id)
+    if (created === undefined) throw new Error('FakeRegistry.create: cannot materialize a new registration')
+    return created
   }
 
   async archiveSession(sessionId: string): Promise<void> {
@@ -491,6 +543,11 @@ export interface BootOptions {
     failCreateWith?: Error
     failResumeWith?: Error
   }
+  /** A registry prepared before boot (e.g. one that forgot its workspace). */
+  registry?: FakeRegistry
+  /** Data root (the parent of DSH_HOME) and the instance id this process is. */
+  dataRoot?: string
+  instanceId?: string
 }
 
 export interface IncomingMessageOptions {
@@ -526,6 +583,8 @@ export interface Harness {
 
 const ENV_KEYS = [
   'DSH_HOME',
+  'DSH_DATA_ROOT',
+  'DSH_INSTANCE_ID',
   'DSH_TELEGRAM_PUBLISHER_TOKENS',
   'DSH_SUPERVISOR_URL',
   'DSH_SUPERVISOR_TOKEN',
@@ -553,6 +612,8 @@ export async function boot(
 
   const savedEnv = new Map<string, string | undefined>()
   for (const key of ENV_KEYS) savedEnv.set(key, process.env[key])
+  if (options.dataRoot !== undefined) process.env.DSH_DATA_ROOT = options.dataRoot
+  if (options.instanceId !== undefined) process.env.DSH_INSTANCE_ID = options.instanceId
   const restoreEnv = (): void => {
     for (const key of ENV_KEYS) {
       const value = savedEnv.get(key)
@@ -570,7 +631,7 @@ export async function boot(
   agents.failCreateWith = options.agent?.failCreateWith
   agents.failResumeWith = options.agent?.failResumeWith
   const sessions = new FakeSessions()
-  const registry = new FakeRegistry(WORKSPACE_ID, workspaceRoot)
+  const registry = options.registry ?? new FakeRegistry(WORKSPACE_ID, workspaceRoot)
   const ctx = new FakeContext(
     { agents, sessions, workspaceRegistry: registry },
     agents,

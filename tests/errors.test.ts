@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { isOwnershipError, OWNERSHIP_HINT, SessionHeldError } from '../src/errors.js'
+import {
+  HELD_BY_OTHER_RUNTIME,
+  heldByAnotherTopic,
+  isOwnershipError,
+  OWNERSHIP_HINT,
+  SessionHeldError,
+} from '../src/errors.js'
 
 describe('isOwnershipError', () => {
   it('matches the runtime refusal in both of its wordings', () => {
@@ -26,5 +32,22 @@ describe('SessionHeldError', () => {
     expect(error).toBeInstanceOf(Error)
     expect(error.name).toBe('SessionHeldError')
     expect(error.message).toBe(OWNERSHIP_HINT)
+  })
+})
+
+describe('holder-specific advice', () => {
+  it('names the other topic instead of a restart when the bot holds the session twice', () => {
+    expect(heldByAnotherTopic(42)).toContain('topic 42')
+    expect(heldByAnotherTopic(42)).toContain('/forget')
+    expect(heldByAnotherTopic(42)).not.toContain('/system restart')
+  })
+
+  it('names the second runtime when no client in this process holds it', () => {
+    expect(HELD_BY_OTHER_RUNTIME).toContain('another process')
+    expect(HELD_BY_OTHER_RUNTIME).toContain('install.sh --doctor')
+    // Stopping the other runtime comes first; a restart of this one is only the
+    // last step, never the recovery.
+    expect(HELD_BY_OTHER_RUNTIME.indexOf('docker compose down'))
+      .toBeLessThan(HELD_BY_OTHER_RUNTIME.indexOf('/system restart now'))
   })
 })

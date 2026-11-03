@@ -267,7 +267,8 @@ const COMMANDS: CommandDoc[] = [
     path: 'system status',
     usage: '/system status',
     summary: 'connector, DSH and supervisor state',
-    details: 'Includes the open trial, its deadline and the agent preset/tool availability indirectly through `/about`.',
+    details:
+      'Includes the open trial, its deadline and the agent preset/tool availability indirectly through `/about`. The `registry` line compares the workspaces the runtime lists with the ones bound to Telegram (a gap is what makes the web UI look empty while the bot still knows them), and the `data` line names a second runtime holding the same data directory.',
     surfaces: ['control'],
     group: 'system',
   },
