@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.5.1
+
+Maintenance release; no connector change. Aligned with the setup tag whose CI is
+green.
+
 ## 0.2.1-rc.5-0.5.0
 
 Maintenance release; no connector change. Aligned with the setup release that
