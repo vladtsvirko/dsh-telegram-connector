@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.2.0
+
+Maintenance release; no connector change. Aligned with the setup release that asks
+for publisher bot tokens and names the downloaded checkout.
+
 ## 0.2.1-rc.5-0.1.2
 
 Maintenance release; no connector change. Aligned with the setup tag whose CI is

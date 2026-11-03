@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.1.2 | `0.2.1-rc.5` | tested | maintenance: same connector code, aligned with the setup release |
+| 0.2.1-rc.5-0.2.0 | `0.2.1-rc.5` | tested | maintenance: same connector code, aligned with the installer release |
+| 0.2.1-rc.5-0.1.2 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup release |
 | 0.2.1-rc.5-0.1.1 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the installer fix |
 | 0.2.1-rc.5-0.1.0 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the one-file install |
 | 0.2.1-rc.5-0.0.0 | `0.2.1-rc.5` | previous | alignment release: same connector code as 0.8.0, rebuilt against rc.5 |
