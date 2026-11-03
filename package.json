@@ -1,6 +1,6 @@
 {
   "name": "dsh-telegram-connector",
-  "version": "0.2.1-rc.2-0.8.0",
+  "version": "0.2.1-rc.5-0.0.0",
   "description": "Telegram control plane for DeepSeek Harness \u2014 one group per workspace, one forum topic per session.",
   "type": "module",
   "main": "lib/index.js",
@@ -44,9 +44,9 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.5",
-    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.5",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
     "vitest": "^4.1.10"

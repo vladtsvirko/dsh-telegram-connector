@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.1-rc.5-0.0.0
+
+Alignment release against DSH `0.2.1-rc.5`. No connector code change; the product
+line restarts at `0.0.0` for the new DSH part.
+
+### Changed
+
+- Rebuilt against `@deepseek-ai/dsh-agent`, `dsh-llm` and `dsh-session`
+  `0.2.1-rc.5`. Their published `lib/` is byte-identical to rc.2, and
+  `typecheck` plus 191 tests pass unchanged.
+- Peer ranges left alone (`>=0.1.0-rc.6 <0.3.0-0`). rc.5 is inside them and the
+  loader evaluates prereleases, so the runtime needs no exact-version exemption.
+- One `COMPATIBILITY.md` row added; the previous one is now `previous`.
+
 ## 0.2.1-rc.2-0.8.0
 
 ### Added

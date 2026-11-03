@@ -87,7 +87,7 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 ## Status
 
-Built and tested against DSH `0.2.1-rc.2`; unit tests for rendering, reactions,
+Built and tested against DSH `0.2.1-rc.5`; unit tests for rendering, reactions,
 bindings and the plugin surface, `tsc --noEmit` clean.
 
 | Part | State |
@@ -145,7 +145,7 @@ allowBuilds:
 YAML
 
 # 2. add the plugin at an exact tag
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.2-0.4.11
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.0.0
 
 # 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
