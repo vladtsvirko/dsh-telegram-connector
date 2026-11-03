@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.1.0
+
+Maintenance release; no connector change. Aligned with the setup release that adds
+the one-file (wget/curl) install.
+
 ## 0.2.1-rc.5-0.0.0
 
 Alignment release against DSH `0.2.1-rc.5`. No connector code change; the product
