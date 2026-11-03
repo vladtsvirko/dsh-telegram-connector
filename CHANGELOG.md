@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.1.1
+
+Maintenance release; no connector change. Aligned with the setup fix for the
+root re-run of the one-file install.
+
 ## 0.2.1-rc.5-0.1.0
 
 Maintenance release; no connector change. Aligned with the setup release that adds
