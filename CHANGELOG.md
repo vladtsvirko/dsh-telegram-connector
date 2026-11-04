@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.10.1
+
+Maintenance release; no connector change. Aligned with the setup 0.10.1
+test-only fix.
+
 ## 0.2.1-rc.5-0.10.0
 
 Maintenance release; no connector code change. Aligned with the setup that
