@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.8.0
+
+Maintenance release; no connector change. Aligned with the setup release that
+removes the Docker deployment mode and adds a CPU/RAM share to the systemd unit.
+
 ## 0.2.1-rc.5-0.7.0
 
 ### Fixed

@@ -3,7 +3,7 @@
 Versions are aligned with DSH and carry our own product line:
 
 ```
-<dsh-version>-<major>.<minor>.<patch>      v0.2.1-rc.5-0.7.0
+<dsh-version>-<major>.<minor>.<patch>      v0.2.1-rc.5-0.8.0
 ```
 
 - **DSH part** is exactly the DSH release this connector was tested against.
@@ -32,9 +32,8 @@ Versions are aligned with DSH and carry our own product line:
 3. Run `npm run typecheck && npm test && npm run build`.
 4. Commit, tag `v<version>`, push the tag. CI runs
    `scripts/check-version.mjs` and fails if the tag, package and matrix drift.
-5. Bump the setup repo's `VERSION`, every image tag, `Dockerfile`
-   `DSH_SETUP_VERSION` and its AGENTS example to the same tag. The connector ref
-   is derived from `VERSION`; there is no `.env` pin to edit. The setup release
-   and this connector release ship together.
+5. Bump the setup repo's `VERSION` and its `AGENTS.md` example to the same tag.
+   The connector ref is derived from `VERSION`; there is no image and no `.env`
+   pin to edit. The setup release and this connector release ship together.
 
 Do not move or reuse a tag. Do not put a breaking change in the `0.x` line.
