@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1-rc.5-0.6.1
+
+Maintenance release; no connector change. Aligned with the setup tag whose new
+doctor test assumed a host without Docker — the CI runner has one, so the setup
+released a patch with the test made deterministic.
+
 ## 0.2.1-rc.5-0.6.0
 
 Aligned with the setup release that adds `install.sh --doctor`, keeps the
