@@ -5152,9 +5152,17 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             continue
           }
           if (staleUpdateBatch) {
-            if (message.text !== undefined && !staleUpdateNotified.has(message.chat.id)) {
+            // A queued command refers to a deployment state the update just
+            // replaced (`/system cancel`, a retried update, a trial confirm), so
+            // refuse those. A plain prompt or attachment is safe: the session
+            // survived the restart, and the user expects it to be delivered.
+            if (!(message.text ?? '').trimStart().startsWith('/')) {
+              await handleMessage(message)
+              continue
+            }
+            if (!staleUpdateNotified.has(message.chat.id)) {
               staleUpdateNotified.add(message.chat.id)
-              await reply(message, '✅ the update finished — this request was not executed; send it again.').catch(() => undefined)
+              await reply(message, '✅ the update finished — commands sent while it restarted are not executed; send it again.').catch(() => undefined)
             }
             continue
           }

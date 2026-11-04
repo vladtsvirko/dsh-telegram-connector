@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1-rc.5-0.9.4
+
+### Fixed
+
+- **A prompt sent while the setup update restarted is no longer discarded.**
+  The first Telegram batch after an update was refused wholesale with "send it
+  again". Plain prompts and attachments are now delivered (the session survived
+  the restart); only commands are refused, because a queued `/system …` or trial
+  confirmation refers to the state the update replaced.
+
 ## 0.2.1-rc.5-0.9.3
 
 Maintenance release; no connector change. Aligned with the setup cleanup of
