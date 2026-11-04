@@ -6,7 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.6.5 | `0.2.1-rc.5` | tested | inline buttons now require the admin account; `/commands --help`; setup docs alignment |
+| 0.2.1-rc.5-0.7.0 | `0.2.1-rc.5` | tested | inline buttons now require the admin account; `/commands --help`; aligned with the setup's multi-account git installer (connector code unchanged since 0.6.5) |
 | 0.2.1-rc.5-0.6.4 | `0.2.1-rc.5` | tested | defensive instance-marker parsing; aligned with the setup marker fix |
 | 0.2.1-rc.5-0.6.3 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup fixture fix |
 | 0.2.1-rc.5-0.6.2 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup CI fix |
