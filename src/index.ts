@@ -1734,7 +1734,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         pid?: number
         startedAt?: string
       }
-      return { root, id: marker.id, mode: marker.mode, pid: marker.pid, startedAt: marker.startedAt }
+      // A malformed marker must degrade to "unknown", never to a crash or a
+      // phantom holder: the pid is only trustworthy as a positive integer.
+      const pid = typeof marker.pid === 'number' && Number.isInteger(marker.pid) && marker.pid > 0 ? marker.pid : undefined
+      return { root, id: marker.id, mode: marker.mode, pid, startedAt: marker.startedAt }
     } catch {
       return { root }
     }

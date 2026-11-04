@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.1-rc.5-0.6.4
+
+Aligned with the setup fix for `data/.runtime.json`, which the entrypoint wrote
+without a pid (invalid JSON) after an editing slip.
+
+### Fixed
+
+- **A malformed instance marker degrades to "unknown", never to a crash or a
+  phantom holder.** The pid is trusted only as a positive integer, so a marker
+  from a broken build cannot make `/system status` claim another runtime holds
+  the data directory, and cannot hide the real one. With the marker fixed, a
+  held session again distinguishes "another client in this runtime" (take-over
+  card) from "another process over this data directory" (stop it first).
+
 ## 0.2.1-rc.5-0.6.3
 
 Maintenance release; no connector change. Aligned with the setup patch that
