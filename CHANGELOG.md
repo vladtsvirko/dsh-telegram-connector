@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1-rc.5-0.9.5
+
+### Added
+
+- **Telegram prompts carry their channel.** The prompt the agent receives starts
+  with `[via Telegram]`, so it can answer with chat steps instead of host
+  commands. Web UI prompts stay unmarked; the marker is part of the session
+  transcript, not of the Telegram message.
+
 ## 0.2.1-rc.5-0.9.4
 
 ### Fixed

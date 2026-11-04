@@ -155,7 +155,10 @@ describe('Telegram-driven turn', () => {
 
     // 1. The prompt reached the session through the fake agents service.
     expect(agent.session.id).toBe(SESSION_ID)
-    expect(agent.followups[0]?.content).toEqual([{ type: 'text', text: 'hello from telegram' }])
+    expect(agent.followups[0]?.content).toEqual([
+      { type: 'text', text: '[via Telegram]' },
+      { type: 'text', text: 'hello from telegram' },
+    ])
     expect(agent.followups[0]?.source?.kind).toBe('user')
     expect(harness.registry.attached).toContain(SESSION_ID)
 

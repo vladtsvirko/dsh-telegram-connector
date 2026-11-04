@@ -4111,7 +4111,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         return undefined
       })
       const blocks = content ?? [{ type: 'text', text }]
-      agent.followup(createUserMessage({ content: blocks as never, source: { kind: 'user' } }))
+      // The model sees the channel, so it can answer with Telegram steps instead
+      // of host commands. The marker is part of the prompt, not the Telegram UI.
+      const marked = [{ type: 'text', text: '[via Telegram]' }, ...blocks]
+      agent.followup(createUserMessage({ content: marked as never, source: { kind: 'user' } }))
       if (input !== undefined) await bridge.completeInput(input.id)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
@@ -5259,7 +5262,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         resetStream(runtime)
         runtime.lastPrompt = input.text
         injected.set(input.sessionId, Date.now())
-        agent.followup(createUserMessage({ content: [{ type: 'text', text: input.text }], source: { kind: 'user' } }))
+        agent.followup(createUserMessage({
+          content: [{ type: 'text', text: '[via Telegram]' }, { type: 'text', text: input.text }],
+          source: { kind: 'user' },
+        }))
         await bridge.completeInput(input.id)
       } catch (error) {
         stderr(`bridge: cannot replay prompt ${input.id}: ${String(error)}`)

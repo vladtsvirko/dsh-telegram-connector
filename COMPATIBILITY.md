@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.9.4 | `0.2.1-rc.5` | tested | first batch after an update delivers plain prompts and refuses only commands |
+| 0.2.1-rc.5-0.9.5 | `0.2.1-rc.5` | tested | Telegram prompts carry a `[via Telegram]` marker so the model can adapt its answer |
+| 0.2.1-rc.5-0.9.4 | `0.2.1-rc.5` | previous | first batch after an update delivers plain prompts and refuses only commands |
 | 0.2.1-rc.5-0.9.3 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup 0.9.3 cleanup |
 | 0.2.1-rc.5-0.9.2 | `0.2.1-rc.5` | previous | dashboard Status is a runtime summary; Sessions lists sessions (they were identical) |
 | 0.2.1-rc.5-0.9.1 | `0.2.1-rc.5` | previous | command renames (`update setup`, `components`, `dashboard`, `archived`), dashboard button card, admin-gated unbind/dashboard/cleanup |

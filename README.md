@@ -76,6 +76,10 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 - **Plugins from the chat.** `/plugins` lists the profile's bundles, `/plugin add`
   inspects a spec before anything runs and asks for a confirmation, and
   `enable`/`disable`/`remove` work without opening a terminal.
+- **Channel-aware prompts.** A Telegram prompt reaches the agent with a
+  `[via Telegram]` marker, so the answer can use chat steps instead of host
+  commands. Web UI prompts are unmarked; the marker is in the session, not in
+  the Telegram message.
 - **Dashboard card.** `/dashboard` posts the common actions as inline buttons:
   new session, sync, status and sessions in a group; status, web link, update,
   restart, plugins and components in the bot chat. Deployment buttons are
@@ -153,7 +157,7 @@ allowBuilds:
 YAML
 
 # 2. add the plugin at an exact tag — the one equal to the setup VERSION
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.9.4
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.9.5
 
 # 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
