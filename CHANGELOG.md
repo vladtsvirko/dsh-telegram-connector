@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.8.2
+
+Maintenance release; no connector change. Aligned with the setup fix that makes
+DSH_PUBLIC_URL an accepted installer answer.
+
 ## 0.2.1-rc.5-0.8.1
 
 Maintenance release; no connector change. Aligned with the setup fix for the
