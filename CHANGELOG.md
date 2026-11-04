@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.10.7
+
+Maintenance release; no connector change. Aligned with the setup fix for the
+Penpot compose service names (`penpot-backend`/`penpot-exporter`).
+
 ## 0.2.1-rc.5-0.10.6
 
 Maintenance release; no connector change. Aligned with the setup fix for Podman
