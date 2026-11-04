@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1-rc.5-0.6.3
+
+Maintenance release; no connector change. Aligned with the setup patch that
+makes the doctor fixture read the real invoking uid (CI runners are uid 1001)
+and adds a test that pins the ownership mismatch itself.
+
 ## 0.2.1-rc.5-0.6.2
 
 Maintenance release; no connector change. Aligned with the setup patch that
