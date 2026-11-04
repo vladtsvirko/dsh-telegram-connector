@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1-rc.5-0.10.3
+
+### Changed
+
+- **`/system update setup` now confirms before it does anything.** It posts a
+  card with the current and target version and the number of running sessions;
+  **Update now** starts the drain, **Cancel** closes it. A pending card expires
+  cleanly if dsh restarts instead of looking like a completed update.
+- The card drops Cancel as soon as nothing is draining, and the accepted state
+  says the cancel button is gone.
+
 ## 0.2.1-rc.5-0.10.2
 
 ### Fixed

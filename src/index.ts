@@ -1089,13 +1089,34 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return workspace === undefined ? topic : `${workspace.title} / ${topic}`
   }
 
-  const updateKeyboard = (id: string) => ({
-    inline_keyboard: [[{ text: '✖ Cancel update', callback_data: `upd:cancel:${id}` }]],
-  })
+  const updateKeyboard = (id: string, phase: 'pending' | 'draining' | 'accepted') => {
+    if (phase === 'pending') {
+      return {
+        inline_keyboard: [[
+          { text: '⬆️ Update now', callback_data: `upd:start:${id}` },
+          { text: 'Cancel', callback_data: `upd:cancel:${id}` },
+        ]],
+      }
+    }
+    if (phase === 'draining') {
+      return { inline_keyboard: [[{ text: '✖ Cancel update', callback_data: `upd:cancel:${id}` }]] }
+    }
+    return { inline_keyboard: [] }
+  }
 
   const updateStatusText = (update: NonNullable<typeof bindings.update>): string => {
     const blockers = drainState?.blockers ?? []
     const lines = [`🔄 **setup update** \`${update.from} → ${update.target}\``]
+    if (update.phase === 'pending') {
+      const running = agents.list().filter((agent) => agent.status === 'running').length
+      lines.push(
+        running === 0
+          ? 'ready — no sessions are running. **Update now** hands over to the updater; dsh restarts when it applies.'
+          : `ready — ${String(running)} session(s) are running. **Update now** drains them first; dsh restarts when it applies.`,
+        'Nothing happens until you press **Update now**.',
+      )
+      return lines.join('\n')
+    }
     if (update.phase === 'accepted') {
       lines.push('🚀 updater accepted — the runtime restarts now; the updater reports the result.', 'The cancel button is gone; `/system cancel` no longer applies after acceptance.')
       return lines.join('\n')
@@ -1117,7 +1138,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await botPool.waitEdit(botPool.main, update.chatId)
     await client.editMessageText(update.chatId, update.messageId, toTelegramHtml(updateStatusText(update)), {
       parseMode: 'HTML',
-      replyMarkup: keyboard ? updateKeyboard(update.id) : { inline_keyboard: [] },
+      replyMarkup: keyboard ? updateKeyboard(update.id, update.phase) : { inline_keyboard: [] },
     })
   }
 
@@ -1183,6 +1204,27 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await clearUpdate()
   }
 
+  const startUpdate = async (query: TgCallbackQuery): Promise<void> => {
+    if (!isAdmin(query.from?.id)) {
+      await client.answerCallbackQuery(query.id, 'only the admin can do that').catch(() => undefined)
+      return
+    }
+    const id = query.data?.split(':')[2]
+    const update = bindings.update
+    if (update === undefined || id === undefined || update.id !== id || update.phase !== 'pending') {
+      await client.answerCallbackQuery(query.id, 'this update already started or expired').catch(() => undefined)
+      return
+    }
+    update.phase = 'draining'
+    drainState = { mode: update.mode, startedAt: update.startedAt, blockers: [] }
+    await persist()
+    await editUpdateStatus(true).catch((error: unknown) => {
+      logger.warn(`dsh-telegram-connector: cannot edit drain status: ${String(error)}`)
+    })
+    await client.answerCallbackQuery(query.id, 'draining…').catch(() => undefined)
+    void runSetupUpdate(update.mode)
+  }
+
   const cancelUpdate = async (query: TgCallbackQuery): Promise<void> => {
     // The card's ✖ changes the deployment for everyone, exactly like
     // `/system cancel`; the allowlist alone is not enough.
@@ -1192,7 +1234,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     const id = query.data?.split(':')[2]
     const update = bindings.update
-    if (update === undefined || id === undefined || update.id !== id || update.phase !== 'draining') {
+    if (update === undefined || id === undefined || update.id !== id || update.phase === 'accepted') {
       await client.answerCallbackQuery(query.id, 'update already started or finished').catch(() => undefined)
       if (query.message !== undefined) {
         await client.editMessageText(
@@ -1343,18 +1385,18 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       id,
       startedAt: Date.now(),
       mode,
-      phase: 'draining',
+      phase: 'pending',
       from: resolved.from,
       target: resolved.target,
       chatId: message.chat.id,
     }
-    drainState = { mode, startedAt: bindings.update.startedAt, blockers: [] }
+    drainState = undefined
     await persist()
     try {
       await botPool.takeMain(message.chat.id)
       const sent = await client.sendMessage(message.chat.id, toTelegramHtml(updateStatusText(bindings.update)), {
         parseMode: 'HTML',
-        replyMarkup: updateKeyboard(id),
+        replyMarkup: updateKeyboard(id, 'pending'),
       })
       bindings.update.messageId = sent.message_id
       await persist()
@@ -5140,6 +5182,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           if (message === undefined) {
             const query = update.callback_query
             if (query === undefined) continue
+            if (query.data?.startsWith('upd:start:')) {
+              await startUpdate(query)
+              continue
+            }
             if (query.data?.startsWith('upd:cancel:')) {
               await cancelUpdate(query)
               continue
@@ -5430,7 +5476,24 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await closeAllProcessCards('⚠️ Connector restarted — process view closed.')
       .catch((error: unknown) => stderr(`cannot close stale process cards: ${String(error)}`))
     offset = bindings.lastUpdateId ?? 0
-    if (bindings.update !== undefined) {
+    if (bindings.update !== undefined && bindings.update.phase === 'pending') {
+      // A confirmation card from before a restart: no job was started, so it
+      // must not be mistaken for a completed update.
+      const expired = bindings.update
+      delete bindings.update
+      drainState = undefined
+      await persist()
+      if (expired.messageId !== undefined) {
+        void botPool.waitEdit(botPool.main, expired.chatId)
+          .then(() => client.editMessageText(
+            expired.chatId,
+            expired.messageId as number,
+            '⌛ this update request expired (dsh restarted). Send `/system update setup` again.',
+            { replyMarkup: { inline_keyboard: [] } },
+          ))
+          .catch(() => undefined)
+      }
+    } else if (bindings.update !== undefined) {
       // The runtime was restarted by the updater. The first poll batch is what
       // arrived while dsh was down: answer it once, do not execute it.
       const pending = bindings.update

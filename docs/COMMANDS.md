@@ -83,7 +83,7 @@ connector refuses to disable or remove itself.
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
 | `/system update connector` | reinstall the pinned connector, in a trial |
 | `/system update connector now` | reinstall without a trial |
-| `/system update setup [--i-know-versions-are-incompatible]` | drain, then update the setup through the updater service; the flag permits a major/DSH jump |
+| `/system update setup [--i-know-versions-are-incompatible]` | show a confirmation card (target + running sessions), then drain and update through the updater service; the flag permits a major/DSH jump |
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
 | `/system components [<component> <enable\|disable\|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form. The Port button offers three presets (8090/8091/8092); use the text form for anything else |

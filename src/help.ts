@@ -228,7 +228,7 @@ const COMMANDS: CommandDoc[] = [
     usage: '/system <status|restart|update|confirm|rollback|cancel|components|takechat>',
     summary: 'runtime lifecycle: status, restarts, connector and setup updates, optional components',
     details:
-      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update setup` drains agents and moves the setup checkout through the updater service. `confirm` and `rollback` close the profile trial; rollback does not move the checkout or the DSH install. `components` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
+      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update setup` posts a confirmation card, then drains agents and moves the setup checkout through the updater service. `confirm` and `rollback` close the profile trial; rollback does not move the checkout or the DSH install. `components` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
     examples: ['/system status', '/system restart now', '/system update connector'],
     surfaces: ['control'],
     group: 'system',
@@ -295,9 +295,9 @@ const COMMANDS: CommandDoc[] = [
   {
     path: 'system update setup',
     usage: '/system update setup [--i-know-versions-are-incompatible]',
-    summary: 'drain sessions, then update the setup through the updater service',
+    summary: 'confirm, then drain sessions and update the setup',
     details:
-      'Blocks new requests, waits until every agent (web UI and Telegram) is idle, then asks the updater to check out the latest compatible setup tag, install the matching DSH and connector, and restart. Crossing a product major or DSH line requires the explicit flag. Once the updater accepts, the card button is gone but `/system cancel` still stops the job; a failed health gate rolls back automatically. If the updater token is empty, this only prints the host commands.',
+      'Posts a card with the current and target version and the number of running sessions. **Update now** starts the drain; nothing happens before that. Once every agent (web UI and Telegram) is idle, the updater checks out the latest compatible setup tag, installs the matching DSH and connector, and restarts. Crossing a product major or DSH line requires the explicit flag. The card loses its Cancel button when the updater accepts; a failed health gate rolls back automatically. If the updater token is empty, this only prints the host commands.',
     surfaces: ['control'],
     group: 'system',
   },

@@ -87,7 +87,7 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 - **Host-free after install.** The runtime runs under a
   supervisor: every plugin confirmation opens a rollback window (live under HMR,
   or around a restart), and `/system update connector` reinstalls the pinned
-  connector the same way. `/system update setup` drains agents and moves the whole
+  connector the same way. `/system update setup` confirms, drains agents and moves the whole
   setup through the updater sidecar. The trial comes with Commit / Roll back
   buttons; ignore it and it rolls back by itself. A dead runtime, a dead updater,
   a broken `.env` or the host itself still needs a shell — that boundary is
@@ -157,7 +157,7 @@ allowBuilds:
 YAML
 
 # 2. add the plugin at an exact tag — the one equal to the setup VERSION
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.10.2
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.10.3
 
 # 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
@@ -261,7 +261,7 @@ session id, an id prefix, or the topic title.
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
 | `/system update connector` | reinstall the pinned connector, in a trial |
 | `/system update connector now` | reinstall without a trial |
-| `/system update setup [--i-know-versions-are-incompatible]` | drain sessions, then update setup through the updater sidecar |
+| `/system update setup [--i-know-versions-are-incompatible]` | confirm, drain, then update setup through the updater service |
 | `/system confirm` | commit the running trial (or press **Commit**) |
 | `/system rollback` | restore the last committed state and restart |
 | `/system cancel` | abandon a pending update and unblock the bot; after acceptance it stops the updater job |
@@ -425,7 +425,7 @@ session store — there is no export step and no second copy of a conversation.
   connector), and start it again inside a trial. `now` skips the trial. A failed
   reinstall restores the previous state before the runtime comes back, so a bad
   profile update cannot strand the bot. It reinstalls the **pinned** connector;
-  moving the setup/image tag is `/system update setup`, which drains agents and
+  moving the setup tag is `/system update setup`, which confirms, drains agents and
   uses the updater sidecar. `/system rollback` restores the profile, not the
   image.
 - **Supervised restarts.** The runtime runs under a supervisor

@@ -47,7 +47,7 @@ export interface UpdateBinding {
   id: string
   startedAt: number
   mode: 'compatible' | 'available'
-  phase: 'draining' | 'accepted'
+  phase: 'pending' | 'draining' | 'accepted'
   from: string
   target: string
   /** Control chat and the editable status message. */
