@@ -3328,6 +3328,22 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     ].join('\n')
   }
 
+  /** The dashboard's Status button: workspace and runtime state, not the
+   * session list (that is `/sessions`, and it would otherwise be the same
+   * text twice). */
+  const workspaceStatusText = (workspaceId: string, workspace: WorkspaceBinding): string => {
+    const rows = sessionsOfChat(bindings, workspace.chatId)
+    const live = rows.filter(([threadId]) => runtimes.get(runtimeKey(workspace.chatId, threadId))?.agent !== undefined).length
+    return [
+      `**${workspace.title}** — status`,
+      `workspace: \`${workspaceId}\``,
+      `sessions: ${rows.length} (${live} live)`,
+      `model route: \`${config.provider ?? 'default'}/${config.model ?? 'default'}\``,
+      `poller: ${stopped ? 'stopped' : 'running'}`,
+      `timezone: \`${timeZone()}\``,
+    ].join('\n')
+  }
+
   /** The buttons under a dashboard card. The group card is workspace-scoped;
    * the control card is deployment-scoped and never leaks the web token into a
    * group. */
@@ -3672,8 +3688,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       )
     }
 
-    if (command === '/sessions' || command === '/status') {
+    if (command === '/sessions') {
       return reply(message, dashboardText(workspaceId, workspace))
+    }
+
+    if (command === '/status') {
+      return reply(message, workspaceStatusText(workspaceId, workspace))
     }
 
     if (command === '/dashboard') {

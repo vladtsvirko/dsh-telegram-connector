@@ -98,3 +98,23 @@ describe('callback buttons require the admin account', () => {
     )
   })
 })
+
+describe('dashboard status and sessions are distinct', () => {
+  it('Status summarises the runtime, Sessions lists the workspace', async () => {
+    const harness = await start()
+    press(harness, 'dash:status', USER_ID)
+    const status = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('— status')),
+      'status summary',
+    )
+    expect(callText(status)).toContain('model route')
+    expect(callText(status)).not.toContain('path:')
+
+    press(harness, 'dash:sessions', USER_ID)
+    const sessions = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('path:')),
+      'session list',
+    )
+    expect(callText(sessions)).toContain('Test Workspace')
+  })
+})

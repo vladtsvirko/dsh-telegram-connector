@@ -176,7 +176,7 @@ held session. They are admin-only, like their commands.
 |---|---|
 | `/new [title]` | mint a session and create its topic |
 | `/sessions` | dashboard: path, workspace id, sessions |
-| `/status [session]` | dashboard; with a session, that session's id, topic, model and agent state |
+| `/status [session]` | dashboard summary (sessions, model route, poller, timezone); with a session, that session's id, topic, model and agent state |
 | `/dashboard` | claim this empty topic as the dashboard and post its button card |
 | `/sync` | adopt sessions created in the web UI: topic + history replay; paced to Telegram limits |
 | `/archived` | archived sessions and whether they have a topic |

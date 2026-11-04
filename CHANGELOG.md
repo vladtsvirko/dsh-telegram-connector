@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1-rc.5-0.9.2
+
+### Fixed
+
+- **Dashboard Status and Sessions were the same message.** On the dashboard
+  surface `/status` without a session fell through to the session list, so both
+  buttons printed the workspace dashboard. `/status` now reports the workspace
+  and runtime state (session count, model route, poller, timezone) and
+  `/sessions` lists the sessions.
+
 ## 0.2.1-rc.5-0.9.1
 
 ### Changed

@@ -332,7 +332,7 @@ const COMMANDS: CommandDoc[] = [
     usage: '/status [session]',
     summary: 'runtime state; on the dashboard, one session\'s state',
     details:
-      'In the bot chat it reports the model route, counts, poller, timezone and supervisor. On the dashboard, `/status <session>` adds that session\'s id, topic, model and agent state.',
+      'In the bot chat it reports the model route, counts, poller, timezone and supervisor. On the dashboard it summarises the workspace (session count, model route, poller, timezone); `/status <session>` adds that session\'s id, topic, model and agent state. `/sessions` lists the workspace\'s sessions.',
     surfaces: ['control', 'dashboard'],
     group: 'runtime',
   },

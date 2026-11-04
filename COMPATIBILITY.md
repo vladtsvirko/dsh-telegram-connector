@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.9.1 | `0.2.1-rc.5` | tested | command renames (`update setup`, `components`, `dashboard`, `archived`), dashboard button card, admin-gated unbind/dashboard/cleanup |
+| 0.2.1-rc.5-0.9.2 | `0.2.1-rc.5` | tested | dashboard Status is a runtime summary; Sessions lists sessions (they were identical) |
+| 0.2.1-rc.5-0.9.1 | `0.2.1-rc.5` | previous | command renames (`update setup`, `components`, `dashboard`, `archived`), dashboard button card, admin-gated unbind/dashboard/cleanup |
 | 0.2.1-rc.5-0.9.0 | `0.2.1-rc.5` | previous | help and error text no longer describe a Docker deployment; updater and held-session advice point at the systemd service |
 | 0.2.1-rc.5-0.8.2 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup 0.8.2 installer fix |
 | 0.2.1-rc.5-0.8.1 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup 0.8.1 CI/healthcheck fix |
