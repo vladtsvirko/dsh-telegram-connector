@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.8.0 | `0.2.1-rc.5` | tested | maintenance: same connector code, aligned with the setup release that drops the Docker deployment mode and adds systemd resource limits |
+| 0.2.1-rc.5-0.8.1 | `0.2.1-rc.5` | tested | maintenance: same connector code, aligned with the setup 0.8.1 CI/healthcheck fix |
+| 0.2.1-rc.5-0.8.0 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup release that drops the Docker deployment mode and adds systemd resource limits |
 | 0.2.1-rc.5-0.7.0 | `0.2.1-rc.5` | previous | inline buttons now require the admin account; `/commands --help`; aligned with the setup's multi-account git installer (connector code unchanged since 0.6.5) |
 | 0.2.1-rc.5-0.6.4 | `0.2.1-rc.5` | tested | defensive instance-marker parsing; aligned with the setup marker fix |
 | 0.2.1-rc.5-0.6.3 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup fixture fix |

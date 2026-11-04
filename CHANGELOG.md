@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.8.1
+
+Maintenance release; no connector change. Aligned with the setup fix for the
+native smoke workflow and the health probe's bind address.
+
 ## 0.2.1-rc.5-0.8.0
 
 Maintenance release; no connector change. Aligned with the setup release that
