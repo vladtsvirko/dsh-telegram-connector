@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.10.5
+
+Maintenance release; no connector change. Aligned with the setup fix that reports
+the deployed git manifest instead of "none".
+
 ## 0.2.1-rc.5-0.10.4
 
 Maintenance tag for the setup release; no connector code changed. The setup
