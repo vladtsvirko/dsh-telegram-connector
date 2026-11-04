@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.9.3
+
+Maintenance release; no connector change. Aligned with the setup cleanup of
+stale `/system update all` text and the penpot 0.1.2 pin.
+
 ## 0.2.1-rc.5-0.9.2
 
 ### Fixed
