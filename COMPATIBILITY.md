@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.6.1 | `0.2.1-rc.5` | tested | maintenance: same connector code, aligned with the setup CI fix |
+| 0.2.1-rc.5-0.6.2 | `0.2.1-rc.5` | tested | maintenance: same connector code, aligned with the setup CI fix |
+| 0.2.1-rc.5-0.6.1 | `0.2.1-rc.5` | previous | superseded: the setup tag had a red CI (fixture Docker + YAML dependency) |
 | 0.2.1-rc.5-0.6.0 | `0.2.1-rc.5` | previous | held-session diagnosis (topic / client / second runtime), runtime registry repair at boot and in `/sync`, `/system status` registry + data-directory lines |
 | 0.2.1-rc.5-0.5.1 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup release |
 | 0.2.1-rc.5-0.5.0 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the installer release |

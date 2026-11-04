@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1-rc.5-0.6.2
+
+Maintenance release; no connector change. Aligned with the setup patch that
+removes the credential helper's YAML dependency (the setup CI has no global dsh)
+and makes its new doctor test independent of the runner's Docker daemon.
+Supersedes 0.2.1-rc.5-0.6.1, whose CI stayed red on the credential tests.
+
 ## 0.2.1-rc.5-0.6.1
 
 Maintenance release; no connector change. Aligned with the setup tag whose new

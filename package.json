@@ -1,6 +1,6 @@
 {
   "name": "dsh-telegram-connector",
-  "version": "0.2.1-rc.5-0.6.1",
+  "version": "0.2.1-rc.5-0.6.2",
   "description": "Telegram control plane for DeepSeek Harness — one group per workspace, one forum topic per session.",
   "type": "module",
   "main": "lib/index.js",
