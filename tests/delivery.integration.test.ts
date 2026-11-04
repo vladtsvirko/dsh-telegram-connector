@@ -334,7 +334,7 @@ describe('who holds a session', () => {
       6000,
     )
     const text = callText(refusal)
-    expect(text).toContain('docker compose down')
+    expect(text).toContain('sudo systemctl stop dsh.service')
     expect(text).toContain('install.sh --doctor')
     // A restart of this runtime cannot clear another process's kernel lock.
     expect(refusal.params.reply_markup).toBeUndefined()

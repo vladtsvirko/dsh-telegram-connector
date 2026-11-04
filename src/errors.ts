@@ -10,7 +10,7 @@
  *   * **another topic** of the same bot — the connector holds its own session
  *     twice, and the fix is in Telegram, not a restart;
  *   * a **second runtime** over the same data directory — a native service left
- *     running beside the Docker stack, or two containers from two checkouts.
+ *     running beside another service, or two checkouts on one directory.
  *     Restarting one does not help: the other process keeps the kernel lock.
  *
  * The old advice said "a web UI tab" for all three, so a user with two runtimes
@@ -53,7 +53,7 @@ export function heldByAnotherTopic(threadId: number): string {
  * data directory does. Restarting this one cannot help.
  */
 export const HELD_BY_OTHER_RUNTIME =
-  'this session is held by another process, not by a tab in this runtime. Two dsh runtimes are sharing one data directory — most often a native service left running beside the Docker stack (or two containers from two checkouts). Stop the other one (`docker compose down` or `sudo systemctl stop dsh.service`), then `/system restart now`; `./install.sh --doctor` names the holder.'
+  'this session is held by another process, not by a tab in this runtime. Two dsh runtimes are sharing one data directory — a second checkout, or a hand-started dsh beside the service. Stop the other one (`sudo systemctl stop dsh.service`), then `/system restart now`; `./install.sh --doctor` names the holder.'
 
 /** The holder is this runtime, but no topic claims it: a leaked handle. */
 export const HELD_BY_ORPHAN =

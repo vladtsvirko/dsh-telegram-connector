@@ -228,7 +228,7 @@ const COMMANDS: CommandDoc[] = [
     usage: '/system <status|restart|update|confirm|rollback|cancel|manage|takechat>',
     summary: 'runtime lifecycle: status, restarts, connector and setup updates, optional components',
     details:
-      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update all` drains agents and moves the setup image through the updater sidecar. `confirm` and `rollback` close the profile trial; rollback does not move the image. `manage` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
+      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update all` drains agents and moves the setup checkout through the updater service. `confirm` and `rollback` close the profile trial; rollback does not move the checkout or the DSH install. `manage` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
     examples: ['/system status', '/system restart now', '/system update connector'],
     surfaces: ['control'],
     group: 'system',
@@ -238,7 +238,7 @@ const COMMANDS: CommandDoc[] = [
     usage: '/firewall [allow <port>]',
     summary: 'check whether ufw lets the web UI through, and allow it from here',
     details:
-      'Native installs only: a systemd service is gated by ufw, while a published Docker port is not, so docker deployments get "nothing to do". Reads the ports the deployment serves from its .env and names the network from the interface carrying DSH_BIND_IP. `allow <port>` is admin only and accepts only a port this deployment already serves — the updater runs the fixed `ufw allow from <network> to any port <port> proto tcp`, never a command from the chat.',
+      'The runtime is a systemd service, so ufw gates it directly. Reads the ports the deployment serves from its .env and names the network from the interface carrying DSH_BIND_IP. `allow <port>` is admin only and accepts only a port this deployment already serves — the updater runs the fixed `ufw allow from <network> to any port <port> proto tcp`, never a command from the chat.',
     examples: ['/firewall', '/firewall allow 4310'],
     surfaces: ['control'],
     group: 'system',
@@ -295,9 +295,9 @@ const COMMANDS: CommandDoc[] = [
   {
     path: 'system update all',
     usage: '/system update all [--i-know-versions-are-incompatible]',
-    summary: 'drain sessions, then update setup through the updater sidecar',
+    summary: 'drain sessions, then update the setup through the updater service',
     details:
-      'Blocks new requests, waits until every agent (web UI and Telegram) is idle, then asks the updater to apply the latest compatible setup tag, rebuild the image, and install the matching connector. Crossing a product major or DSH line requires the explicit flag. Once accepted there is no Cancel; a failed health gate rolls back automatically. If the updater token is empty, this only prints the host commands.',
+      'Blocks new requests, waits until every agent (web UI and Telegram) is idle, then asks the updater to check out the latest compatible setup tag, install the matching DSH and connector, and restart. Crossing a product major or DSH line requires the explicit flag. Once the updater accepts, the card button is gone but `/system cancel` still stops the job; a failed health gate rolls back automatically. If the updater token is empty, this only prints the host commands.',
     surfaces: ['control'],
     group: 'system',
   },

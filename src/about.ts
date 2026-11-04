@@ -2,7 +2,7 @@
  * Version and compatibility information, for `/about` and for support.
  *
  * The connector's own version comes from its package manifest. The runtime
- * version is best-effort: our Docker image exports `DSH_RUNTIME_VERSION`, and a
+ * version is best-effort: the deployment may export `DSH_RUNTIME_VERSION`, and a
  * direct install can still resolve the harness packages.
  *
  * @module dsh-telegram-connector/about
@@ -35,7 +35,7 @@ export function supportedRange(): string | undefined {
   return manifest().peerDependencies?.[PEER_PACKAGE]
 }
 
-/** Environment first (the image sets it), then the installed peer package. */
+/** Environment first (the unit may set it), then the installed peer package. */
 export function runtimeVersion(): string | undefined {
   const fromEnv = process.env.DSH_RUNTIME_VERSION
   if (fromEnv !== undefined && fromEnv.trim().length > 0) return fromEnv.trim()

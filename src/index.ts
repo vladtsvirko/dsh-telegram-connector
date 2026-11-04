@@ -412,7 +412,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const botPool = new BotPool(botHandles)
   const supervisorUrl = process.env.DSH_SUPERVISOR_URL ?? ''
   const supervisorToken = process.env.DSH_SUPERVISOR_TOKEN ?? ''
-  // Both come from the container entrypoint; without them this runtime cannot
+  // Both come from the entrypoint; without them this runtime cannot
   // restart itself, and the commands say so instead of failing obscurely.
   const supervisor = supervisorUrl.length > 0 && supervisorToken.length > 0
     ? new SupervisorClient(supervisorUrl, supervisorToken)
@@ -422,7 +422,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const pollTimeoutSeconds = config.pollTimeoutSeconds ?? 25
   const reconcileIntervalMs = (config.reconcileIntervalSeconds ?? 60) * 1000
   const dshHome = process.env.DSH_HOME ?? process.env.HOME ?? process.cwd()
-  // DSH_WORKSPACE is the directory the runtime itself works in (set by the image);
+  // DSH_WORKSPACE is the directory the runtime itself works in (set by the unit);
   // falling back to $DSH_HOME/workspace puts user files in the state volume
   const workspaceRoot = config.workspaceRoot !== undefined && config.workspaceRoot.length > 0
     ? config.workspaceRoot
@@ -491,7 +491,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return false
   }
 
-  /** Diagnostics go to stderr: the harness logger is not visible in container logs. */
+  /** Diagnostics go to stderr: the harness logger is not visible in the service log. */
   const stderr = (line: string): void => {
     process.stderr.write(`[dsh-telegram-connector] ${line}\n`)
   }
@@ -1287,8 +1287,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           '**setup updates are not wired here** — `DSH_UPDATER_TOKEN` is empty.',
           '',
           'on the host:',
-          '`./update.sh --self-check` — latest compatible setup tag',
-          '`./update.sh --self` — apply it (health gate and rollback)',
+          '`./update.sh --check` — latest compatible setup tag',
+          '`./update.sh --apply` — apply it (health gate and rollback)',
         ].join('\n'),
       )
     }
@@ -1302,7 +1302,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (!response.ok) throw new Error(`updater answered ${String(response.status)}`)
       health = await response.json() as { canApply?: boolean; tag?: string | null }
       if (health.canApply !== true) {
-        return reply(message, 'the updater is running but cannot apply yet — check `docker compose logs updater`.')
+        return reply(message, 'the updater is running but cannot apply yet — check `journalctl -u dsh-updater.service`.')
       }
       const target = await updaterFetch('/target', { mode })
       if (target.status === 404) {
@@ -1576,7 +1576,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // The card's ✖ button was the only way out of a pending update; a card
       // deleted from the chat left the bot refusing every message.
       if (bindings.update === undefined) return reply(message, 'no update is pending.')
-      // The sidecar is the side that is actually running update.sh: a local card
+      // The updater service is the side that is actually running update.sh: a local card
       // reset alone leaves a build running and the updater's only job slot busy.
       const stopped = await cancelUpdaterJob()
       await finishUpdateStatus(stopped
@@ -1606,7 +1606,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return reply(message, 'usage: `/system <status|restart|update|confirm|rollback|cancel|manage|takechat>`')
   }
 
-  /** Ask the sidecar to stop its running job; true when it had one. */
+  /** Ask the updater service to stop its running job; true when it had one. */
   const cancelUpdaterJob = async (): Promise<boolean> => {
     if (updaterToken.length === 0) return false
     try {
@@ -1907,7 +1907,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (supervisor === undefined) {
       return reply(
         message,
-        'this runtime has no supervisor — reinstall the connector from the host (`docker compose run --rm dsh reset-plugin`).',
+        'this runtime has no supervisor — reinstall the connector from the host (`sudo ./update.sh --tg-connector`).',
       )
     }
     try {
@@ -2058,7 +2058,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       const armed = await supervisor.arm()
       if (armed.firstArm !== true) {
-        // A container restart inside the window: remind once, without pretending
+        // A service restart inside the window: remind once, without pretending
         // a new trial just started.
         if (typeof armed.deadline === 'number') {
           const label = status.lastEvent?.kind === 'update' ? '**update trial**' : 'trial'
@@ -2580,7 +2580,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    *   client  — a live agent in this runtime that no topic claims: a web UI
    *             tab, or a handle an earlier failure leaked. A restart clears it.
    *   process — nothing in this runtime holds it, so a second runtime over the
-   *             same data directory does (native service beside Docker). A
+   *             same data directory does (a second checkout). A
    *             restart of this one changes nothing.
    */
   const holderOf = (sessionId: string, ownThreadId: number): { kind: 'topic' | 'client' | 'process'; threadId?: number } => {
@@ -5173,7 +5173,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         const me = await bot.client.getMe()
         bot.id = me.id
         bot.username = me.username
-        // stderr, not the harness logger: this is what `docker compose logs` shows
+        // stderr, not the harness logger: this is what `journalctl -u dsh.service` shows
         stderr(`${bot.label} connected as @${me.username ?? me.id}`)
       } catch (error) {
         bot.disabled = true

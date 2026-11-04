@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1-rc.5-0.9.0
+
+### Changed
+
+- The bot's help and error text describes the systemd deployment: `update all`
+  moves the setup checkout through the updater service (not an image through a
+  sidecar), rollback does not move the checkout or the DSH install, and the
+  firewall note no longer compares a published Docker port.
+- A held session names the other process and says `sudo systemctl stop
+  dsh.service`; the no-supervisor and updater-unreachable hints point at
+  `journalctl -u dsh-updater.service` and `update.sh --tg-connector`.
+
 ## 0.2.1-rc.5-0.8.2
 
 Maintenance release; no connector change. Aligned with the setup fix that makes
