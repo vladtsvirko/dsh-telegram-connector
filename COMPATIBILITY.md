@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.10.3 | `0.2.1-rc.5` | tested | update confirmation card (target + running sessions), pending card expires after a restart |
+| 0.2.1-rc.5-0.10.4 | `0.2.1-rc.5` | tested | maintenance: no connector code change; aligned with the setup release that fixes the `apple-hig` skill and its release notes |
+| 0.2.1-rc.5-0.10.3 | `0.2.1-rc.5` | previous | update confirmation card (target + running sessions), pending card expires after a restart |
 | 0.2.1-rc.5-0.10.2 | `0.2.1-rc.5` | previous | take-over confirmation, actionable publisher error, explained unconfirmed delivery, update card lifecycle |
 | 0.2.1-rc.5-0.10.1 | `0.2.1-rc.5` | previous | maintenance: test-only setup fix |
 | 0.2.1-rc.5-0.10.0 | `0.2.1-rc.5` | previous | maintenance: aligned with the setup that removes Docker and runs Penpot on Podman |

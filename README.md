@@ -157,7 +157,7 @@ allowBuilds:
 YAML
 
 # 2. add the plugin at an exact tag — the one equal to the setup VERSION
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.10.3
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.10.4
 
 # 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'

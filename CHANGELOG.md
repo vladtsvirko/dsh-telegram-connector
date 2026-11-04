@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.10.4
+
+Maintenance tag for the setup release; no connector code changed. The setup
+pins this tag so the `apple-hig` skill fixes ship with a matching connector.
+
 ## 0.2.1-rc.5-0.10.3
 
 ### Changed
