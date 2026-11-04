@@ -157,7 +157,7 @@ allowBuilds:
 YAML
 
 # 2. add the plugin at an exact tag — the one equal to the setup VERSION
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.9.5
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.10.0
 
 # 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
@@ -462,7 +462,7 @@ data: /srv/dsh/data · this runtime (native)
 ```
 
 The `data` line names a second live runtime over the same directory
-(`⚠ another docker runtime holds it (pid …, since …)`) — the one failure a
+(`⚠ another runtime holds it (pid …, since …)`) — the one failure a
 restart cannot clear, because that process keeps the kernel lock on every
 session it has open.
 
@@ -474,7 +474,7 @@ session it has open.
 | bot ignores plain messages in topics | privacy mode is on — BotFather → `/setprivacy` → Disable |
 | `could not create the session topic` | bot is not admin, or lacks *Manage Topics* |
 | `/sync` reports `adopted 0` | every session is archived, already bound to a live topic, or the workspace id does not match — check `/archived` and the dashboard |
-| `this session is held by another client` | something owns the session's write handle; the refusal says which. **Another topic of this group** already runs it — send there, or `/forget` this binding (no restart helps). **A web UI tab** — the message is queued and **Take over** restarts the runtime, releasing every handle. **Another dsh process** over the same data directory — stop it first (`docker compose down` or `systemctl stop dsh.service`); a restart of this runtime cannot clear its lock, and `./install.sh --doctor` names it |
+| `this session is held by another client` | something owns the session's write handle; the refusal says which. **Another topic of this group** already runs it — send there, or `/forget` this binding (no restart helps). **A web UI tab** — the message is queued and **Take over** restarts the runtime, releasing every handle. **Another dsh process** over the same data directory — stop it first (`sudo systemctl stop dsh.service`); a restart of this runtime cannot clear its lock, and `./install.sh --doctor` names it |
 | nothing happens after adding the plugin | token is empty — the connector logs a warning and stays idle |
 | group title never follows a rename | bot lacks *Change Info* in that group |
 | `this runtime exposes no plugin manager` | the profile is not base-backed, or `@deepseek-ai/dsh-plugin-manager` is not mounted |

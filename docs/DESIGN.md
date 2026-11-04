@@ -445,7 +445,7 @@ and deadline.
   package-manager-free rollback.
 - If the supervisor itself cannot start (bad image, unwritable `/data`), nothing
   here helps; that is what the container healthcheck and the host are for. If the
-  container, updater or Docker cannot start, Telegram cannot recover it.
+  container runtime or updater cannot start, Telegram cannot recover it.
 
 ## 13. Time
 

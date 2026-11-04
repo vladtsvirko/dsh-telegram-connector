@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.10.0
+
+Maintenance release; no connector code change. Aligned with the setup that
+removes Docker: the agent gets rootless Podman, Penpot runs on rootful Podman.
+
 ## 0.2.1-rc.5-0.9.5
 
 ### Added
