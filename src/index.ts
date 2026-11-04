@@ -795,8 +795,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const where = workspace === undefined
       ? `chat \`${item.chatId}\``
       : `**${workspace.title}**${session?.title === undefined ? '' : ` · topic “${session.title}”`}`
-    const kind = reason.includes('outcome unknown') || reason.includes('process stopped')
-      ? 'delivery could not be confirmed'
+    const unconfirmed = reason.includes('outcome unknown') || reason.includes('process stopped')
+    const kind = unconfirmed
+      ? 'could not be confirmed'
       : reason.includes('queue full')
         ? 'was dropped because the queue was full'
         : reason.includes('no bot')
@@ -808,7 +809,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       `⚠️ **a message ${kind}** in ${where}`,
       snippet.length > 0 ? `> ${snippet}${clean.length > 160 ? '…' : ''}` : '',
       suppressed > 0 ? `_and ${suppressed} earlier item(s) in this group since the last notice_` : '',
-      '_the full text is in the session transcript — resend it there if it matters._',
+      unconfirmed
+        ? 'Telegram did not acknowledge it before dsh stopped (usually a restart or update). It may or may not have arrived — check the chat before resending; the full text is in the session transcript.'
+        : '_the full text is in the session transcript — resend it there if it matters._',
     ]
     await sendTo(bindings.controlChatId, 0, lines.filter((line) => line.length > 0).join('\n'), 'control')
   }
@@ -1094,7 +1097,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const blockers = drainState?.blockers ?? []
     const lines = [`🔄 **setup update** \`${update.from} → ${update.target}\``]
     if (update.phase === 'accepted') {
-      lines.push('🚀 updater accepted — the bot will restart; the updater reports the result.', '`/system cancel` can still stop the job until it finishes.')
+      lines.push('🚀 updater accepted — the runtime restarts now; the updater reports the result.', 'The cancel button is gone; `/system cancel` no longer applies after acceptance.')
       return lines.join('\n')
     }
     lines.push(
@@ -1225,7 +1228,21 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           logger.warn(`dsh-telegram-connector: cannot update drain status: ${String(error)}`)
         })
       }
-      if (running.length === 0) return
+      if (running.length === 0) {
+        const update = bindings.update
+        if (update !== undefined && update.messageId !== undefined) {
+          await botPool.waitEdit(botPool.main, update.chatId)
+          await client.editMessageText(
+            update.chatId,
+            update.messageId,
+            toTelegramHtml(`🔄 **setup update** \`${update.from} → ${update.target}\`\n\nno active sessions — handing over to the updater; cancel is no longer available.`),
+            { parseMode: 'HTML', replyMarkup: { inline_keyboard: [] } },
+          ).catch((error: unknown) => {
+            logger.warn(`dsh-telegram-connector: cannot update idle drain status: ${String(error)}`)
+          })
+        }
+        return
+      }
       await pause(2000)
     }
   }
@@ -1439,6 +1456,40 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * released, and the journaled prompt is replayed on boot.
    */
   const handleTakeOver = async (query: TgCallbackQuery): Promise<void> => {
+    const action = query.data ?? 'own:take'
+    if (action === 'own:take:cancel') {
+      await client.answerCallbackQuery(query.id, 'cancelled').catch(() => undefined)
+      return
+    }
+    if (action !== 'own:take:confirm') {
+      const card = query.message
+      if (card === undefined) {
+        await client.answerCallbackQuery(query.id, 'this card has no message').catch(() => undefined)
+        return
+      }
+      await client.answerCallbackQuery(query.id, 'confirmation required').catch(() => undefined)
+      await client.sendMessage(
+        card.chat.id,
+        toTelegramHtml([
+          '↪️ **take over this session?**',
+          '',
+          'A web UI tab owns the session write handle. The only way to release it is to **restart dsh** — that interrupts **every** running session and tool call, not only this one.',
+          '',
+          'The queued prompt is delivered after the restart. If you only need this session, close the web tab instead and send the prompt again.',
+        ].join('\n')),
+        {
+          parseMode: 'HTML',
+          ...(card.message_thread_id === undefined ? {} : { threadId: card.message_thread_id }),
+          replyMarkup: {
+            inline_keyboard: [[
+              { text: '♻️ Restart dsh and take over', callback_data: 'own:take:confirm' },
+              { text: 'Cancel', callback_data: 'own:take:cancel' },
+            ]],
+          },
+        },
+      ).catch((error: unknown) => stderr(`cannot post the take-over confirmation: ${String(error)}`))
+      return
+    }
     if (supervisor === undefined) {
       await client.answerCallbackQuery(query.id, 'no supervisor here — restart the runtime from the host').catch(() => undefined)
       return
@@ -4155,7 +4206,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             parseMode: 'HTML',
             ...(message.message_thread_id === undefined ? {} : { threadId: message.message_thread_id }),
             ...(queued && diagnosis.takeover
-              ? { replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over', callback_data: 'own:take' }]] } }
+              ? { replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over (restarts dsh)', callback_data: 'own:take' }]] } }
               : {}),
           },
         ).catch((sendError: unknown) => stderr(`cannot post the take-over card: ${String(sendError)}`))
@@ -5290,13 +5341,22 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         stderr(`${bot.label} connected as @${me.username ?? me.id}`)
       } catch (error) {
         bot.disabled = true
-        stderr(`${bot.label} token is unusable: ${String(error)}`)
+        const reason = error instanceof TelegramApiError
+          ? `Telegram rejected it (${String(error.errorCode ?? 'error')}: ${error.description})`
+          : `Telegram could not be reached (${error instanceof Error ? error.message : String(error)})`
+        stderr(`${bot.label} token is unusable: ${reason}`)
         if (bindings.controlChatId !== undefined && !reportedInvalid.has(bot.label)) {
           reportedInvalid.add(bot.label)
           await sendTo(
             bindings.controlChatId,
             0,
-            `⚠️ ${bot.label}'s token is unusable — check \`DSH_TELEGRAM_PUBLISHER_TOKENS\`.`,
+            [
+              `⚠️ **${bot.label}** token is unusable: ${reason}.`,
+              '',
+              'That bot is ignored until dsh restarts, so messages are paced on the main bot only.',
+              'Check the token with @BotFather (it must be the bot HTTP API token, not a chat id),',
+              'replace it in `DSH_TELEGRAM_PUBLISHER_TOKENS`, then restart dsh.',
+            ].join('\n'),
             'control',
           )
         }
@@ -5781,7 +5841,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             parseMode: 'HTML',
             ...(runtime.threadId === 0 ? {} : { threadId: runtime.threadId }),
             ...(queued && diagnosis.takeover
-              ? { replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over', callback_data: 'own:take' }]] } }
+              ? { replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over (restarts dsh)', callback_data: 'own:take' }]] } }
               : {}),
           },
         ).catch((error: unknown) => stderr(`cannot post the take-over card: ${String(error)}`))

@@ -87,6 +87,35 @@ describe('callback buttons require the admin account', () => {
     )
   })
 
+  it('asks before taking over, and names the cost', async () => {
+    const harness = await start()
+    press(harness, 'own:take', ADMIN_ID)
+    await harness.waitFor(() => answers(harness).includes('confirmation required'), 'confirmation')
+    const card = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('take over this session')),
+      'confirmation card',
+    )
+    expect(callText(card)).toContain('interrupts <b>every</b> running session')
+    expect(JSON.stringify(card.params.reply_markup)).toContain('own:take:confirm')
+    expect(JSON.stringify(card.params.reply_markup)).toContain('own:take:cancel')
+  })
+
+  it('cancels take-over without restarting', async () => {
+    const harness = await start()
+    press(harness, 'own:take:cancel', ADMIN_ID)
+    await harness.waitFor(() => answers(harness).includes('cancelled'), 'cancelled')
+    expect(answers(harness)).not.toContain('restarting…')
+  })
+
+  it('lets the admin confirm take-over, reaching the supervisor path', async () => {
+    const harness = await start()
+    press(harness, 'own:take:confirm', ADMIN_ID)
+    await harness.waitFor(
+      () => answers(harness).some((text) => text === 'no supervisor here — restart the runtime from the host'),
+      'handler reached',
+    )
+  })
+
   it('lets the admin through to the real handler', async () => {
     const harness = await start()
     // No supervisor in the harness, so the handler's own refusal is the proof

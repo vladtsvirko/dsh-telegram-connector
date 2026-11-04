@@ -41,7 +41,7 @@ export function isOwnershipError(error: unknown): boolean {
  * enough when a tab was closed without releasing the handle.
  */
 export const OWNERSHIP_HINT =
-  'this session is held by another client (a web UI tab). If no tab is open, send `/system restart now` to clear it — a restart releases every session handle. `/new` in General also works for a fresh session.'
+  'this session is held by another client (a web UI tab). **Take over** asks for confirmation, then restarts dsh and releases every session handle — it interrupts every running task, not only this one. `/system restart now` does the same without the prompt. `/new` in General also works for a fresh session.'
 
 /** The same bot holds this session in another topic: no restart, use that topic. */
 export function heldByAnotherTopic(threadId: number): string {

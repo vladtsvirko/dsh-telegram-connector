@@ -157,7 +157,7 @@ allowBuilds:
 YAML
 
 # 2. add the plugin at an exact tag — the one equal to the setup VERSION
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.10.1
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.10.2
 
 # 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
@@ -361,11 +361,11 @@ session store — there is no export step and no second copy of a conversation.
   are mirrored into the topic (one-way) and answers appear in both places.
 - **Handing one session over.** A session has one live agent. If a browser tab
   holds the session's write handle, a Telegram prompt is refused, the message is
-  journaled, and the bot offers **↪️ Take over**. That button restarts the
-  runtime, which releases *every* handle (not just this session's), then delivers
-  the queued prompt. Closing the tab is the cheaper move; `/system restart now`
-  does the same thing by hand.
-- **Forcing a handover.** Both `/system restart now` and the **Take over**
+  journaled, and the bot offers **↪️ Take over (restarts dsh)**. The button asks
+  for confirmation, then restarts the runtime, which releases *every* handle
+  (not just this session's) and delivers the queued prompt. Closing the tab is
+  the cheaper move; `/system restart now` does the same thing by hand.
+- **Forcing a handover.** Both `/system restart now` and the confirmed **Take over**
   button are admin-only: they restart the whole runtime. Once the tab releases
   the session, any allowlisted member can continue it in Telegram — sessions are
   shared per topic, not per user.
@@ -474,7 +474,7 @@ session it has open.
 | bot ignores plain messages in topics | privacy mode is on — BotFather → `/setprivacy` → Disable |
 | `could not create the session topic` | bot is not admin, or lacks *Manage Topics* |
 | `/sync` reports `adopted 0` | every session is archived, already bound to a live topic, or the workspace id does not match — check `/archived` and the dashboard |
-| `this session is held by another client` | something owns the session's write handle; the refusal says which. **Another topic of this group** already runs it — send there, or `/forget` this binding (no restart helps). **A web UI tab** — the message is queued and **Take over** restarts the runtime, releasing every handle. **Another dsh process** over the same data directory — stop it first (`sudo systemctl stop dsh.service`); a restart of this runtime cannot clear its lock, and `./install.sh --doctor` names it |
+| `this session is held by another client` | something owns the session's write handle; the refusal says which. **Another topic of this group** already runs it — send there, or `/forget` this binding (no restart helps). **A web UI tab** — the message is queued; **Take over** asks, then restarts dsh and releases every handle. **Another dsh process** over the same data directory — stop it first (`sudo systemctl stop dsh.service`); a restart of this runtime cannot clear its lock, and `./install.sh --doctor` names it |
 | nothing happens after adding the plugin | token is empty — the connector logs a warning and stays idle |
 | group title never follows a rename | bot lacks *Change Info* in that group |
 | `this runtime exposes no plugin manager` | the profile is not base-backed, or `@deepseek-ai/dsh-plugin-manager` is not mounted |

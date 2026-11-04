@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.1-rc.5-0.10.2
+
+### Fixed
+
+- **Take over no longer restarts dsh silently.** The button now asks for
+  confirmation and says plainly that the restart interrupts every running
+  session and tool call, not only the held one. Cancel is a separate button.
+  The API does not expose a per-session disposer to the connector, so a global
+  restart is still the only way to release a web UI handle.
+- **An unusable publisher token names the reason.** The notice now includes
+  Telegram's error (for example `401: Unauthorized`), says the bot is ignored
+  until restart, and tells the user to check the token with @BotFather and
+  replace it in `DSH_TELEGRAM_PUBLISHER_TOKENS`.
+- **"Delivery could not be confirmed" explains itself.** The notice now says
+  Telegram did not acknowledge before dsh stopped (usually a restart/update),
+  that the message may or may not have arrived, and to check the chat before
+  resending.
+- **The update card loses its Cancel button before the hand-over.** When no
+  session is draining, the card says so and drops the keyboard immediately
+  instead of offering a cancel that cannot work; the accepted state says the
+  cancel button is gone.
+
 ## 0.2.1-rc.5-0.10.1
 
 Maintenance release; no connector change. Aligned with the setup 0.10.1

@@ -167,7 +167,7 @@ button runs the same command you could type, so permissions are identical:
 | bot chat (`/dashboard`) | Status · Web link · Update setup · Restart · Plugins · Components |
 
 The **flow cards** are confirmation prompts: trial Commit/Roll back, the update
-card's ✖ (while draining), component Enable/Disable/Port, and Take over for a
+card's ✖ (while draining), component Enable/Disable/Port, and Take over (confirmed; restarts dsh) for a
 held session. They are admin-only, like their commands.
 
 ## Workspace dashboard (General or the `/dashboard` topic)
