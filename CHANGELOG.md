@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.10.6
+
+Maintenance release; no connector change. Aligned with the setup fix for Podman
+DNS (`aardvark-dns`) and `.env` ownership.
+
 ## 0.2.1-rc.5-0.10.5
 
 Maintenance release; no connector change. Aligned with the setup fix that reports
