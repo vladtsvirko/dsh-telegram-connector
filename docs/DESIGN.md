@@ -73,8 +73,10 @@ Renames are never confirmed: a control panel does not argue with its backend.
 ```
 
 - `chatId: 0` means "known workspace, no group yet".
-- Session keys are `<chatId>:<threadId>`; the General topic (`threadId = 0`) is
-  never a session.
+- Session keys are `<chatId>:<threadId>`. General (`threadId = 0`) is the
+  dashboard fallback, **not** permanently special: after `/setsystem` moves the
+  dashboard to an empty topic, a plain message in General starts an ordinary
+  session like any other topic.
 - `seenThreads` exists because Telegram has no "list topics" method. It is the
   bot's only inventory, and it is why `/dangerous cleanup` can only remove
   topics the group has shown since the bot joined.
@@ -94,9 +96,10 @@ setting). So the flow is deliberately asymmetric:
 | Topics (sessions) | the bot (`createForumTopic`) from `/new`, or you by hand |
 
 When the bot is added through the link, Telegram delivers `/start workspace_<id>`
-inside the new group; that message is the binding handshake. Binding a group
-clears whatever session topics the group held before, so a group always maps to
-exactly one workspace.
+inside the new group; that message is the binding handshake. A bound group
+cannot be rebound: binding a different workspace is refused, and the group must
+be `/unbind`-ed first (which deletes its session topics), so a group always maps
+to exactly one workspace.
 
 Group requirements: **Topics enabled**, bot **admin** with *Manage Topics* (and
 *Change Info* for title sync), **privacy mode off** so plain topic messages are
@@ -105,20 +108,24 @@ message, never a retry storm.
 
 ## 5. Commands
 
-The full reference lives in the README; the shape is what matters here.
+The full reference is [COMMANDS.md](COMMANDS.md) (and `/man` in the bot); the
+shape is what matters here.
 
 - **Control chat** — `/workspaces`, `/workspace new|link|rm`, `/plugins`,
-  `/plugin info|add|enable|disable|remove|confirm|cancel|approve`, `/status`.
+  `/plugin info|add|enable|disable|remove|confirm|cancel|approve`, `/status`,
+  `/about`, `/timezone`, `/reactions`, `/web`, `/firewall`, `/system …`,
+  `/schedules` (stub).
 - **Dashboard** — `/new`, `/sessions`, `/status`, `/setsystem`, `/sync`,
   `/list archived`, `/unarchive`, `/rename`, `/model`, `/close`, `/reopen`,
   `/forget`, `/unbind`, `/dangerous cleanup`.
-- **Session topic** — plain text is a turn; `/help` and `/man` are the only
-  accepted commands (you need to be able to ask where the commands are). Every
-  management command takes the session as an argument in the dashboard, so a
+- **Session topic** — plain text is a turn. `/help`, `/man`, `/commands`,
+  `/skills`, `/<skill>`, `/run`, `/skill` and host commands are accepted;
+  management commands take the session as an argument in the dashboard, so a
   conversation never has to be command-aware.
 
 `/setsystem` can only claim a topic that holds no session, which is what lets a
-hand-made empty topic become the dashboard. General is the fallback.
+hand-made empty topic become the dashboard. General is the fallback until then;
+after `/setsystem`, General becomes an ordinary session topic.
 
 ### Plugin surface
 
@@ -225,13 +232,16 @@ update → allowlist → private? control
 
 - One message per turn, edited in place, throttle `editIntervalMs` (1.2 s).
 - Rendering prefers Telegram **rich messages** (Bot API 10.1+): the agent's
-  Markdown is passed to Telegram's own parser, so headings, lists and tables
-  render natively. If the API or the content rejects a rich message, the
-  connector falls back to the classic HTML subset, where a table becomes a
-  monospaced `<pre>` table (or a key/value list when it is too wide). A final
-  400 falls back to plain text, never to raw Markdown.
-- Splitting is fence-aware and table-aware, ~3800 chars. A split inside a table
-  repeats its header and separator, so each chunk still renders as a table.
+  Markdown is passed to Telegram's own parser, so headings and lists render
+  natively. Tables are the exception — not every client renders a GFM table, and
+  one that cannot shows raw pipes, so `toRichMarkdown` rewrites every table into
+  a fenced monospaced block, or a bullet list when it does not fit a phone. If
+  the API or the content rejects a rich message, the connector falls back to the
+  classic HTML subset, where the same table is a `<pre>` block (or a key/value
+  list). A final 400 falls back to plain text, never to raw Markdown.
+- Splitting is fence-aware and table-aware, `SAFE_LENGTH` = 3400 chars (the HTML
+  fallback must still fit Telegram's 4096). A split inside a table repeats its
+  header and separator, so each chunk still renders as a table.
 - Agent context: every Telegram session gets the `telegram-surface` system
   prompt section, and the connector registers the `telegram-rich-text` runtime
   skill from `skills/telegram-rich-text/SKILL.md`. The section tells the model
@@ -298,7 +308,14 @@ and directories.
 
 ## 10. Security
 
-- Allowlist only; empty refuses everyone.
+- Allowlist for use, one admin account for change: `allowedUserIds` decides who
+  can talk to the bot, `adminUserId` (control-chat owner when unset) decides who
+  can restart, update, install plugins, create workspaces or bind groups. An
+  empty allowlist refuses everyone.
+- Inline callbacks are admin-gated like their typed equivalents: trial
+  Commit/Roll back, component Enable/Disable/Port, the update card's ✖ and Take
+  over all check `adminUserId`. The allowlist only decides who may talk to the
+  agent; a button that changes the deployment is an admin action.
 - The bot token comes from the environment, never from `cordis.patch.yml`.
 - The bot is a group admin and can delete topics: `/dangerous cleanup` requires
   an explicit `confirm`, and `/forget` never deletes anything.
@@ -306,8 +323,8 @@ and directories.
   scripts run with the runtime's permissions. `/plugin add` inspects first and
   installs only after an explicit `/plugin confirm`; blocked install scripts are
   named and only `/plugin approve` allows exactly those names; `/plugin remove`
-  confirms too. Enable/disable is immediate and reversible. The connector
-  refuses to disable or remove its own bundle.
+  confirms too. Enable/disable is confirmed like the rest, and reversible. The
+  connector refuses to disable or remove its own bundle.
 
 ## 11. Telegram constraints
 
@@ -318,7 +335,7 @@ and directories.
 - Topic names ≤ 128 chars, no threads inside topics, 4096 chars per classic
   message, ~20 messages/minute per group, ~1 edit/s per chat. Rich messages
   allow 32768 chars, 500 blocks and 20 table columns; the connector still splits
-  at ~3800 so the HTML fallback always fits.
+  at 3400 so the HTML fallback always fits.
 - Reactions are a fixed emoji set, one per bot per message; a bot without the
   right to react simply gets no reaction (the failure is logged once per chat).
 - Deleting a topic destroys its history; closing preserves it read-only.
@@ -436,7 +453,7 @@ Three separate concerns, three separate mechanisms:
 
 | Concern | Mechanism |
 |---|---|
-| Display a deadline or reminder | `<tg-time unix="…" format="r|t">` — the client renders it in the reader's zone |
+| Display a deadline or reminder | `<tg-time unix="…" format="r\|t">` — the client renders it in the reader's zone |
 | Interpret a time the user types | one IANA zone stored in `bindings.json` (`/timezone`, `$DSH_TIMEZONE`, default UTC) |
 | Store and compute | epoch milliseconds / UTC everywhere, including supervisor state and logs |
 

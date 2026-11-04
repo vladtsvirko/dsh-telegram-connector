@@ -28,13 +28,15 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 - **Topics are sessions.** Create a topic by hand and start talking, or let the
   bot create one per session with `/new`. Topics are never silently re-assigned.
 - **Web ↔ phone continuity.** `/sync` adopts sessions created in the web UI,
-  creates a topic for each and replays the tail of the conversation. Renaming,
-  archiving and unarchiving round-trip in both directions.
+  creates a topic for each and replays the tail of the conversation. Renaming
+  round-trips both ways, and closing a topic archives its session. Archiving
+  from the web UI is **not** mirrored: run `/close` for that.
 - **Streaming replies.** One message per turn, edited in place as the model
-  writes. Telegram rich messages render Markdown tables, headings and lists
-  natively; if the API rejects them, the connector falls back to an HTML table
-  (or a key/value list) and finally to plain text. Splitting is fence- and
-  table-aware.
+  writes. Telegram rich messages render Markdown headings and lists natively;
+  **tables are rewritten before sending** — a monospaced code block when they
+  fit, a bullet list when they do not — because not every Telegram client
+  renders a GFM table. If the API rejects rich content, an HTML subset takes
+  over and finally plain text. Splitting is fence- and table-aware.
 - **Read and streaming reactions.** The bot reacts 👀 to a prompt when it reads
   it, and ✍ to a reply while it is still being edited; the streaming reaction is
   removed when the turn settles. Media without a caption is staged and marked
@@ -66,8 +68,9 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   prompt, because commands do not take attachments.
 - **Telegram-native formatting.** Every Telegram session gets a system-prompt
   section that tells the model to use Telegram rich Markdown; the full cheat
-  sheet is a runtime skill (`telegram-rich-text`). Tables, headings, lists,
-  details, math, footnotes and `<tg-time>` render natively.
+  sheet is a runtime skill (`telegram-rich-text`). Headings, lists, details,
+  math, footnotes and `<tg-time>` render natively; tables are converted to a
+  code block or a bullet list on the way out (see above).
 - **Commands live in one place.** A dashboard topic holds `/new`, `/sync`,
   `/close`, `/rename`, `/model` and friends; session topics accept plain text.
 - **Plugins from the chat.** `/plugins` lists the profile's bundles, `/plugin add`
@@ -93,11 +96,11 @@ bindings and the plugin surface, `tsc --noEmit` clean.
 | Part | State |
 |---|---|
 | Bot API client (`src/telegram.ts`) | done — topics, titles, close/reopen, deletes |
-| Rendering (`src/render.ts`) | done — rich Markdown with native tables, HTML/plain fallbacks, fence- and table-aware split |
+| Rendering (`src/render.ts`) | done — rich Markdown, tables as a code block or bullets, HTML/plain fallbacks, fence- and table-aware split |
 | Telegram agent context (`src/telegram-prompt.ts`) | done — per-session prompt section + `telegram-rich-text` skill |
 | Bindings (`src/bindings.ts`) | done — atomic JSON, v2 schema |
 | Control plane, groups, topics, streaming | done |
-| Sync: workspace ⇄ group, session ⇄ topic, archive ⇄ close | done |
+| Sync: workspace ⇄ group, session ⇄ topic, topic close ⇄ session archive | done (an archive made in the web UI is not mirrored) |
 | `/sync` adoption + history replay | done |
 | Plugins surface (`src/plugins.ts`) | done — list, info, add with confirm, enable/disable, remove |
 | Automation surface | not implemented — `/schedules` is a stub |
@@ -128,7 +131,8 @@ Telegram:
 ```sh
 git clone https://github.com/vladtsvirko/dsh-tg-docker-setup
 cd dsh-tg-docker-setup
-./install.sh            # asks for the bot token, the model and the key
+./install.sh            # asks for mode, port, bind address, provider, key,
+                        # bot token, allowed ids, admin id, git author
 ```
 
 `./install.sh --check` prints the whole plan and changes nothing. The setup
@@ -144,8 +148,8 @@ allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
 
-# 2. add the plugin at an exact tag
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.0.0
+# 2. add the plugin at an exact tag — the one equal to the setup VERSION
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.6.5
 
 # 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
@@ -165,7 +169,13 @@ Environment:
 | `DSH_TELEGRAM_BOT_TOKEN` | main bot token (polling, buttons, topic creation) |
 | `DSH_TELEGRAM_PUBLISHER_TOKENS` | optional comma-separated send-only bot tokens |
 | `DSH_TIMEZONE` | default zone for parsing typed times (`/timezone` overrides) |
+| `DSH_ADMIN_USER_ID` | the one account allowed to change the deployment; unset falls back to the control-chat owner |
+| `DSH_UPDATER_TOKEN` / `DSH_UPDATER_URL` | bearer token and endpoint for `/system update all`, `manage`, `firewall`. The entrypoint/installer sets the token; the URL defaults to `http://updater:8787` (the native install writes `http://127.0.0.1:8787`) |
 | `DSH_SUPERVISOR_URL` / `DSH_SUPERVISOR_TOKEN` | set by the Docker entrypoint; absent outside it |
+| `DSH_HOME` | state directory (`bindings.json`, `update/`); defaults to the runtime's home |
+| `DSH_WORKSPACE` | workspace root used when `workspaceRoot` is unset |
+| `DSH_PORT` | used to build the `/web` link; defaults to `4310` |
+| `DSH_PROVIDER` / `DSH_PROVIDER_API_KEY_ENV` | default provider for new sessions and the variable holding its key |
 
 Plugin row:
 
@@ -173,6 +183,8 @@ Plugin row:
 |---|---|---|
 | `botToken` | `$DSH_TELEGRAM_BOT_TOKEN` | BotFather token |
 | `allowedUserIds` | `[]` | Telegram user ids allowed to drive the bot; empty refuses everyone |
+| `adminUserId` | control-chat owner, else any allowed user | the one account allowed to run `/system` (except `status`), plugin mutations, `/workspace`, `/bind`, `/system takechat` |
+| `requestTimeoutSeconds` / `downloadTimeoutSeconds` | `60` / `120` | HTTP timeouts (seconds) for one Bot API call and one media download |
 | `workspaceRoot` | `$DSH_WORKSPACE`, else `$DSH_HOME/workspace` | where `/workspace new` creates directories |
 | `provider` / `model` | profile default | model route for new sessions |
 | `editIntervalMs` | `1200` | minimum spacing between streaming edits |
@@ -191,8 +203,13 @@ takes precedence over the plugin row. Telegram only accepts its own reaction
 emoji — `/reactions allowed` lists them; `✓`, `✅` and `⏳` are not accepted.
 
 Set at least `allowedUserIds` in the mounted plugin row — the default refuses
-everyone, including you. The bot replies with the sender's numeric id to any
-refused message, which is the easiest way to find it.
+everyone, including you. For a refused **text** message the bot replies with the
+sender's numeric id, which is the easiest way to find it (media and commands get
+no echo of the id).
+
+Defaults when a key is unset: `adminUserId` → the control-chat owner, else any
+allowlisted user; `provider`/`model` → the profile default; `workspaceRoot` →
+`$DSH_WORKSPACE`, else `$DSH_HOME/workspace`; `processMode` → `live`.
 
 ## First run
 
@@ -221,7 +238,7 @@ session id, an id prefix, or the topic title.
 
 | Command | Effect |
 |---|---|
-| `/workspaces` | list workspaces, their groups and links |
+| `/workspaces` | list workspaces, their groups and links (a link only for a group-less workspace) |
 | `/workspace new <title>` | create directory + workspace, print the group link |
 | `/workspace link <name>` | print the group link again |
 | `/workspace rm <name>` | unregister from DSH, delete the binding and the group's session topics (files and sessions are untouched) |
@@ -239,9 +256,15 @@ session id, an id prefix, or the topic title.
 | `/system update all [--i-know-versions-are-incompatible]` | drain sessions, then update setup through the updater sidecar |
 | `/system confirm` | commit the running trial (or press **Commit**) |
 | `/system rollback` | restore the last committed state and restart |
-| `/system manage` | optional components (e.g. the design stack): enable, disable, change the port |
+| `/system cancel` | abandon a pending update and unblock the bot; after acceptance it stops the updater job |
+| `/system manage` | optional components (e.g. the design stack): a card with Enable/Disable/Port buttons |
+| `/system status` | versions, supervisor, open trial, web/key/registry probes |
+| `/system takechat` | make this chat the control chat (notices and update reports follow it) |
+| `/firewall` | native only: whether ufw lets the web UI through, and the `/firewall allow <port>` fix |
+| `/web` | a signed link into the web UI for the same sessions |
 | `/timezone [zone]` | IANA zone used to read times you type (default `$DSH_TIMEZONE` or UTC) |
-| `/status` | runtime, workspace and session counts |
+| `/reactions …` | read/streaming/staged reactions: show, set, `on`/`off`, `reset`, `allowed` |
+| `/status` | model route, counts, poller, timezone, supervisor and probe lines |
 | `/about` | connector, runtime and updater state |
 | `/help` · `/man` | index, or the full manual |
 
@@ -277,10 +300,13 @@ not one workspace. `/schedules` is still a stub.
 | `//text` | send a prompt that literally starts with `/` |
 | `/help` · `/man` | the session command manual |
 
-Everything else — `/status <session>`, `/rename`, `/model`, `/close`, `/reopen`,
-`/forget`, `/dangerous cleanup` — lives in the dashboard with the session
-argument. A session topic is for talking, not configuring. Only a leading
-non-whitespace `/` starts a command; slashes later in the text are literal.
+Management lives in the dashboard: `/new`, `/sessions`, `/status`, `/setsystem`,
+`/sync`, `/list archived`, `/unarchive`, `/rename`, `/model`, `/close`,
+`/reopen`, `/forget`, `/unbind`, `/dangerous cleanup`. The session-taking ones
+(`/status <session>`, `/rename`, `/model`, `/close`, `/reopen`, `/forget`) take
+the session as an argument; a session topic is for talking, not configuring.
+Only a leading non-whitespace `/` starts a command; slashes later in the text
+are literal.
 
 An unbound group accepts `/bind <workspace id|title>`.
 
@@ -313,6 +339,28 @@ is safe to run repeatedly — the second run reports `adopted 0`.
 Topics are created last-session-first, so the group reads top-to-bottom in the
 workspace's order. That is a snapshot: Telegram orders the topic list by recency
 and offers no reorder method, so it can drift as topics see activity.
+
+## Switching between the web UI and Telegram
+
+Both surfaces attach to the same runtime, the same `DSH_HOME` and the same
+session store — there is no export step and no second copy of a conversation.
+
+- **Telegram → browser.** `/web` prints a signed link into the web UI for the
+  same sessions (bot chat only; treat the link as a password). A session started
+  with `/new` is an ordinary DSH session, so the UI lists it.
+- **Browser → Telegram.** A session created in the UI has no topic until
+  `/sync` in the group adopts it. After that, prompts you send in the browser
+  are mirrored into the topic (one-way) and answers appear in both places.
+- **Handing one session over.** A session has one live agent. If a browser tab
+  holds the session's write handle, a Telegram prompt is refused, the message is
+  journaled, and the bot offers **↪️ Take over**. That button restarts the
+  runtime, which releases *every* handle (not just this session's), then delivers
+  the queued prompt. Closing the tab is the cheaper move; `/system restart now`
+  does the same thing by hand.
+- **Forcing a handover.** Both `/system restart now` and the **Take over**
+  button are admin-only: they restart the whole runtime. Once the tab releases
+  the session, any allowlisted member can continue it in Telegram — sessions are
+  shared per topic, not per user.
 
 ## Behaviour notes
 
@@ -348,11 +396,13 @@ and offers no reorder method, so it can drift as topics see activity.
   a member (the Bot API cannot do that for you). The main bot checks membership
   every six hours and reports a missing publisher in that group's system topic.
   Publisher messages are ignored as input, so they never feed the agent.
-- **Rendering.** Agent Markdown is sent as a Telegram rich message, so tables,
-  headings and lists render natively. If the API rejects rich content, a small
-  HTML subset takes over: tables become a monospaced block or a key/value list,
-  and a rejected entity falls back to plain text. Answers over ~3800 characters
-  are split on fences and tables (a split table repeats its header).
+- **Rendering.** Agent Markdown is sent as a Telegram rich message; headings and
+  lists render natively, while every table is rewritten to a monospaced code
+  block (or a bullet list when too wide) because not every client renders GFM
+  tables. If the API rejects rich content, a small HTML subset takes over, and a
+  rejected entity falls back to plain text. Answers are split above ~3400
+  characters (`SAFE_LENGTH`), on fences and tables (a split table repeats its
+  header).
 - **More than one bot.** Optional publisher bots multiply the group ceiling
   (20 messages/minute per bot). The main bot polls and owns buttons; publishers
   post, and the switcher picks whichever has headroom. One outbox per group keeps
@@ -423,11 +473,14 @@ session it has open.
 | `/plugin add` says *already installed* | updates are a removal plus an install; use the host CLI, or remove first |
 | a plugin change says *restart required* | this runtime has no HMR — `/system restart`, then `/system confirm` if it works |
 | `/system restart` says *not running under the supervisor* | the runtime was started directly (no container), so restart it from the host |
-| `/system update connector` needs `DSH_TELEGRAM_PLUGIN` | the entrypoint uses that ref to reinstall; set it in `.env` (the example does) |
 
 ## Security
 
-- `allowedUserIds` is the only gate. Empty means nobody, not everybody.
+- `allowedUserIds` is the gate for **using** the bot, and `adminUserId` is the
+  gate for changing the deployment (`/system restart|update|rollback`, plugin
+  mutations, `/workspace` and `/bind`). An empty allowlist means nobody, not
+  everybody. When `adminUserId` is unset, the control-chat owner is admin, and
+  otherwise any allowlisted user can run admin commands.
 - The bot token comes from the environment; `cordis.patch.yml` never carries it.
 - The bot is an admin of its groups and can delete topics. `/dangerous cleanup`
   requires an explicit `confirm`; `/forget` never deletes anything.
@@ -442,16 +495,19 @@ session it has open.
 ```sh
 npm install
 npm run build       # tsc → lib/
-npm test            # vitest: render, bindings, plugins, supervisor, telegram
+npm test            # vitest: render, bindings, plugins, supervisor, delivery, …
 npm run typecheck
 ```
 
-`src/index.ts` is the plugin (routing, commands, streaming); `telegram.ts` is
-the typed Bot API client; `render.ts` handles Markdown and splitting;
-`bindings.ts` persists the mapping; `sessions.ts` owns the topic key model;
-`plugins.ts` reads the host's plugin manager and renders its answers;
-`supervisor.ts` talks to the container supervisor over its loopback socket;
-`time.ts` validates the stored zone.
+`src/index.ts` is the plugin (routing, commands, streaming); `help.ts` is the
+command registry behind `/help`, `/man` and the Telegram command menu;
+`telegram.ts` is the typed Bot API client; `render.ts` normalises rich Markdown
+and splits; `outbox.ts` owns the per-group queue and publishers; `bindings.ts`
+persists the mapping; `sessions.ts` owns the topic key model; `bridge.ts` is the
+turn journal; `mirror.ts` mirrors web-UI turns; `plugins.ts` reads the host's
+plugin manager and renders its answers; `supervisor.ts` talks to the container
+supervisor over its loopback socket. [CONTRIBUTING.md](CONTRIBUTING.md) has the
+full module table.
 
 ## License
 

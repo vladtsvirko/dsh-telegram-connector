@@ -106,7 +106,7 @@ const COMMANDS: CommandDoc[] = [
   {
     path: 'workspaces',
     usage: '/workspaces',
-    summary: 'list workspaces, their group and their link',
+    summary: 'list workspaces, their group, and the link (only for a workspace with no group yet)',
     details: 'A workspace with no group gets a one-tap link that adds the bot to a new group.',
     surfaces: ['control'],
     group: 'workspace',

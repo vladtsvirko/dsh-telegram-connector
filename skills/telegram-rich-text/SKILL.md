@@ -37,10 +37,10 @@ The Telegram connector sends agent replies as **rich messages** (`rich_message.m
 - Table cells accept **inline formatting only** — no lists or block content inside a cell.
 - Never wrap the whole answer in a code fence.
 - Do not use MarkdownV2 escaping; write normal Markdown.
-- Do not use HTML tables; use Markdown tables so Telegram renders them natively.
+- Do not use HTML tables. Write a GFM table and let the connector convert it: it sends a monospaced block when the table fits, bullets when it does not.
 - Use `<tg-time>` for deadlines and timestamps so each reader sees their own timezone.
 - Prefer structure over long prose: short headings, bullets, and a table for comparisons.
-- Rich messages allow 32,768 characters; the connector still splits long answers at ~3,800 and repeats table headers.
+- Rich messages allow 32,768 characters; the connector still splits long answers at 3,400 and repeats table headers.
 - If Telegram rejects a rich message, the connector falls back to HTML (tables as `<pre>` or key/value lists) and finally to plain text. Plain Markdown is always safe.
 
 ## Example

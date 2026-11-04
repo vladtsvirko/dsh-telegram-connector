@@ -14,8 +14,14 @@ topics. Treat it with the same care as giving someone a shell in your workspace.
 
 What protects it:
 
-- **Allowlist.** `allowedUserIds` is checked on every update. Empty means nobody
-  is allowed, not everybody.
+- **Allowlist, plus one admin.** `allowedUserIds` is checked on every update;
+  empty means nobody, not everybody. `adminUserId` (the control-chat owner when
+  unset) is required for deployment-wide actions: `/system restart|update|
+  rollback`, plugin mutations, `/workspace`, `/bind`.
+- **Buttons need the same admin.** Inline callbacks — trial Commit/Roll back,
+  component Enable/Disable/Port, the update card's ✖ and Take over — check
+  `adminUserId` exactly like the typed commands; an allowlisted non-admin is
+  answered with "only the admin can do that" and nothing happens.
 - **Token handling.** The bot token is read from the environment or plugin
   config; it is never committed and never echoed back.
 - **Admin actions need intent.** `/workspace rm` and `/unbind` delete the
@@ -36,8 +42,9 @@ What it does not protect:
 
 ## Hardening checklist
 
-- Keep the group private and the bot non-admin where possible; it only needs
-  *Manage Topics* and *Change Info*.
+- Keep the group private. The bot **must** be an admin to manage topics, so grant
+  exactly *Manage Topics* and *Change Info* and nothing else; Telegram does not
+  offer a narrower role for topic management.
 - List only your own Telegram user ids in `allowedUserIds`.
 - Restrict `DSH_PERMISSION_MODE` in the runtime if the bot reaches a host you
   care about.

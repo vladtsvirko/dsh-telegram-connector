@@ -1094,7 +1094,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const blockers = drainState?.blockers ?? []
     const lines = [`🔄 **setup update** \`${update.from} → ${update.target}\``]
     if (update.phase === 'accepted') {
-      lines.push('🚀 updater accepted — cancelling is no longer possible.', 'the bot will restart; the updater reports the result.')
+      lines.push('🚀 updater accepted — the bot will restart; the updater reports the result.', '`/system cancel` can still stop the job until it finishes.')
       return lines.join('\n')
     }
     lines.push(
@@ -1181,8 +1181,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   }
 
   const cancelUpdate = async (query: TgCallbackQuery): Promise<void> => {
-    if (!isAllowed(query.from?.id)) {
-      await client.answerCallbackQuery(query.id, 'not authorized').catch(() => undefined)
+    // The card's ✖ changes the deployment for everyone, exactly like
+    // `/system cancel`; the allowlist alone is not enough.
+    if (!isAdmin(query.from?.id)) {
+      await client.answerCallbackQuery(query.id, 'only the admin can do that').catch(() => undefined)
       return
     }
     const id = query.data?.split(':')[2]
@@ -4624,12 +4626,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await showHelp(message, `/${name}`, words.slice(1), 'session')
       return
     }
-    if (name === 'commands') {
-      await stageSlashMedia(message, threadId, media, groupItems)
-      const runtime = await topicRuntimeFor(message, workspaceId, workspace, threadId)
-      await reply(message, await commandsText(runtime))
-      return
-    }
     // `/help` promises `<command> --help` on every surface; honour it here too,
     // before the connector-command refusal below turns the flag into an argument.
     if (hasHelpFlag(text.trim().split(/\s+/).slice(1))) {
@@ -4639,6 +4635,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         message,
         lookupText([name, ...stripHelpFlag(words)].join(' '), 'session') ?? unknownHelp(name),
       )
+      return
+    }
+    if (name === 'commands') {
+      await stageSlashMedia(message, threadId, media, groupItems)
+      const runtime = await topicRuntimeFor(message, workspaceId, workspace, threadId)
+      await reply(message, await commandsText(runtime))
       return
     }
     if (name === 'skills') {
@@ -5005,6 +5007,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             }
             if (!isAllowed(query.from?.id)) {
               await client.answerCallbackQuery(query.id, 'not authorized').catch(() => undefined)
+              continue
+            }
+            // Trial Commit/Roll back, component Enable/Disable/Port, update
+            // cancel and Take over all change the deployment for every user;
+            // the typed equivalents require admin, so the buttons must too.
+            if (!isAdmin(query.from?.id)) {
+              await client.answerCallbackQuery(query.id, 'only the admin can do that').catch(() => undefined)
               continue
             }
             if (query.data?.startsWith('cmp:')) {

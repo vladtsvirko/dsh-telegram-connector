@@ -20,12 +20,21 @@ npm test
 | File | Responsibility |
 |---|---|
 | `src/index.ts` | plugin entry: routing, commands, streaming, reconciliation |
+| `src/help.ts` | the command registry, `/help`, `/man`, the Telegram command menu |
 | `src/telegram.ts` | typed Bot API client |
-| `src/render.ts` | Markdown subset → Telegram HTML, fence-aware splitting |
+| `src/render.ts` | rich-Markdown normalisation, Telegram HTML fallback, splitting |
+| `src/outbox.ts` | per-group queue, pacing, exactly-once delivery, publishers |
 | `src/bindings.ts` | durable v2 bindings file |
 | `src/sessions.ts` | topic key model and workspace directories |
+| `src/mirror.ts` | web-UI turn → topic mirroring |
+| `src/reference.ts` | reply-to, forwards and attachment references |
+| `src/media.ts` | media download, albums, staging |
+| `src/slash.ts` | command parsing and `@bot` addressing |
 | `src/plugins.ts` | `pluginManager` types and the plugin surface's rendering |
 | `src/supervisor.ts` | client for the container supervisor's restart/rollback socket |
+| `src/bridge.ts` | the turn journal (crash catch-up, queued prompts) |
+| `src/bots.ts`, `src/rate-limit.ts`, `src/reactions.ts` | bot pool, token buckets, reactions |
+| `src/errors.ts`, `src/about.ts`, `src/time.ts`, `src/process.ts` | redacted errors, version report, time zones, process rows |
 
 ## Testing against a real bot
 

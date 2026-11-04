@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.1-rc.5-0.6.5
+
+### Fixed
+
+- **Inline buttons now require the admin account.** Trial Commit/Roll back,
+  component Enable/Disable/Port, the update card's ✖ and Take over all change
+  the deployment for every user, but the callback handler checked only the
+  allowlist while the typed equivalents required `adminUserId`. Any allowlisted
+  member could restart the runtime or commit a rollback window. The gate now
+  matches `/system`: a non-admin press is answered with
+  "only the admin can do that" and does nothing.
+- **`/commands --help` shows its help again.** The `/commands` branch ran before
+  the generic `--help` handler, so the flag was swallowed and the host catalog
+  printed instead. The handler now runs first on every surface.
+
+### Changed
+
+- The accepted update card no longer says "cancelling is no longer possible": the
+  card's button is gone, but `/system cancel` still stops the job, and the card
+  now says so.
+- `/workspaces` help says the startgroup link is printed only for a workspace
+  that has no group yet.
+
 ## 0.2.1-rc.5-0.6.4
 
 Aligned with the setup fix for `data/.runtime.json`, which the entrypoint wrote

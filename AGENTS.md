@@ -3,7 +3,7 @@
 Versions are aligned with DSH and carry our own product line:
 
 ```
-<dsh-version>-<major>.<minor>.<patch>      v0.2.1-rc.2-0.1.19
+<dsh-version>-<major>.<minor>.<patch>      v0.2.1-rc.5-0.6.5
 ```
 
 - **DSH part** is exactly the DSH release this connector was tested against.
@@ -26,7 +26,9 @@ Versions are aligned with DSH and carry our own product line:
 1. Align the DSH part with the tested `DSH_VERSION`; reset product to `0.0.0`
    for a new DSH line. Bump the product for our changes.
 2. Update `package.json`/`package-lock.json`, `COMPATIBILITY.md` (one row per
-   release) and `CHANGELOG.md`.
+   release) and `CHANGELOG.md`. Also bump the manual-install pin in `README.md`
+   (`dsh plugin add …#v<version>`) — it is the only exact tag written in prose,
+   and a stale one is the first thing a hand-installer hits.
 3. Run `npm run typecheck && npm test && npm run build`.
 4. Commit, tag `v<version>`, push the tag. CI runs
    `scripts/check-version.mjs` and fails if the tag, package and matrix drift.

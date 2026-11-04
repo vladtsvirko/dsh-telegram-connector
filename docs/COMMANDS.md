@@ -14,9 +14,18 @@ Conventions:
 
 - `<required>`, `[optional]`, `<a|b>` means choose one.
 - Every command accepts `--help`; `/help <command>` and `/man [command]` show the
-  same text.
-- Aliases: `/start` = `/help`, `/plugin list` = `/plugins`, `/plugin install` =
-  `/plugin add`, `/plugin rm` = `/plugin remove`.
+  same text. The one exception is `/commands`, which lists the live host catalog
+  instead of its own help.
+- Aliases: `/start` = `/help`, `/?` = `/help`, `/plugin list` = `/plugins`,
+  `/plugin install` = `/plugin add`, `/plugin rm` = `/plugin del` =
+  `/plugin remove`, `/system components` = `/system manage`.
+- Admin-only (the `adminUserId` account, or the control-chat owner when unset):
+  `/workspace new|link|rm`, every `/system` subcommand except `status`,
+  `/plugin add|remove|enable|disable|confirm|cancel|approve`, `/bind`,
+  `/system takechat`, `/firewall allow`. The inline buttons that do the same
+  things — trial Commit/Roll back, the component card, the update card's ✖, Take
+  over — are admin-only too. `/unbind`, `/setsystem` and
+  `/dangerous cleanup confirm` are **not** gated — they only need the allowlist.
 - A `<session>` argument accepts the full session id, an id prefix, or the topic title.
 - You can only use a command on the surface it belongs to; elsewhere the bot
   tells you where it lives.
@@ -29,15 +38,17 @@ Conventions:
 
 | Command | What it does |
 |---|---|
-| `/workspaces` | list workspaces, their group and their startgroup link |
+| `/workspaces` | list workspaces, their group, and the startgroup link (only for a workspace that has no group yet) |
 | `/workspace new <title>` | create `<workspaceRoot>/<slug>`, register it in DSH, print the link |
 | `/workspace link <name>` | print that link again |
 | `/workspace rm <name>` | unregister from DSH, delete the binding, delete the group's session topics; files and sessions are untouched |
 
-A workspace lives in exactly one group. Binding a different workspace to the same
-group clears the group's session topics first. An **unbound** group accepts
-`/bind <workspace id or title>` to attach itself; that command is only relevant
-before the group is bound, so it is answered by routing rather than the dashboard.
+A workspace lives in exactly one group. A group that is already bound **cannot**
+be rebound: binding a different workspace there is refused, and you must
+`/unbind` first (which deletes the group's session topics). An **unbound** group
+accepts `/bind <workspace id or title>` to attach itself; that command is only
+relevant before the group is bound, so it is answered by routing rather than the
+dashboard.
 
 ### Plugins
 
@@ -75,8 +86,9 @@ connector refuses to disable or remove itself.
 | `/system update all [--i-know-versions-are-incompatible]` | drain, then update setup through the updater sidecar; the flag permits a major/DSH jump |
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
-| `/system manage [<component> <enable|disable|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form |
-| `/system cancel` | abandon a pending update and unblock the bot (same as the card's ✖) |
+| `/system manage [<component> <enable\|disable\|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form. The Port button offers three presets (8090/8091/8092); use the text form for anything else |
+| `/system cancel` | abandon a pending update and unblock the bot (same as the card's ✖); after acceptance it stops the running updater job |
+| `/system takechat` | make this private chat the control chat; notices, update reports and failure cards move here |
 | `/status` | model route, workspace/session counts, poller, timezone, supervisor |
 | `/firewall` | native only: whether ufw lets the web UI through, and the exact `/firewall allow <port>` to fix it |
 | `/firewall allow <port>` | admin only; asks the updater to allow that served port from the LAN |
@@ -117,8 +129,10 @@ executed.
 The two commands cover different scopes: `update connector` changes only the
 profile; `update all` changes the setup checkout, image and connector pin.
 `/system rollback` restores the profile, **not** the image or the setup tag. Once
-the updater accepts an `update all` job there is no Cancel button and no timeout;
-the button exists only while the editable card is still draining. The scopes and the
+the updater accepts an `update all` job the card's ✖ button is removed, but the
+job is still cancellable with `/system cancel` (the updater stops it with
+`SIGTERM`, then `SIGKILL`) and it has a deadline of `DSH_UPDATE_TIMEOUT_SECONDS`
+(default 30 minutes). The scopes and the
 host-only recovery paths are in the setup repo's
 [LIMITS.md](https://github.com/vladtsvirko/dsh-tg-docker-setup/blob/main/docs/LIMITS.md).
 
@@ -162,7 +176,14 @@ one zone to become an instant.
 | `/dangerous cleanup [confirm]` | delete known topics that are not sessions |
 
 `/setsystem` only accepts a topic that holds no session, so a hand-made empty
-topic can become the dashboard. General is the fallback.
+topic can become the dashboard. General is the fallback until then — and once
+`/setsystem` moves the dashboard, **General becomes an ordinary session topic**:
+the next plain message there starts a session. That is why the bot asks for an
+empty topic rather than reusing General.
+
+The Telegram command menu is registered per chat type, not per topic, so a
+session topic still lists the dashboard commands in its `/` menu; the bot
+answers them with a pointer to the dashboard instead of running them.
 
 `/sync` decides per session: archived → skip; bound → probe the topic and keep
 the binding only if it answers; otherwise create a topic and replay the last 20
