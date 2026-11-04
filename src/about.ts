@@ -1,11 +1,11 @@
 /**
- * Version and compatibility information, for `/about` and for support.
+ * Version and compatibility information, for `/system status` and for support.
  *
  * The connector's own version comes from its package manifest. The runtime
  * version is best-effort: the deployment may export `DSH_RUNTIME_VERSION`, and a
  * direct install can still resolve the harness packages.
  *
- * @module dsh-telegram-connector/about
+ * @module dsh-telegram-connector/system status
  */
 
 import { readFileSync } from 'node:fs'

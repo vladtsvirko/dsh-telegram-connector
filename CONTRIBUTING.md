@@ -34,7 +34,7 @@ npm test
 | `src/supervisor.ts` | client for the container supervisor's restart/rollback socket |
 | `src/bridge.ts` | the turn journal (crash catch-up, queued prompts) |
 | `src/bots.ts`, `src/rate-limit.ts`, `src/reactions.ts` | bot pool, token buckets, reactions |
-| `src/errors.ts`, `src/about.ts`, `src/time.ts`, `src/process.ts` | redacted errors, version report, time zones, process rows |
+| `src/errors.ts`, `src/system status.ts`, `src/time.ts`, `src/process.ts` | redacted errors, version report, time zones, process rows |
 
 ## Testing against a real bot
 

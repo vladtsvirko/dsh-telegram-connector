@@ -6,7 +6,7 @@ The bot has three surfaces. Each has its own command set, and each answers
 ```
 private chat with the bot        control plane   workspaces, plugins, restarts, updates
 group "web-app"                  workspace
- ├── General / /setsystem topic  dashboard       sessions: /new, /sync, /close …
+ ├── General / /dashboard topic  dashboard       sessions: /new, /sync, /close …
  └── session-…                   session topic   plain text is a turn, nothing else
 ```
 
@@ -18,14 +18,14 @@ Conventions:
   instead of its own help.
 - Aliases: `/start` = `/help`, `/?` = `/help`, `/plugin list` = `/plugins`,
   `/plugin install` = `/plugin add`, `/plugin rm` = `/plugin del` =
-  `/plugin remove`, `/system components` = `/system manage`.
+  `/plugin remove`.
 - Admin-only (the `adminUserId` account, or the control-chat owner when unset):
   `/workspace new|link|rm`, every `/system` subcommand except `status`,
   `/plugin add|remove|enable|disable|confirm|cancel|approve`, `/bind`,
-  `/system takechat`, `/firewall allow`. The inline buttons that do the same
-  things — trial Commit/Roll back, the component card, the update card's ✖, Take
-  over — are admin-only too. `/unbind`, `/setsystem` and
-  `/dangerous cleanup confirm` are **not** gated — they only need the allowlist.
+  `/system takechat`, `/firewall allow`, `/unbind`, `/dashboard`,
+  `/dangerous cleanup`. The inline buttons that do the same things — trial
+  Commit/Roll back, the component card, the update card's ✖, Take over, the
+  deployment buttons on the dashboard card — are admin-only too.
 - A `<session>` argument accepts the full session id, an id prefix, or the topic title.
 - You can only use a command on the surface it belongs to; elsewhere the bot
   tells you where it lives.
@@ -83,16 +83,16 @@ connector refuses to disable or remove itself.
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
 | `/system update connector` | reinstall the pinned connector, in a trial |
 | `/system update connector now` | reinstall without a trial |
-| `/system update all [--i-know-versions-are-incompatible]` | drain, then update setup through the updater sidecar; the flag permits a major/DSH jump |
+| `/system update setup [--i-know-versions-are-incompatible]` | drain, then update the setup through the updater service; the flag permits a major/DSH jump |
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
-| `/system manage [<component> <enable\|disable\|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form. The Port button offers three presets (8090/8091/8092); use the text form for anything else |
+| `/system components [<component> <enable\|disable\|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form. The Port button offers three presets (8090/8091/8092); use the text form for anything else |
 | `/system cancel` | abandon a pending update and unblock the bot (same as the card's ✖); after acceptance it stops the running updater job |
 | `/system takechat` | make this private chat the control chat; notices, update reports and failure cards move here |
 | `/status` | model route, workspace/session counts, poller, timezone, supervisor |
-| `/firewall` | native only: whether ufw lets the web UI through, and the exact `/firewall allow <port>` to fix it |
+| `/dashboard` | post the control card: status, web link, update, restart, plugins, components |
+| `/firewall` | whether ufw lets the web UI through, and the exact `/firewall allow <port>` to fix it |
 | `/firewall allow <port>` | admin only; asks the updater to allow that served port from the LAN |
-| `/about` | connector version, runtime version, web root, peer range, updater state |
 | `/web` | a signed link into the web UI for the same sessions (bot chat only) |
 | `/reactions` | show the read, streaming and staged-media reactions |
 | `/reactions read <emoji>` | set the prompt reaction; `off` disables it |
@@ -118,7 +118,7 @@ it cannot move to a different setup tag. A failed reinstall restores the previou
 state before the runtime comes back. `now` skips the trial and makes the
 restarted state the rollback point.
 
-`/system update all` blocks new prompts, waits until every agent (web UI and
+`/system update setup` blocks new prompts, waits until every agent (web UI and
 Telegram) is idle, then asks the updater sidecar to apply the latest compatible
 setup tag and rebuild the image. The new entrypoint installs the connector tag
 derived from that setup version. If `DSH_UPDATER_TOKEN` is empty it falls back to
@@ -127,9 +127,9 @@ control chat; queued messages from the downtime are answered once and never
 executed.
 
 The two commands cover different scopes: `update connector` changes only the
-profile; `update all` changes the setup checkout, image and connector pin.
+profile; `update setup` changes the setup checkout, DSH install and connector pin.
 `/system rollback` restores the profile, **not** the image or the setup tag. Once
-the updater accepts an `update all` job the card's ✖ button is removed, but the
+the updater accepts an `update setup` job the card's ✖ button is removed, but the
 job is still cancellable with `/system cancel` (the updater stops it with
 `SIGTERM`, then `SIGKILL`) and it has a deadline of `DSH_UPDATE_TIMEOUT_SECONDS`
 (default 30 minutes). The scopes and the
@@ -156,16 +156,30 @@ one zone to become an instant.
 
 ---
 
-## Workspace dashboard (General or the `/setsystem` topic)
+## Buttons
+
+Two kinds of inline keyboard exist. The **dashboard card** is a menu; every
+button runs the same command you could type, so permissions are identical:
+
+| Card | Buttons |
+|---|---|
+| group dashboard (`/dashboard`) | New session · Sync · Status · Sessions |
+| bot chat (`/dashboard`) | Status · Web link · Update setup · Restart · Plugins · Components |
+
+The **flow cards** are confirmation prompts: trial Commit/Roll back, the update
+card's ✖ (while draining), component Enable/Disable/Port, and Take over for a
+held session. They are admin-only, like their commands.
+
+## Workspace dashboard (General or the `/dashboard` topic)
 
 | Command | What it does |
 |---|---|
 | `/new [title]` | mint a session and create its topic |
 | `/sessions` | dashboard: path, workspace id, sessions |
 | `/status [session]` | dashboard; with a session, that session's id, topic, model and agent state |
-| `/setsystem` | make this empty topic the command surface |
+| `/dashboard` | claim this empty topic as the dashboard and post its button card |
 | `/sync` | adopt sessions created in the web UI: topic + history replay; paced to Telegram limits |
-| `/list archived` | archived sessions and whether they have a topic |
+| `/archived` | archived sessions and whether they have a topic |
 | `/unarchive <id\|all>` | restore archived sessions and create their topics |
 | `/rename <session> <title>` | rename session and topic |
 | `/model <session> <provider>/<model>` | per-session model route |
@@ -175,9 +189,9 @@ one zone to become an instant.
 | `/unbind` | detach the group and delete its session topics |
 | `/dangerous cleanup [confirm]` | delete known topics that are not sessions |
 
-`/setsystem` only accepts a topic that holds no session, so a hand-made empty
+`/dashboard` only accepts a topic that holds no session, so a hand-made empty
 topic can become the dashboard. General is the fallback until then — and once
-`/setsystem` moves the dashboard, **General becomes an ordinary session topic**:
+`/dashboard` moves the dashboard, **General becomes an ordinary session topic**:
 the next plain message there starts a session. That is why the bot asks for an
 empty topic rather than reusing General.
 
@@ -191,7 +205,7 @@ messages. Safe to repeat; the second run reports `adopted 0`.
 
 It paces itself to Telegram's group limits (about one call per second, twenty
 per minute) and retries a 429 after `retry_after`. When a wait is enforced it
-posts once in the system chat:
+posts once in the dashboard chat:
 `sync is rate-limited by telegram api, waiting for rate-limit to proceed, please wait`.
 
 `/dangerous cleanup` lists what it would delete; nothing is deleted without

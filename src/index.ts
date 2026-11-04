@@ -21,7 +21,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 
-import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgMessage } from './telegram.js'
+import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgInlineKeyboard, type TgMessage } from './telegram.js'
 import { splitForHtml, splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
 import { installTelegramPrompt, registerTelegramSkill } from './telegram-prompt.js'
 import {
@@ -1418,7 +1418,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (args.length === 0) return showComponents(message)
     const [name, action, value] = args
     if (name === undefined || action === undefined) {
-      return reply(message, 'usage: `/system manage [<component> <enable|disable|port> [<port>]]`')
+      return reply(message, 'usage: `/system components [<component> <enable|disable|port> [<port>]]`')
     }
     if (action === 'enable' || action === 'disable') {
       return reply(message, await postComponent(name, action))
@@ -1426,11 +1426,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (action === 'port') {
       const port = Number(value)
       if (!Number.isInteger(port) || port < 1024 || port > 65535) {
-        return reply(message, 'usage: `/system manage <component> port <1024-65535>`')
+        return reply(message, 'usage: `/system components <component> port <1024-65535>`')
       }
       return reply(message, await postComponent(name, 'configure', port))
     }
-    return reply(message, 'usage: `/system manage [<component> <enable|disable|port> [<port>]]`')
+    return reply(message, 'usage: `/system components [<component> <enable|disable|port> [<port>]]`')
   }
 
   /**
@@ -1452,6 +1452,40 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
+  /** Dashboard buttons run the same commands the user could type. */
+  const handleDashboardButton = async (query: TgCallbackQuery): Promise<void> => {
+    const action = (query.data ?? '').slice('dash:'.length)
+    const card = query.message
+    if (card === undefined) {
+      await client.answerCallbackQuery(query.id, 'this card has no message').catch(() => undefined)
+      return
+    }
+    // Update, restart, plugins and components change the deployment; the
+    // typed commands are admin-only, so the buttons are too.
+    const adminOnly = action === 'update' || action === 'restart' || action === 'plugins' || action === 'components'
+    if (adminOnly && !isAdmin(query.from?.id)) {
+      await client.answerCallbackQuery(query.id, 'only the admin can do that').catch(() => undefined)
+      return
+    }
+    const command = {
+      new: '/new',
+      sync: '/sync',
+      status: '/status',
+      sessions: '/sessions',
+      web: '/web',
+      update: '/system update setup',
+      restart: '/system restart',
+      plugins: '/plugins',
+      components: '/system components',
+    }[action]
+    if (command === undefined) {
+      await client.answerCallbackQuery(query.id, 'unknown action').catch(() => undefined)
+      return
+    }
+    await client.answerCallbackQuery(query.id, '…').catch(() => undefined)
+    await handleMessage({ ...card, from: query.from, text: command })
+  }
+
   const handleComponentButton = async (query: TgCallbackQuery): Promise<void> => {
     const [, action, name, value] = (query.data ?? '').split(':')
     const card = query.message
@@ -1462,7 +1496,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (action === 'port') {
       await client.answerCallbackQuery(query.id, 'choose a port').catch(() => undefined)
       const current = value ?? ''
-      await client.editMessageText(card.chat.id, card.message_id, toTelegramHtml(`**${name}** — port\n\npick one, or send \`/system manage ${name} port <n>\` for another.`), {
+      await client.editMessageText(card.chat.id, card.message_id, toTelegramHtml(`**${name}** — port\n\npick one, or send \`/system components ${name} port <n>\` for another.`), {
         parseMode: 'HTML',
         replyMarkup: {
           inline_keyboard: [[
@@ -1571,7 +1605,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await persist()
       return reply(message, 'this chat is now the control chat — notices and update reports come here.')
     }
-    if (sub === 'manage' || sub === 'components') return manageComponents(message, tail)
+    if (sub === 'components') return manageComponents(message, tail)
     if (sub === 'cancel') {
       // The card's ✖ button was the only way out of a pending update; a card
       // deleted from the chat left the bot refusing every message.
@@ -1594,16 +1628,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         if (extra.length > 0 && !now) return reply(message, 'usage: `/system update connector [now]`')
         return updateConnector(message, now)
       }
-      if (target === 'all') {
+      if (target === 'setup') {
         const incompatible = extra.length === 1 && extra[0] === '--i-know-versions-are-incompatible'
         if (extra.length > 0 && !incompatible) {
-          return reply(message, 'usage: `/system update all [--i-know-versions-are-incompatible]`')
+          return reply(message, 'usage: `/system update setup [--i-know-versions-are-incompatible]`')
         }
         return updateAll(message, incompatible ? 'available' : 'compatible')
       }
-      return reply(message, 'usage: `/system update <connector|all> [now]`')
+      return reply(message, 'usage: `/system update <connector|setup> [now]`')
     }
-    return reply(message, 'usage: `/system <status|restart|update|confirm|rollback|cancel|manage|takechat>`')
+    return reply(message, 'usage: `/system <status|restart|update|confirm|rollback|cancel|components|takechat>`')
   }
 
   /** Ask the updater service to stop its running job; true when it had one. */
@@ -1788,7 +1822,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return `${info.root} · ⚠ another ${other.mode ?? '?'} runtime holds it (pid ${String(other.pid)}, since ${other.startedAt ?? '?'}) — stop it, a restart cannot clear its session locks`
   }
 
-  /** A line for `/about` and `/system status`; never the signing token. */
+  /** A line for `/system status`; never the signing token. */
   const webLine = (): string => {
     const link = webLink()
     if (link.root.length === 0) return `web: none — ${link.reason ?? 'not mounted'}`
@@ -3235,7 +3269,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     const chatId = message.chat.id
     if (workspace.chatId === chatId) {
-      return sendTo(chatId, 0, dashboardText(workspaceId, workspace))
+      return postDashboardCard(chatId, 0, 'group', dashboardText(workspaceId, workspace))
     }
     const existingOwner = workspaceIdByChat(bindings, chatId)
     if (existingOwner !== undefined && existingOwner !== workspaceId) {
@@ -3264,7 +3298,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       logger.info(`dsh-telegram-connector: workspace ${workspaceId} moved group ${previousChat} → ${chatId}`)
     }
     await persist()
-    await sendTo(chatId, 0, dashboardText(workspaceId, workspace))
+    await postDashboardCard(chatId, 0, 'group', dashboardText(workspaceId, workspace))
   }
 
   const dashboardText = (workspaceId: string, workspace: WorkspaceBinding): string => {
@@ -3290,9 +3324,46 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       '',
       rows,
       '',
-      '`/new [title]` start a session · `/sessions` refresh · `/status` · `/unbind`',
+      '`/new [title]` start a session · `/sessions` refresh · `/status` · `/unbind`\nUse the buttons below for the common actions.',
     ].join('\n')
   }
+
+  /** The buttons under a dashboard card. The group card is workspace-scoped;
+   * the control card is deployment-scoped and never leaks the web token into a
+   * group. */
+  const dashboardKeyboard = (surface: 'control' | 'group'): TgInlineKeyboard => ({
+    inline_keyboard: surface === 'control'
+      ? [
+          [{ text: '📊 Status', callback_data: 'dash:status' }, { text: '🌐 Web link', callback_data: 'dash:web' }],
+          [{ text: '⬆️ Update setup', callback_data: 'dash:update' }, { text: '♻️ Restart', callback_data: 'dash:restart' }],
+          [{ text: '🧩 Plugins', callback_data: 'dash:plugins' }, { text: '⚙️ Components', callback_data: 'dash:components' }],
+        ]
+      : [
+          [{ text: '➕ New session', callback_data: 'dash:new' }, { text: '🔄 Sync', callback_data: 'dash:sync' }],
+          [{ text: '📊 Status', callback_data: 'dash:status' }, { text: '📋 Sessions', callback_data: 'dash:sessions' }],
+        ],
+  })
+
+  const postDashboardCard = async (
+    chatId: number,
+    threadId: number,
+    surface: 'control' | 'group',
+    markdown: string,
+  ): Promise<void> => {
+    await client.sendMessage(chatId, toTelegramHtml(markdown), {
+      parseMode: 'HTML',
+      ...(threadId === 0 ? {} : { threadId }),
+      replyMarkup: dashboardKeyboard(surface),
+    }).catch((error: unknown) => {
+      logger.warn(`dsh-telegram-connector: cannot post the dashboard card: ${String(error)}`)
+    })
+  }
+
+  const controlCardText = (): string => [
+    '**dashboard**',
+    '`/status` deployment state · `/web` signed browser link',
+    '`/system update setup` · `/system restart` · `/plugins` · `/system components`',
+  ].join('\n')
 
   // --- control plane (private chat) ---------------------------------------
 
@@ -3331,6 +3402,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (command === '/web') return showWebLink(message)
+    if (command === '/dashboard') return postDashboardCard(message.chat.id, 0, 'control', controlCardText())
 
     if (command === '/workspaces') {
       const entries = Object.entries(bindings.workspaces)
@@ -3423,7 +3495,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (command === '/firewall') return handleFirewall(message, rest)
     if (command === '/timezone') return setTimeZone(message, argument)
     if (command === '/reactions') return handleReactions(message, rest)
-    if (command === '/about') return reply(message, await aboutText())
     if (command === '/schedules') return reply(message, '_automation surface lands in the next batch_')
 
     if (command === '/status') {
@@ -3605,22 +3676,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, dashboardText(workspaceId, workspace))
     }
 
-    if (command === '/setsystem') {
+    if (command === '/dashboard') {
+      if (!requireAdmin(message)) return
       const thread = message.message_thread_id ?? 0
       if (sessionFor(bindings, message.chat.id, thread) !== undefined) {
-        return reply(message, 'this topic is a session — pick a topic without a conversation to be the system topic')
+        return reply(message, 'this topic is a session — pick a topic without a conversation to be the dashboard')
       }
       workspace.systemThreadId = thread
       bindings.workspaces[workspaceId] = workspace
       await persist()
-      return reply(
-        message,
-        `this topic is now the **system topic**. Every command lives here; session topics take plain text only.`,
-      )
+      return postDashboardCard(message.chat.id, thread, 'group', dashboardText(workspaceId, workspace))
     }
 
     if (command === '/list') {
-      if (rest[0] !== 'archived') return reply(message, '`/list archived` — sessions currently archived')
+      if (rest[0] !== 'archived') return reply(message, '`/archived` lists archived sessions')
       const archived = (registryOf(ctx)?.archivedSessionIds ?? []).map(String)
       if (archived.length === 0) return reply(message, 'nothing archived')
       const shown = sessionsOfChat(bindings, message.chat.id).map(([, session]) => session.sessionId)
@@ -3660,7 +3729,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       const archived = (registry.archivedSessionIds ?? []).map(String)
       const match = needle.length === 0 ? undefined : archived.find((id) => id === needle || id.startsWith(needle))
-      if (match === undefined) return reply(message, 'usage: `/unarchive <id from /list archived>`')
+      if (match === undefined) return reply(message, 'usage: `/unarchive <id from /archived>`')
       try {
         await registry.unarchiveSession(match)
       } catch (error) {
@@ -3772,7 +3841,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       /** Sessions that still need a topic, kept in the workspace's manual order. */
       const pending: string[] = []
 
-      // One notice per sync, in the system chat, the first time the pacing is
+      // One notice per sync, in the dashboard chat, the first time the pacing is
       // long enough to explain (or Telegram answers 429).
       let noticeSent = false
       const rateLimitNotice = async (): Promise<void> => {
@@ -3896,7 +3965,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       )
     }
 
-    if (command === '/dangerous') return runCleanup(message, workspaceId, workspace, 0, rest)
+    if (command === '/dangerous') {
+      if (!requireAdmin(message)) return
+      return runCleanup(message, workspaceId, workspace, 0, rest)
+    }
 
     if (command === '/new') {
       const sessionId = String(SessionId(randomUUID()))
@@ -3920,6 +3992,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (command === '/unbind') {
+      if (!requireAdmin(message)) return
       const topics = sessionsOfChat(bindings, message.chat.id).length
       await clearChatSessions(message.chat.id)
       delete bindings.workspaces[workspaceId]
@@ -4689,7 +4762,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (await executeHostCommand(message, runtime, name, parsed.args.trim(), `/${name}`, false)) return
       await reply(
         message,
-        `this is a session topic — connector commands live in the system topic. Try \`/commands\` or \`/skills\` here.`,
+        `this is a session topic — connector commands live in the dashboard topic. Try \`/commands\` or \`/skills\` here.`,
       )
       return
     }
@@ -4888,8 +4961,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     if (!unescaped.escaped && sessionText.startsWith('/')) {
       // bootstrap: a topic that holds no conversation may claim itself as the
-      // system topic, otherwise there is no way to create one off General
-      if (/^\/setsystem\b/.test(sessionText) && sessionFor(bindings, message.chat.id, threadId) === undefined) {
+      // dashboard topic, otherwise there is no way to create one off General
+      if (/^\/dashboard\b/.test(sessionText) && sessionFor(bindings, message.chat.id, threadId) === undefined) {
         return handleDashboard(message, workspaceId, workspace)
       }
       return handleSessionSlash(
@@ -5007,6 +5080,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             }
             if (!isAllowed(query.from?.id)) {
               await client.answerCallbackQuery(query.id, 'not authorized').catch(() => undefined)
+              continue
+            }
+            // Dashboard buttons decide their own permissions: workspace actions
+            // are allowlist-only, deployment actions are admin-only.
+            if (query.data?.startsWith('dash:')) {
+              await handleDashboardButton(query)
               continue
             }
             // Trial Commit/Roll back, component Enable/Disable/Port, update

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1-rc.5-0.9.1
+
+### Changed
+
+- **Commands renamed, no aliases:** `/system update setup` (was `update all`),
+  `/system components` (was `manage`), `/dashboard` (was `/setsystem`),
+  `/archived` (was `/list archived`). `/about` is removed; `/system status`
+  prints the same state.
+- **Dashboard card.** `/dashboard` posts inline buttons: in a group, New
+  session, Sync, Status and Sessions; in the bot chat, Status, Web link, Update
+  setup, Restart, Plugins and Components. Each button runs the typed command, so
+  permissions are identical; the deployment buttons are admin-only.
+- **`/unbind`, `/dashboard` and `/dangerous cleanup` require admin**, matching
+  `/bind` and the rest of the deployment-wide commands.
+- The "system topic" is called the dashboard throughout; help and docs use the
+  new names.
+
 ## 0.2.1-rc.5-0.9.0
 
 ### Changed

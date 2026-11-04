@@ -148,10 +148,10 @@ describe('session bookkeeping', () => {
 })
 
 describe('who may administer', () => {
-  it('refuses /system update to anyone but the admin, and still answers /about', async () => {
+  it('refuses /system update to anyone but the admin, and still answers /system status', async () => {
     const harness = await start(await boot({ adminUserId: 7 }))
     // 42 is allowed to use the agent, 7 is the admin.
-    harness.pushUpdate(harness.makeUpdate({ text: '/system update all', chatId: 42, threadId: 0, extra: { chat: { id: 42, type: 'private', first_name: 'Tester' }, is_topic_message: false, message_thread_id: undefined } }))
+    harness.pushUpdate(harness.makeUpdate({ text: '/system update setup', chatId: 42, threadId: 0, extra: { chat: { id: 42, type: 'private', first_name: 'Tester' }, is_topic_message: false, message_thread_id: undefined } }))
     const refusal = await harness.waitFor(
       () => harness.sent.find((call) => callText(call).includes('only admin 7')),
       'the admin refusal',
@@ -159,10 +159,10 @@ describe('who may administer', () => {
     )
     expect(callText(refusal)).toContain('changes the deployment for everyone')
     // Read-only is still available to everyone.
-    harness.pushUpdate(harness.makeUpdate({ text: '/about', chatId: 42, threadId: 0, extra: { chat: { id: 42, type: 'private', first_name: 'Tester' }, is_topic_message: false, message_thread_id: undefined } }))
+    harness.pushUpdate(harness.makeUpdate({ text: '/system status', chatId: 42, threadId: 0, extra: { chat: { id: 42, type: 'private', first_name: 'Tester' }, is_topic_message: false, message_thread_id: undefined } }))
     await harness.waitFor(
       () => harness.sent.find((call) => callText(call).includes('dsh-telegram-connector')),
-      'the about text for a normal user',
+      'the status text for a normal user',
       6000,
     )
   }, 20_000)
@@ -215,12 +215,12 @@ describe('the control chat', () => {
     })
 
     // The first DM claims the control chat, whoever sent it.
-    harness.pushUpdate(from(42, '/about'))
+    harness.pushUpdate(from(42, '/system status'))
     await harness.waitFor(() => harness.sent.some((call) => call.params.chat_id === 42), 'the first answer', 6000)
 
     // The admin writes from their own DM: that alone must not move it, or the
     // notices would follow whoever wrote last.
-    harness.pushUpdate(from(43, '/about'))
+    harness.pushUpdate(from(43, '/system status'))
     await harness.waitFor(() => harness.sent.some((call) => call.params.chat_id === 43), 'the admin answer', 6000)
     let state = JSON.parse(await readFile(harness.bindingsFile, 'utf8')) as { controlChatId?: number }
     expect(state.controlChatId).toBe(42)

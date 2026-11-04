@@ -36,7 +36,7 @@ const ALIASES: Record<string, string> = {
 
 const SURFACE_NOTE: Record<Surface, string> = {
   control:
-    'This chat is the control plane. Session commands live in a group\'s system topic; each topic is one session.',
+    'This chat is the control plane. Session commands live in a group\'s dashboard topic; each topic is one session.',
   dashboard:
     'This topic owns this group\'s workspace. Plugin, restart, update and timezone commands live in the bot chat.',
   session:
@@ -225,10 +225,10 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system',
-    usage: '/system <status|restart|update|confirm|rollback|cancel|manage|takechat>',
+    usage: '/system <status|restart|update|confirm|rollback|cancel|components|takechat>',
     summary: 'runtime lifecycle: status, restarts, connector and setup updates, optional components',
     details:
-      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update all` drains agents and moves the setup checkout through the updater service. `confirm` and `rollback` close the profile trial; rollback does not move the checkout or the DSH install. `manage` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
+      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update setup` drains agents and moves the setup checkout through the updater service. `confirm` and `rollback` close the profile trial; rollback does not move the checkout or the DSH install. `components` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
     examples: ['/system status', '/system restart now', '/system update connector'],
     surfaces: ['control'],
     group: 'system',
@@ -254,12 +254,12 @@ const COMMANDS: CommandDoc[] = [
     group: 'system',
   },
   {
-    path: 'system manage',
-    usage: '/system manage [<component> <enable|disable|port> [<port>]]',
+    path: 'system components',
+    usage: '/system components [<component> <enable|disable|port> [<port>]]',
     summary: 'optional components: list, enable, disable, change the port',
     details:
-      'No argument posts a card with one row per component (Enable/Disable and Port). The updater starts or stops the stack on the host and restarts the runtime so the tools follow; it reports the result in this chat. The text form is for precision, for example /system manage design port 8091. Needs DSH_UPDATER_TOKEN; without it the card explains what is missing.',
-    examples: ['/system manage', '/system manage design enable', '/system manage design port 8091'],
+      'No argument posts a card with one row per component (Enable/Disable and Port). The updater starts or stops the stack on the host and restarts the runtime so the tools follow; it reports the result in this chat. The text form is for precision, for example /system components design port 8091. Needs DSH_UPDATER_TOKEN; without it the card explains what is missing.',
+    examples: ['/system components', '/system components design enable', '/system components design port 8091'],
     surfaces: ['control'],
     group: 'system',
   },
@@ -268,7 +268,7 @@ const COMMANDS: CommandDoc[] = [
     usage: '/system status',
     summary: 'connector, DSH and supervisor state',
     details:
-      'Includes the open trial, its deadline and the agent preset/tool availability indirectly through `/about`. The `registry` line compares the workspaces the runtime lists with the ones bound to Telegram (a gap is what makes the web UI look empty while the bot still knows them), and the `data` line names a second runtime holding the same data directory.',
+      'Includes the open trial, its deadline and the agent preset/tool availability directly through `/system status`. The `registry` line compares the workspaces the runtime lists with the ones bound to Telegram (a gap is what makes the web UI look empty while the bot still knows them), and the `data` line names a second runtime holding the same data directory.',
     surfaces: ['control'],
     group: 'system',
   },
@@ -293,8 +293,8 @@ const COMMANDS: CommandDoc[] = [
     group: 'system',
   },
   {
-    path: 'system update all',
-    usage: '/system update all [--i-know-versions-are-incompatible]',
+    path: 'system update setup',
+    usage: '/system update setup [--i-know-versions-are-incompatible]',
     summary: 'drain sessions, then update the setup through the updater service',
     details:
       'Blocks new requests, waits until every agent (web UI and Telegram) is idle, then asks the updater to check out the latest compatible setup tag, install the matching DSH and connector, and restart. Crossing a product major or DSH line requires the explicit flag. Once the updater accepts, the card button is gone but `/system cancel` still stops the job; a failed health gate rolls back automatically. If the updater token is empty, this only prints the host commands.',
@@ -347,14 +347,6 @@ const COMMANDS: CommandDoc[] = [
     group: 'runtime',
   },
   {
-    path: 'about',
-    usage: '/about',
-    summary: 'connector, runtime and updater state',
-    details: 'Connector, DSH runtime and updater status, supervisor/trial state, plugin manager and bot count. Compatibility lives in the repository COMPATIBILITY.md, not in chat.',
-    surfaces: ['control'],
-    group: 'runtime',
-  },
-  {
     path: 'reactions',
     usage: '/reactions [read|streaming|staged|on|off|reset|allowed] [emoji]',
     summary: 'read, streaming and staged-media reactions on Telegram messages',
@@ -397,11 +389,11 @@ const COMMANDS: CommandDoc[] = [
     group: 'sessions',
   },
   {
-    path: 'setsystem',
-    usage: '/setsystem',
+    path: 'dashboard',
+    usage: '/dashboard',
     summary: 'make this empty topic the command surface',
     details:
-      'Only a topic with no session can claim the role, which is how a hand-made empty topic becomes the dashboard instead of General.',
+      'Only a topic with no session can claim the role, which is how a hand-made empty topic becomes the dashboard instead of General. In the bot chat the same command posts a control card with buttons for status, the web link, update, restart, plugins and components.',
     surfaces: ['dashboard'],
     group: 'sessions',
   },
@@ -416,7 +408,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'list archived',
-    usage: '/list archived',
+    usage: '/archived',
     summary: 'archived sessions, with whether a topic exists',
     surfaces: ['dashboard'],
     group: 'sessions',
@@ -526,7 +518,7 @@ function title(doc: CommandDoc): string {
 
 function availability(doc: CommandDoc, surface: Surface): string {
   if (available(doc, surface)) return ''
-  const rooms = doc.surfaces.map((entry) => (entry === 'control' ? 'the bot chat' : entry === 'dashboard' ? 'the system topic' : 'a session topic'))
+  const rooms = doc.surfaces.map((entry) => (entry === 'control' ? 'the bot chat' : entry === 'dashboard' ? 'the dashboard topic' : 'a session topic'))
   return `\n_available in ${rooms.join(' and ')}._`
 }
 
@@ -649,7 +641,7 @@ export interface MenuEntry {
  *
  * Built from the same registry as `/help`, so the menu cannot drift from the
  * manual. Telegram rejects names longer than 32 characters, descriptions longer
- * than 256, and more than 100 entries; subcommands (`system manage`) cannot be
+ * than 256, and more than 100 entries; subcommands (`system components`) cannot be
  * menu entries at all, so only the top-level names appear.
  *
  * @param scope - `private` for the bot chat, `group` for workspace groups.

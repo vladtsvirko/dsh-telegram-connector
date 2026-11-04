@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.9.0 | `0.2.1-rc.5` | tested | help and error text no longer describe a Docker deployment; updater and held-session advice point at the systemd service |
+| 0.2.1-rc.5-0.9.1 | `0.2.1-rc.5` | tested | command renames (`update setup`, `components`, `dashboard`, `archived`), dashboard button card, admin-gated unbind/dashboard/cleanup |
+| 0.2.1-rc.5-0.9.0 | `0.2.1-rc.5` | previous | help and error text no longer describe a Docker deployment; updater and held-session advice point at the systemd service |
 | 0.2.1-rc.5-0.8.2 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup 0.8.2 installer fix |
 | 0.2.1-rc.5-0.8.1 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup 0.8.1 CI/healthcheck fix |
 | 0.2.1-rc.5-0.8.0 | `0.2.1-rc.5` | previous | maintenance: same connector code, aligned with the setup release that drops the Docker deployment mode and adds systemd resource limits |
@@ -45,7 +46,7 @@ every release.
 | 0.2.1-rc.2-0.4.3 | `0.2.1-rc.2` | previous | the setup installs dsh-penpot-plugin with the design component |
 | 0.2.1-rc.2-0.4.2 | `0.2.1-rc.2` | previous | design stack uses the in-repo penpot CLI instead of an MCP bridge |
 | 0.2.1-rc.2-0.4.1 | `0.2.1-rc.2` | previous | setup fix that built the design MCP bridge locally |
-| 0.2.1-rc.2-0.4.0 | `0.2.1-rc.2` | previous | `/system manage` for optional components |
+| 0.2.1-rc.2-0.4.0 | `0.2.1-rc.2` | previous | `/system components` for optional components |
 | 0.2.1-rc.2-0.3.1 | `0.2.1-rc.2` | previous | avoids blocking shutdown on a rate-limited main bot |
 | 0.2.1-rc.2-0.3.0 | `0.2.1-rc.2` | previous | live process mode by default, leading-only slash, `/run` and `/skill`, media/staging fixes |
 | 0.2.1-rc.2-0.2.1 | `0.2.1-rc.2` | previous | maintenance release; setup supervisor-test fix |
@@ -54,9 +55,9 @@ every release.
 
 **Declared peer range** (not a release, and not tested): `>=0.1.0-rc.6 <0.3.0-0`.
 It is what the package declares for the harness packages; a runtime inside it but
-outside a tested row is expected to drift, and `/about` prints both values.
+outside a tested row is expected to drift, and `/system status` prints both values.
 
-`/about` in the bot chat prints the connector version, the detected runtime
+`/system status` in the bot chat prints the connector version, the detected runtime
 version and the declared peer range.
 
 ## How the range is expressed
@@ -76,8 +77,8 @@ Connector versions are `<dsh-version>-<major>.<minor>.<patch>`, for example
 releases; crossing a major or a DSH line needs the explicit
 `--i-know-versions-are-incompatible` flag.
 
-The tag, connector `package.json`, setup `VERSION`, image tags and Dockerfile
-build args must agree. Tags are immutable. The full release checklist and the
+The tag, connector `package.json` and setup `VERSION` must agree; the DSH
+version is derived from `VERSION`. Tags are immutable. The full release checklist and the
 coupling rules are in the setup repo's
 [`docs/VERSIONS.md`](https://github.com/vladtsvirko/dsh-tg-docker-setup/blob/main/docs/VERSIONS.md).
 
@@ -96,17 +97,17 @@ plugin code.
   remains the setup tag.
 - `/system update connector` reinstalls the **pinned** connector. It repairs that
   version; it does not select a newer connector tag.
-- `/system update all` moves the setup tag and lets the new entrypoint install
+- `/system update setup` moves the setup tag and lets the new entrypoint install
   the matching connector.
 
 There is no `DSH_VERSION` environment knob. The tested DSH version is hardcoded
 in the setup release (`ARG DSH_VERSION` and the image tag), and the image
-exports `DSH_RUNTIME_VERSION` for `/about`.
+exports `DSH_RUNTIME_VERSION` for `/system status`.
 
 ## Policy
 
 - Every connector release states the DSH version it was tested with in this
-  table; `/about` and the README follow the same value.
+  table; `/system status` and the README follow the same value.
 - A DSH upgrade that changes a service we use (agents, sessions, workspace
   registry/controller, session query/title, plugin manager) is a **compatibility
   event**: test the connector, then either widen the range or cut a connector
@@ -123,17 +124,17 @@ exports `DSH_RUNTIME_VERSION` for `/about`.
 | Command/operation | What moves | Guard |
 |---|---|---|
 | `/system update connector` | reinstalls the connector pinned to the current setup | supervisor trial; profile only |
-| `/system update all` | setup checkout, DSH image, connector pin, profile snapshot | drains agents; automatic rollback on failed health |
-| `/system update all --i-know-versions-are-incompatible` | latest setup tag overall | explicit human flag; may cross DSH/product major |
-| host `./update.sh --self` | same as update all, without draining | explicit host action |
+| `/system update setup` | setup checkout, installed DSH, connector pin, profile snapshot | drains agents; automatic rollback on failed health |
+| `/system update setup --i-know-versions-are-incompatible` | latest setup tag overall | explicit human flag; may cross DSH/product major |
+| host `./update.sh --apply` | same as update setup, without draining | explicit host action |
 
 `/system` never crosses a DSH line or product major without that flag. A
-downgrade is not offered: a failed health gate restores the previous image
-automatically, and a manual image rollback is a host operation.
+downgrade is not offered: a failed health gate restores the previous checkout
+and snapshot automatically, and a manual rollback is a host operation.
 
 ## Reporting drift
 
-If `/about` shows a runtime outside the tested row, send the output plus
+If `/system status` shows a runtime outside the tested row, send the output plus
 `docker compose logs --tail=100 dsh`. Most incompatibilities surface as a missing
 service (reported, never faked) or a changed result shape (rendered thinner, not
 crashed). The deployment boundaries — including what cannot be fixed from

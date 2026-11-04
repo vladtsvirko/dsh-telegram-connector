@@ -13,7 +13,7 @@ private chat with the bot        control plane
   /workspaces  /workspace …      configuration, never conversation
 
 group  "web-app"                 one Workspace
- ├── General                     workspace dashboard (or the /setsystem topic)
+ ├── General                     workspace dashboard (or the /dashboard topic)
  ├── session-9cb8…               one Session
  └── session-2f41…               one Session
 
@@ -26,7 +26,7 @@ group  "landing-page"            another Workspace
 | Private chat with the bot | control plane | connector |
 | Group | `Workspace` (id, path, title) | DSH |
 | Topic in that group | `Session` (id, title, model) | DSH |
-| General topic, or a topic claimed with `/setsystem` | workspace dashboard | connector |
+| General topic, or a topic claimed with `/dashboard` | workspace dashboard | connector |
 | Message in a session topic | a turn in that session | session log |
 
 ## 2. Source of truth
@@ -74,7 +74,7 @@ Renames are never confirmed: a control panel does not argue with its backend.
 
 - `chatId: 0` means "known workspace, no group yet".
 - Session keys are `<chatId>:<threadId>`. General (`threadId = 0`) is the
-  dashboard fallback, **not** permanently special: after `/setsystem` moves the
+  dashboard fallback, **not** permanently special: after `/dashboard` moves the
   dashboard to an empty topic, a plain message in General starts an ordinary
   session like any other topic.
 - `seenThreads` exists because Telegram has no "list topics" method. It is the
@@ -113,19 +113,19 @@ shape is what matters here.
 
 - **Control chat** — `/workspaces`, `/workspace new|link|rm`, `/plugins`,
   `/plugin info|add|enable|disable|remove|confirm|cancel|approve`, `/status`,
-  `/about`, `/timezone`, `/reactions`, `/web`, `/firewall`, `/system …`,
+  `/system status`, `/timezone`, `/reactions`, `/web`, `/firewall`, `/system …`,
   `/schedules` (stub).
-- **Dashboard** — `/new`, `/sessions`, `/status`, `/setsystem`, `/sync`,
-  `/list archived`, `/unarchive`, `/rename`, `/model`, `/close`, `/reopen`,
+- **Dashboard** — `/new`, `/sessions`, `/status`, `/dashboard`, `/sync`,
+  `/archived`, `/unarchive`, `/rename`, `/model`, `/close`, `/reopen`,
   `/forget`, `/unbind`, `/dangerous cleanup`.
 - **Session topic** — plain text is a turn. `/help`, `/man`, `/commands`,
   `/skills`, `/<skill>`, `/run`, `/skill` and host commands are accepted;
   management commands take the session as an argument in the dashboard, so a
   conversation never has to be command-aware.
 
-`/setsystem` can only claim a topic that holds no session, which is what lets a
+`/dashboard` can only claim a topic that holds no session, which is what lets a
 hand-made empty topic become the dashboard. General is the fallback until then;
-after `/setsystem`, General becomes an ordinary session topic.
+after `/dashboard`, General becomes an ordinary session topic.
 
 ### Plugin surface
 
@@ -189,7 +189,7 @@ session keeps `/sync` inside the ~20 messages/minute group limit.
 `/sync` paces its own Telegram calls through a per-chat limiter (about one per
 second, twenty per minute per group) instead of discovering the limit through
 429s. A 429 is retried after `retry_after`; the first enforced wait is announced
-once in the system chat, so a slow sync is visible rather than silent.
+once in the dashboard chat, so a slow sync is visible rather than silent.
 
 Adoption creates the last session of the workspace first. Telegram lists topics
 newest first, so this is what makes the group read top-to-bottom in the
@@ -223,7 +223,7 @@ One topic = one session, no exceptions.
 update → allowlist → private? control
                    → group?  workspace by chatId
                             → closed/reopened? archive toggle
-                            → system topic? dashboard commands
+                            → dashboard topic? dashboard commands
                             → session topic? agent.followup()
         session/event assistant/message → accumulate → throttled edit
         turn end → final edit
@@ -496,10 +496,10 @@ producers ─► outbox[chat] ─► scheduler ─► bot pool ─► Telegram
   own 20/minute budget per group; the scheduler picks the first bot with headroom
   and membership, and falls back on 429 or a missing member. Private chats are
   main-only. Membership is re-checked every six hours and reported in the group's
-  system topic when a publisher is absent.
+  dashboard topic when a publisher is absent.
 - **Edits.** The bot that sends a message owns its edits; a stream is pinned to
   that bot for the turn. Edits have their own per-chat pacing.
-- **Visibility.** While the queue is non-empty, one line in the system topic is
+- **Visibility.** While the queue is non-empty, one line in the dashboard topic is
   edited in place (`⏳ Telegram rate limit — N queued…`). Saturation events and
   lost messages are bucketed per day; at most once per six hours the owner gets a
   seven-day digest with a suggestion to add a publisher.
@@ -558,7 +558,7 @@ log is the next step if that failure mode matters.
 - Archive set → close/reopen topics automatically (today `/close` and the
   topic-close service message do it; the reconciler does not poll the archive
   set).
-- Re-bootstrap when the configured system topic disappears.
+- Re-bootstrap when the configured dashboard topic disappears.
 - `/cleanhistory`: deleting earlier bot messages is parked — the Bot API offers
   no message enumeration, and the 48-hour delete window makes any ring buffer
   fragile.

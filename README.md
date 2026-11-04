@@ -11,7 +11,7 @@ shadow store of conversations: Telegram is a projection of the harness.
 ```
 private chat with the bot        control plane: workspaces, links, status
 group "web-app"                  one workspace
- ├── General (or your /setsystem topic)   dashboard: /new, /sync, session admin
+ ├── General (or your /dashboard topic)   dashboard: /new, /sync, session admin
  ├── session-9cb8…               one session
  └── session-2f41…               one session
 group "landing-page"             another workspace
@@ -76,13 +76,17 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 - **Plugins from the chat.** `/plugins` lists the profile's bundles, `/plugin add`
   inspects a spec before anything runs and asks for a confirmation, and
   `enable`/`disable`/`remove` work without opening a terminal.
-- **Host-free after install.** In the Docker image the runtime runs under a
+- **Dashboard card.** `/dashboard` posts the common actions as inline buttons:
+  new session, sync, status and sessions in a group; status, web link, update,
+  restart, plugins and components in the bot chat. Deployment buttons are
+  admin-only, exactly like the typed commands.
+- **Host-free after install.** The runtime runs under a
   supervisor: every plugin confirmation opens a rollback window (live under HMR,
   or around a restart), and `/system update connector` reinstalls the pinned
-  connector the same way. `/system update all` drains agents and moves the whole
+  connector the same way. `/system update setup` drains agents and moves the whole
   setup through the updater sidecar. The trial comes with Commit / Roll back
   buttons; ignore it and it rolls back by itself. A dead runtime, a dead updater,
-  a broken `.env` or Docker itself still needs the host — that boundary is
+  a broken `.env` or the host itself still needs a shell — that boundary is
   documented in the setup repo's
   [LIMITS.md](https://github.com/vladtsvirko/dsh-tg-docker-setup/blob/main/docs/LIMITS.md).
 - **Durable.** Bindings survive restarts, sessions are resumed, not recreated.
@@ -149,7 +153,7 @@ allowBuilds:
 YAML
 
 # 2. add the plugin at an exact tag — the one equal to the setup VERSION
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.9.0
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.9.1
 
 # 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
@@ -170,8 +174,8 @@ Environment:
 | `DSH_TELEGRAM_PUBLISHER_TOKENS` | optional comma-separated send-only bot tokens |
 | `DSH_TIMEZONE` | default zone for parsing typed times (`/timezone` overrides) |
 | `DSH_ADMIN_USER_ID` | the one account allowed to change the deployment; unset falls back to the control-chat owner |
-| `DSH_UPDATER_TOKEN` / `DSH_UPDATER_URL` | bearer token and endpoint for `/system update all`, `manage`, `firewall`. The entrypoint/installer sets the token; the URL defaults to `http://updater:8787` (the native install writes `http://127.0.0.1:8787`) |
-| `DSH_SUPERVISOR_URL` / `DSH_SUPERVISOR_TOKEN` | set by the Docker entrypoint; absent outside it |
+| `DSH_UPDATER_TOKEN` / `DSH_UPDATER_URL` | bearer token and endpoint for `/system update setup`, `manage`, `firewall`. The entrypoint/installer sets the token; the URL defaults to `http://updater:8787` (the native install writes `http://127.0.0.1:8787`) |
+| `DSH_SUPERVISOR_URL` / `DSH_SUPERVISOR_TOKEN` | set by the deployment's entrypoint; absent outside it |
 | `DSH_HOME` | state directory (`bindings.json`, `update/`); defaults to the runtime's home |
 | `DSH_WORKSPACE` | workspace root used when `workspaceRoot` is unset |
 | `DSH_PORT` | used to build the `/web` link; defaults to `4310` |
@@ -223,7 +227,7 @@ allowlisted user; `provider`/`model` → the profile default; `workspaceRoot` �
    *Manage Topics* if you have not already.
 5. In General: `/new` starts a session. Or create a topic by hand — the first
    plain message in it creates the session.
-6. Optional but recommended: create one empty topic and send `/setsystem` in it.
+6. Optional but recommended: create one empty topic and send `/dashboard` in it.
    Commands move there; session topics then take plain text only.
 
 ## Commands
@@ -253,11 +257,11 @@ session id, an id prefix, or the topic title.
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
 | `/system update connector` | reinstall the pinned connector, in a trial |
 | `/system update connector now` | reinstall without a trial |
-| `/system update all [--i-know-versions-are-incompatible]` | drain sessions, then update setup through the updater sidecar |
+| `/system update setup [--i-know-versions-are-incompatible]` | drain sessions, then update setup through the updater sidecar |
 | `/system confirm` | commit the running trial (or press **Commit**) |
 | `/system rollback` | restore the last committed state and restart |
 | `/system cancel` | abandon a pending update and unblock the bot; after acceptance it stops the updater job |
-| `/system manage` | optional components (e.g. the design stack): a card with Enable/Disable/Port buttons |
+| `/system components` | optional components (e.g. the design stack): a card with Enable/Disable/Port buttons |
 | `/system status` | versions, supervisor, open trial, web/key/registry probes |
 | `/system takechat` | make this chat the control chat (notices and update reports follow it) |
 | `/firewall` | native only: whether ufw lets the web UI through, and the `/firewall allow <port>` fix |
@@ -265,21 +269,21 @@ session id, an id prefix, or the topic title.
 | `/timezone [zone]` | IANA zone used to read times you type (default `$DSH_TIMEZONE` or UTC) |
 | `/reactions …` | read/streaming/staged reactions: show, set, `on`/`off`, `reset`, `allowed` |
 | `/status` | model route, counts, poller, timezone, supervisor and probe lines |
-| `/about` | connector, runtime and updater state |
+| `/system status` | connector, runtime and updater state |
 | `/help` · `/man` | index, or the full manual |
 
 Plugin commands run in the private chat because they change the whole profile,
 not one workspace. `/schedules` is still a stub.
 
-### Dashboard (General, or the `/setsystem` topic)
+### Dashboard (General, or the `/dashboard` topic)
 
 | Command | Effect |
 |---|---|
 | `/new [title]` | mint a session and create its topic |
 | `/sessions` · `/status` | dashboard; `/status <session>` shows one session |
-| `/setsystem` | make this empty topic the command surface |
+| `/dashboard` | make this empty topic the command surface |
 | `/sync` | adopt sessions created in the web UI: topic + history per session |
-| `/list archived` | archived sessions and whether they have a topic |
+| `/archived` | archived sessions and whether they have a topic |
 | `/unarchive <id\|all>` | restore archived sessions, create topics |
 | `/rename <session> <title>` | rename session and topic |
 | `/model <session> <provider>/<model>` | per-session model route |
@@ -300,8 +304,8 @@ not one workspace. `/schedules` is still a stub.
 | `//text` | send a prompt that literally starts with `/` |
 | `/help` · `/man` | the session command manual |
 
-Management lives in the dashboard: `/new`, `/sessions`, `/status`, `/setsystem`,
-`/sync`, `/list archived`, `/unarchive`, `/rename`, `/model`, `/close`,
+Management lives in the dashboard: `/new`, `/sessions`, `/status`, `/dashboard`,
+`/sync`, `/archived`, `/unarchive`, `/rename`, `/model`, `/close`,
 `/reopen`, `/forget`, `/unbind`, `/dangerous cleanup`. The session-taking ones
 (`/status <session>`, `/rename`, `/model`, `/close`, `/reopen`, `/forget`) take
 the session as an argument; a session topic is for talking, not configuring.
@@ -372,11 +376,11 @@ session store — there is no export step and no second copy of a conversation.
 - **Rate limits.** Telegram allows roughly 20 messages/minute **per bot** per
   group and about one message/second per chat. Every outgoing message goes
   through one outbox per group: FIFO (control notices jump), persisted one small
-  file per item, paced per bot. When the queue waits, the system topic carries a
+  file per item, paced per bot. When the queue waits, the dashboard topic carries a
   single editable line (`⏳ Telegram rate limit — N queued…`); when every bot is
   saturated, the owner gets a weekly digest instead of silence. Streaming edits
   use a separate budget and are owned by the bot that sent the message.
-  `/sync` announces its own wait in the system chat with
+  `/sync` announces its own wait in the dashboard chat with
   `sync is rate-limited by telegram api, waiting for rate-limit to proceed, please wait`.
 
   **Exactly-once:** a send that Telegram accepted and acknowledged is removed
@@ -394,7 +398,7 @@ session store — there is no export step and no second copy of a conversation.
 - **Publisher bots.** `DSH_TELEGRAM_PUBLISHER_TOKENS` is a comma-separated list
   of extra bot tokens. They are send-only: add each to every workspace group as
   a member (the Bot API cannot do that for you). The main bot checks membership
-  every six hours and reports a missing publisher in that group's system topic.
+  every six hours and reports a missing publisher in that group's dashboard topic.
   Publisher messages are ignored as input, so they never feed the agent.
 - **Rendering.** Agent Markdown is sent as a Telegram rich message; headings and
   lists render natively, while every table is rewritten to a monospaced code
@@ -417,10 +421,10 @@ session store — there is no export step and no second copy of a conversation.
   connector), and start it again inside a trial. `now` skips the trial. A failed
   reinstall restores the previous state before the runtime comes back, so a bad
   profile update cannot strand the bot. It reinstalls the **pinned** connector;
-  moving the setup/image tag is `/system update all`, which drains agents and
+  moving the setup/image tag is `/system update setup`, which drains agents and
   uses the updater sidecar. `/system rollback` restores the profile, not the
   image.
-- **Supervised restarts.** The Docker image runs the runtime under a supervisor
+- **Supervised restarts.** The runtime runs under a supervisor
   that owns modifications to the profile and keeps a copy of it. It is the only
   process that does not load plugins, so a plugin that breaks startup cannot take
   the way back with it. A confirmed plugin change opens a trial *before* it is
@@ -465,7 +469,7 @@ session it has open.
 | `⛔ You are not authorized` with an id | add that id to `allowedUserIds` |
 | bot ignores plain messages in topics | privacy mode is on — BotFather → `/setprivacy` → Disable |
 | `could not create the session topic` | bot is not admin, or lacks *Manage Topics* |
-| `/sync` reports `adopted 0` | every session is archived, already bound to a live topic, or the workspace id does not match — check `/list archived` and the dashboard |
+| `/sync` reports `adopted 0` | every session is archived, already bound to a live topic, or the workspace id does not match — check `/archived` and the dashboard |
 | `this session is held by another client` | something owns the session's write handle; the refusal says which. **Another topic of this group** already runs it — send there, or `/forget` this binding (no restart helps). **A web UI tab** — the message is queued and **Take over** restarts the runtime, releasing every handle. **Another dsh process** over the same data directory — stop it first (`docker compose down` or `systemctl stop dsh.service`); a restart of this runtime cannot clear its lock, and `./install.sh --doctor` names it |
 | nothing happens after adding the plugin | token is empty — the connector logs a warning and stays idle |
 | group title never follows a rename | bot lacks *Change Info* in that group |

@@ -24,7 +24,6 @@ export interface NormalizedSlashInput {
 
 /** Command names owned by the connector, which must keep their current behavior. */
 export const RESERVED_CONNECTOR_COMMANDS: ReadonlySet<string> = new Set([
-  'about',
   'archived',
   'bind',
   'cleanup',
@@ -34,7 +33,6 @@ export const RESERVED_CONNECTOR_COMMANDS: ReadonlySet<string> = new Set([
   'firewall',
   'forget',
   'help',
-  'list',
   'man',
   'model',
   'new',
@@ -48,7 +46,7 @@ export const RESERVED_CONNECTOR_COMMANDS: ReadonlySet<string> = new Set([
   'run',
   'schedules',
   'sessions',
-  'setsystem',
+  'dashboard',
   'skill',
   'skills',
   'start',
@@ -127,7 +125,7 @@ const ALLOWED_SUBCOMMANDS = /^\/system\s+(?:status|cancel|restart|confirm|rollba
 
 export function allowedDuringUpdate(text: string): boolean {
   const command = text.trim()
-  // `/system` on its own is `/system status`; `/system update all` is not.
+  // `/system` on its own is `/system status`; `/system update setup` is not.
   if (command === '/system') return true
   if (ALLOWED_SUBCOMMANDS.test(command)) return true
   return /^\/(?:about|help|man|start)(?:\s|$)/.test(command)

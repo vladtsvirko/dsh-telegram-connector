@@ -99,7 +99,7 @@ describe('allowedDuringUpdate', () => {
       '/system confirm',
       '/system rollback',
       '/system',
-      '/about',
+      '/system status',
       '/help',
       '/man',
       '/start',
@@ -109,7 +109,7 @@ describe('allowedDuringUpdate', () => {
   })
 
   it('blocks anything that starts work', () => {
-    for (const command of ['/new', '/sync', '/system update all', '/system manage', '/plugin add x', 'hello', '/workspace new x']) {
+    for (const command of ['/new', '/sync', '/system update setup', '/system components', '/plugin add x', 'hello', '/workspace new x']) {
       expect(allowedDuringUpdate(command)).toBe(false)
     }
   })
