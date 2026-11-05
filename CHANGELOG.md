@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.5
+
+Maintenance release; no connector change. Aligned with the setup fix that
+exposes /run/user/<uid> to the service for rootless Podman.
+
 ## 0.2.1-rc.5-0.12.4
 
 Maintenance release; no connector change. Aligned with the setup fix that moves
