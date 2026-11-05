@@ -40,7 +40,10 @@ export interface PluginRelease {
   version: string
   /** The spec to install, in the same form as the existing source. */
   spec: string
-  project: GitHubProject
+  /** Present for a GitHub source; absent for a registry source. */
+  project?: GitHubProject
+  /** Which registry answered, for a registry source. */
+  registry?: string
   /** The declared peer range that was checked, when the manifest could be read. */
   range?: string
   /** False only when a declared range is known to exclude the runtime. */
@@ -55,6 +58,7 @@ export interface ReleaseLookup {
 
 const VERSION = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/
 const GITHUB = /^(?:github:|git\+)?(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/#\s]+?)(?:\.git)?(?:#(.+))?$/
+const NPM = /^((?:@[^/\s]+\/)?[^@/\s]+)(?:@([^\s]+))?$/
 
 export function parseVersion(text: string): ParsedVersion | undefined {
   const match = VERSION.exec(text.trim())
@@ -181,6 +185,21 @@ export function parseGitHubSource(source: string): GitHubProject | undefined {
   }
 }
 
+/** Recognize a registry package spec (`name`, `name@1.2.3`, `@scope/name@1.2.3`). */
+export function parseNpmSpec(source: string): { name: string; range?: string } | undefined {
+  const clean = source.trim()
+  if (clean.length === 0 || clean.startsWith('github:') || clean.startsWith('git+')
+    || clean.startsWith('https://') || clean.startsWith('http://')
+    || clean.startsWith('link:') || clean.startsWith('file:')) return undefined
+  const match = NPM.exec(clean)
+  if (match === null) return undefined
+  const name = match[1] as string
+  return {
+    name,
+    ...(match[2] === undefined ? {} : { range: match[2] }),
+  }
+}
+
 /** Replace (or add) the ref on a git source, preserving its form. */
 export function withRef(source: string, tag: string): string {
   const base = source.replace(/#.*$/, '')
@@ -248,6 +267,74 @@ export async function declaredRange(
   }
 }
 
+interface NpmManifest {
+  version?: unknown
+  'dist-tags'?: { latest?: unknown }
+  versions?: Record<string, { version?: unknown; peerDependencies?: Record<string, unknown> }>
+}
+
+/** Ask the registry for one package; the registry is configurable for mirrors. */
+async function npmManifest(name: string, fetchImpl: typeof fetch): Promise<{ registry: string; manifest: NpmManifest }> {
+  const registry = (process.env.DSH_NPM_REGISTRY ?? 'https://registry.npmjs.org').replace(/\/+$/, '')
+  const response = await fetchImpl(`${registry}/${encodeURIComponent(name)}`, {
+    headers: { 'user-agent': 'dsh-telegram-connector' },
+  })
+  if (!response.ok) throw new Error(`registry answered ${String(response.status)} for ${name}`)
+  return { registry, manifest: await response.json() as NpmManifest }
+}
+
+/**
+ * Resolve a registry release. `dist-tags.latest` is the newest published
+ * version; an explicit target is checked against the manifest before use.
+ */
+export async function resolveNpmRelease(
+  name: string,
+  options: { explicit?: string; fetchImpl?: typeof fetch } = {},
+): Promise<ReleaseLookup> {
+  const fetchImpl = options.fetchImpl ?? fetch
+  let found: Awaited<ReturnType<typeof npmManifest>>
+  try {
+    found = await npmManifest(name, fetchImpl)
+  } catch (error) {
+    return { problem: `could not reach the npm registry: ${error instanceof Error ? error.message : String(error)}` }
+  }
+  const latest = found.manifest['dist-tags']?.latest
+  let version: string | undefined
+  if (options.explicit !== undefined && options.explicit.trim().length > 0) {
+    version = options.explicit.trim().replace(/^v/, '')
+    if (parseVersion(version) === undefined) return { problem: `\`${options.explicit}\` is not a version.` }
+  } else if (typeof latest === 'string' && latest.length > 0) {
+    version = latest
+  }
+  if (version === undefined) return { problem: `${name} has no published versions.` }
+  const entry = found.manifest.versions?.[version]
+  if (entry === undefined) return { problem: `${name}@${version} is not published.` }
+
+  const runtime = runtimeVersion()
+  let range: string | undefined
+  let incompatible = false
+  for (const [peer, value] of Object.entries(entry.peerDependencies ?? {})) {
+    if (!peer.startsWith('@deepseek-ai/dsh-') || typeof value !== 'string') continue
+    range = value
+    if (runtime !== undefined && !satisfiesRange(runtime, value)) incompatible = true
+  }
+  if (incompatible) {
+    return {
+      problem: `${name}@${version} declares \`${range ?? 'a newer DSH range'}\`, which this runtime does not satisfy — update DSH first, or install that version on the host with an explicit exemption.`,
+    }
+  }
+  return {
+    release: {
+      tag: `v${version}`,
+      version,
+      spec: `${name}@${version}`,
+      registry: found.registry,
+      ...(range === undefined ? {} : { range }),
+      compatible: true,
+    },
+  }
+}
+
 /**
  * Resolve the newest installable release for a git source.
  *
@@ -260,8 +347,12 @@ export async function resolveRelease(
 ): Promise<ReleaseLookup> {
   const project = parseGitHubSource(source)
   if (project === undefined) {
+    const npm = parseNpmSpec(source)
+    if (npm !== undefined) {
+      return resolveNpmRelease(npm.name, options)
+    }
     return {
-      problem: 'this bundle was not installed from GitHub, so there is no tag to resolve — update it from the host.',
+      problem: 'this bundle was not installed from GitHub or npm, so there is no release to resolve — update it from the host.',
     }
   }
   const fetchImpl = options.fetchImpl ?? fetch

@@ -9,20 +9,24 @@ The same package runs in any DSH profile.
 | What | Why |
 |---|---|
 | DSH matching the range in [COMPATIBILITY.md](../COMPATIBILITY.md) | `agents`, `sessions`, the plugin manager (optional) |
-| Node 22 and pnpm | the bundle's `prepare` build |
+| Node 22 and pnpm | `dsh plugin`; source installs also need the build script |
 | A Telegram bot token | polling and the Bot API |
 | A Telegram user id | the allowlist; an empty list refuses everyone |
 
 ## Install
 
 ```sh
-# 1. Allow the git package's prepare build. pnpm 10+ prints the exact key.
+# Published package: the tarball already contains lib/, so no build script.
+dsh plugin --profile web add dsh-telegram-connector@0.13.0
+```
+
+From the source repository instead:
+
+```sh
 cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-
-# 2. Add the tagged bundle.
 dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.13.0
 ```
 
@@ -62,7 +66,7 @@ feature silently disappears.
 | Sessions, topics, workspace dashboard, media, reactions | yes | yes |
 | `/plugins`, `/plugin add|remove|enable|disable` | yes, DSH plugin manager | yes, if the profile is base-backed with `pluginManager`; otherwise the commands explain that it is absent |
 | `/system update penpot`, `/system update plugin <name>` | yes, wrapped in a supervisor trial | yes through the plugin manager; without a supervisor there is no automatic rollback |
-| `/system update connector` | yes: newest compatible tag, installed by the supervisor | no: update from the host with the two `dsh plugin` commands below |
+| `/system update connector` | yes: newest compatible npm version, installed by the supervisor | no: update from the host with the two `dsh plugin` commands below |
 | `/system update setup`, `/system components`, `/firewall` | yes, through the updater service | no: the updater is not present, and the commands say so |
 | `/system restart`, `/system rollback` | supervisor trial | restart the runtime yourself; no trial |
 | `/system status` | versions, supervisor, registry, data directory | the same lines, with absent components marked |
@@ -75,7 +79,7 @@ variables; all have defaults.
 
 ```sh
 dsh plugin --profile web remove dsh-telegram-connector
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v<new>
+dsh plugin --profile web add dsh-telegram-connector@<new>
 ```
 
 The plugin manager cannot install a git package over an installed one, so removal

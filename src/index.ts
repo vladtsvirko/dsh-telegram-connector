@@ -2199,9 +2199,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   }
 
   /**
-   * Update the connector itself. The version comes from the connector
-   * repository's newest tag, not from the setup release: the setup pin is only
-   * the install floor, so the two products can move independently.
+   * Update the connector itself. The version comes from the registry's newest
+   * release (or the repository's newest tag for a git install), not from the
+   * setup release: the setup pin is only the install floor, so the two products
+   * can move independently.
    */
   const updateConnector = async (
     message: TgMessage,
@@ -2211,7 +2212,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (supervisor === undefined) {
       return reply(
         message,
-        'this runtime has no supervisor — update the connector from the host (`dsh plugin --profile web remove dsh-telegram-connector`, then add the new tag).',
+        'this runtime has no supervisor — update the connector from the host (`dsh plugin --profile web remove dsh-telegram-connector`, then add the new version).',
       )
     }
     // Prefer the spec the profile records so a fork/alternate source updates
@@ -2237,7 +2238,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       )
     }
     if (order === 0 && explicit === undefined) {
-      return reply(message, `the connector is current (${current}); ${release.tag} is the newest tag.`)
+      return reply(message, `the connector is current (${current}); ${release.tag} is the newest version.`)
     }
     try {
       await flushOffset()
@@ -2733,7 +2734,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         )
       }
       if (order === 0) {
-        return reply(message, `\`${bundle.name}\` is current (${current}); ${release.tag} is the newest tag.`)
+        return reply(message, `\`${bundle.name}\` is current (${current}); ${release.tag} is the newest version.`)
       }
     }
 

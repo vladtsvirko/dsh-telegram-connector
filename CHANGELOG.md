@@ -2,6 +2,12 @@
 
 ## 0.13.0
 
+- **npm distribution.** The package is published as
+  `dsh-telegram-connector@<version>`; the registry tarball already contains
+  `lib/`, so installs no longer run a build script. The release workflow
+  publishes a tag with provenance, and `/system update connector` resolves npm
+  versions. GitHub tags remain supported for source installs and as the setup's
+  fallback.
 - **Independent versioning.** The connector version is now plain semver
   (`0.13.0`), not `<dsh>-<product>`. The DSH release it was tested against is a
   row in `COMPATIBILITY.md`; a setup release no longer has to carry a matching

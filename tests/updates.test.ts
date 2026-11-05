@@ -3,6 +3,7 @@ import {
   compareVersions,
   latestTag,
   parseGitHubSource,
+  parseNpmSpec,
   parseUpdateArgs,
   parseVersion,
   resolveRelease,
@@ -61,6 +62,14 @@ describe('sources', () => {
     expect(parseGitHubSource('dsh-penpot-plugin ^0.3.0')).toBeUndefined()
     expect(parseGitHubSource('link:/srv/dsh/plugin')).toBeUndefined()
     expect(parseGitHubSource('file:../plugin')).toBeUndefined()
+  })
+
+  it('understands registry specs, including scopes', () => {
+    expect(parseNpmSpec('dsh-penpot-plugin@0.3.0')).toEqual({ name: 'dsh-penpot-plugin', range: '0.3.0' })
+    expect(parseNpmSpec('@scope/name@1.2.3')).toEqual({ name: '@scope/name', range: '1.2.3' })
+    expect(parseNpmSpec('dsh-penpot-plugin')).toEqual({ name: 'dsh-penpot-plugin' })
+    expect(parseNpmSpec('github:o/r#v1.0.0')).toBeUndefined()
+    expect(parseNpmSpec('link:/srv/dsh/plugin')).toBeUndefined()
   })
 
   it('replaces the ref without changing the source form', () => {
@@ -146,5 +155,84 @@ describe('release resolution', () => {
 
   it('reports a host-managed source instead of guessing a repository', async () => {
     expect((await resolveRelease('dsh-penpot-plugin ^0.3.0')).problem).toContain('not installed from GitHub')
+  })
+})
+
+describe('registry releases', () => {
+  const npmFetch = (manifest: Record<string, unknown>): typeof fetch =>
+    (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes('registry.npmjs.org/')) return json(manifest)
+      return json({ message: 'not found' }, 404)
+    }) as typeof fetch
+
+  const registryManifest = (versions: string[], latest: string, peer = '>=0.1.0-rc.6 <0.3.0-0') => ({
+    'dist-tags': { latest },
+    versions: Object.fromEntries(versions.map((version) => [
+      version,
+      { version, peerDependencies: { '@deepseek-ai/dsh-tools': peer } },
+    ])),
+  })
+
+  it('picks dist-tags.latest and builds an exact spec', async () => {
+    const previous = process.env.DSH_RUNTIME_VERSION
+    process.env.DSH_RUNTIME_VERSION = '0.2.1-rc.5'
+    try {
+      const lookup = await resolveRelease('dsh-penpot-plugin@0.3.0', {
+        fetchImpl: npmFetch(registryManifest(['0.3.0', '0.3.1'], '0.3.1')),
+      })
+      expect(lookup.problem).toBeUndefined()
+      expect(lookup.release).toMatchObject({
+        tag: 'v0.3.1',
+        version: '0.3.1',
+        spec: 'dsh-penpot-plugin@0.3.1',
+        compatible: true,
+      })
+      expect(lookup.release?.registry).toBe('https://registry.npmjs.org')
+    } finally {
+      if (previous === undefined) delete process.env.DSH_RUNTIME_VERSION
+      else process.env.DSH_RUNTIME_VERSION = previous
+    }
+  })
+
+  it('honours an explicit published version', async () => {
+    const previous = process.env.DSH_RUNTIME_VERSION
+    process.env.DSH_RUNTIME_VERSION = '0.2.1-rc.5'
+    try {
+      const lookup = await resolveRelease('dsh-penpot-plugin@0.3.0', {
+        explicit: 'v0.3.0',
+        fetchImpl: npmFetch(registryManifest(['0.3.0', '0.3.1'], '0.3.1')),
+      })
+      expect(lookup.release?.spec).toBe('dsh-penpot-plugin@0.3.0')
+    } finally {
+      if (previous === undefined) delete process.env.DSH_RUNTIME_VERSION
+      else process.env.DSH_RUNTIME_VERSION = previous
+    }
+  })
+
+  it('refuses an unpublished or incompatible version', async () => {
+    const previous = process.env.DSH_RUNTIME_VERSION
+    process.env.DSH_RUNTIME_VERSION = '0.2.1-rc.5'
+    try {
+      const missing = await resolveRelease('dsh-penpot-plugin@0.3.0', {
+        explicit: '0.9.0',
+        fetchImpl: npmFetch(registryManifest(['0.3.0'], '0.3.0')),
+      })
+      expect(missing.problem).toContain('is not published')
+      const incompatible = await resolveRelease('dsh-penpot-plugin@0.3.0', {
+        fetchImpl: npmFetch(registryManifest(['0.3.0'], '0.3.0', '>=0.3.0-0 <0.4.0-0')),
+      })
+      expect(incompatible.problem).toContain('does not satisfy')
+    } finally {
+      if (previous === undefined) delete process.env.DSH_RUNTIME_VERSION
+      else process.env.DSH_RUNTIME_VERSION = previous
+    }
+  })
+
+  it('reports an unreachable registry', async () => {
+    const lookup = await resolveRelease('dsh-penpot-plugin@0.3.0', {
+      fetchImpl: (async () => new Response('nope', { status: 503 })) as typeof fetch,
+    })
+    expect(lookup.problem).toContain('could not reach the npm registry')
   })
 })

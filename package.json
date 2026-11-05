@@ -27,9 +27,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepare": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "prebuild": "npm run clean"
   },
   "dsh": {
     "bundle": {
@@ -61,5 +64,8 @@
     "deepseek-harness",
     "telegram",
     "bot"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }

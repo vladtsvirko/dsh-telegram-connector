@@ -8,14 +8,17 @@ together with `dsh-tg-docker-setup`.
 - The DSH release actually tested is a row in `COMPATIBILITY.md`. It is not
   encoded in the version and it does not belong in the tag.
 - `peerDependencies` declares the supported DSH range. `/system update
-  connector` reads the range from the tagged `package.json` and refuses a tag
-  the running runtime does not satisfy; keep the range honest.
-- Every tag is a candidate for the bot's update command. Do not push a tag you
-  would not install.
-- The setup pins a recommended tag and a minimum in its `plugins.json`; that is
-  a fresh-install floor, not a ceiling. A newer compatible tag installed from
-  the bot stays installed across reboots. Bumping the setup pin is a setup
-  change, not a connector release.
+  connector` reads the range from the published manifest (or the tagged
+  `package.json` for a git install) and refuses a version the running runtime
+  does not satisfy; keep the range honest.
+- Every tag is a release: `.github/workflows/publish.yml` publishes that exact
+  version to npm with provenance. Do not push a tag you would not install.
+  The workflow needs the repository secret `NPM_TOKEN` with publish rights.
+- The setup pins an exact npm `spec`, a GitHub `fallback` of the same release,
+  and a `minimum` in its `plugins.json`; that is a fresh-install floor, not a
+  ceiling. A newer compatible version installed from the bot stays installed
+  across reboots. Bumping the setup pin is a setup change, not a connector
+  release.
 
 ## Repository metadata
 
@@ -32,10 +35,12 @@ API's `PUT /repos/{owner}/{repo}/topics` are the two ways to set them.
    pin in `README.md`.
 2. If the DSH peer range changed, update `peerDependencies` and say why in
    `COMPATIBILITY.md`.
-3. Run `npm run typecheck && npm test && npm run build`.
-4. Commit, tag `v<version>`, push the tag. CI runs
-   `scripts/check-version.mjs` and fails if the tag, package and matrix drift.
-5. Optionally bump the setup's `plugins.json` recommendation and `minimum`.
+3. Run `npm run typecheck && npm test && npm run build` and
+   `npm publish --dry-run`.
+4. Commit, tag `v<version>`, push the tag. CI validates the tag, and
+   `publish.yml` uploads that exact version to npm.
+5. After the npm version exists, bump the setup's `plugins.json`
+   `spec`/`fallback`/`minimum` and run `scripts/plugin-preflight.mjs --remote`.
    The setup does not need a matching tag, and this release does not need a
    setup release.
 
