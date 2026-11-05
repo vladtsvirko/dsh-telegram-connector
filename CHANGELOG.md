@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.9
+
+Maintenance release; no connector change. Aligned with the setup fix that adds
+the ufw LAN-to-bridge route for published container ports.
+
 ## 0.2.1-rc.5-0.12.8
 
 Maintenance release; no connector change. Aligned with the setup fix for the
