@@ -151,8 +151,10 @@ versioned on its own and can move to a newer compatible tag from the bot without
 a setup release. See [`docs/STANDALONE.md`](docs/STANDALONE.md) for the same
 install without the setup.
 
-Installing by hand into an existing runtime works too, but pin the tag and grant
-the build script, or the install aborts before any code exists:
+The connector is distributed as GitHub tags; it is not published to npm yet
+(that waits for `1.0.0`). Installing by hand into an existing runtime works too,
+but pin the tag and grant the build script, or the install aborts before any
+code exists:
 
 ```sh
 # 1. allow the git package's build (its `prepare` compiles src/ into lib/)
