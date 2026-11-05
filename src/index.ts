@@ -2732,7 +2732,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           `\`${bundle.name}\` is ${current}; ${release.tag} is older — rollback is a separate operation.`,
         )
       }
-      if (order === 0 && explicit === undefined) {
+      if (order === 0) {
         return reply(message, `\`${bundle.name}\` is current (${current}); ${release.tag} is the newest tag.`)
       }
     }
