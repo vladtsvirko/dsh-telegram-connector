@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.8
+
+Maintenance release; no connector change. Aligned with the setup fix for the
+Penpot database URI (credentials moved out of the URL).
+
 ## 0.2.1-rc.5-0.12.7
 
 Maintenance release; no connector change. Aligned with the setup fix for

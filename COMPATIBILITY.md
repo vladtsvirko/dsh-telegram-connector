@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.12.7 | `0.2.1-rc.5` | tested | maintenance: setup ProtectHome runtime path |
+| 0.2.1-rc.5-0.12.8 | `0.2.1-rc.5` | tested | maintenance: setup Penpot URI fix |
+| 0.2.1-rc.5-0.12.7 | `0.2.1-rc.5` | previous | maintenance: setup ProtectHome runtime path |
 | 0.2.1-rc.5-0.12.6 | `0.2.1-rc.5` | previous | maintenance: setup UID/DESIGN-env fixes |
 | 0.2.1-rc.5-0.12.5 | `0.2.1-rc.5` | previous | maintenance: setup /run/user BindPaths for rootless Podman |
 | 0.2.1-rc.5-0.12.4 | `0.2.1-rc.5` | previous | maintenance: setup /run/dsh runtime dir for rootless Podman |
