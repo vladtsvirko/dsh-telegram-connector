@@ -62,6 +62,7 @@ import {
   type PluginManagerService,
 } from './plugins.js'
 import { SupervisorClient, deadlineText, parseTrialCallback, trialCallbackData, type SupervisorStatus } from './supervisor.js'
+import { compareVersions, parseUpdateArgs, resolveRelease } from './updates.js'
 import { commandMenu, hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag, unknownHelp, type Surface } from './help.js'
 import { resolveTimeZone, validTimeZone } from './time.js'
 import { connectorVersion, runtimeVersion, supportedRange } from './about.js'
@@ -1874,11 +1875,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (sub === 'rollback') return rollbackTrial(message)
     if (sub === 'update') {
       const [target, ...extra] = tail
-      const now = extra.join(' ').trim() === 'now'
-      if (target === 'connector') {
-        if (extra.length > 0 && !now) return reply(message, 'usage: `/system update connector [now]`')
-        return updateConnector(message, now)
-      }
       if (target === 'setup') {
         const incompatible = extra.length === 1 && extra[0] === '--i-know-versions-are-incompatible'
         if (extra.length > 0 && !incompatible) {
@@ -1886,7 +1882,22 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         }
         return updateAll(message, incompatible ? 'available' : 'compatible')
       }
-      return reply(message, 'usage: `/system update <connector|setup> [now]`')
+      const parsed = parseUpdateArgs(extra, { name: target === 'plugin' })
+      if (parsed === undefined) {
+        const hint = target === 'plugin'
+          ? '`/system update plugin <name> [to <version>] [now]`'
+          : '`/system update <connector|penpot|setup|plugin …> [to <version>] [now]`'
+        return reply(message, `usage: ${hint}`)
+      }
+      if (target === 'connector') return updateConnector(message, parsed.now, parsed.version)
+      if (target === 'penpot') return updateManagedPlugin(message, 'dsh-penpot-plugin', parsed.now, parsed.version)
+      if (target === 'plugin') {
+        if (parsed.name === undefined) {
+          return reply(message, 'usage: `/system update plugin <name> [to <version>] [now]`')
+        }
+        return updateManagedPlugin(message, parsed.name, parsed.now, parsed.version)
+      }
+      return reply(message, 'usage: `/system update <connector|penpot|setup|plugin …> [to <version>] [now]`')
     }
     return reply(message, 'usage: `/system <status|restart|update|confirm|rollback|cancel|components|takechat>`')
   }
@@ -2187,23 +2198,56 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
-  /** Reinstall the connector itself: the supervisor stops the runtime, runs reset-plugin, opens a trial. */
-  const updateConnector = async (message: TgMessage, noTrial: boolean): Promise<void> => {
+  /**
+   * Update the connector itself. The version comes from the connector
+   * repository's newest tag, not from the setup release: the setup pin is only
+   * the install floor, so the two products can move independently.
+   */
+  const updateConnector = async (
+    message: TgMessage,
+    noTrial: boolean,
+    explicit?: string,
+  ): Promise<void> => {
     if (supervisor === undefined) {
       return reply(
         message,
-        'this runtime has no supervisor — reinstall the connector from the host (`sudo ./update.sh --tg-connector`).',
+        'this runtime has no supervisor — update the connector from the host (`dsh plugin --profile web remove dsh-telegram-connector`, then add the new tag).',
       )
+    }
+    // Prefer the spec the profile records so a fork/alternate source updates
+    // itself, not this project's repository.
+    let source = 'github:vladtsvirko/dsh-telegram-connector'
+    try {
+      const self = (await pluginBundles())?.find((bundle) => bundle.name === SELF_BUNDLE)
+      if (self?.source !== undefined && self.source.length > 0) source = self.source
+    } catch {
+      // The supervisor path works without the plugin manager; keep the fallback.
+    }
+    const lookup = await resolveRelease(source, explicit === undefined ? {} : { explicit })
+    if (lookup.release === undefined) {
+      return reply(message, `**cannot update the connector** — ${lookup.problem ?? 'no release found.'}`)
+    }
+    const release = lookup.release
+    const current = connectorVersion()
+    const order = compareVersions(release.version, current)
+    if (order < 0) {
+      return reply(
+        message,
+        `the connector is ${current}; ${release.tag} is older — rollback is a host operation, not an update.`,
+      )
+    }
+    if (order === 0 && explicit === undefined) {
+      return reply(message, `the connector is current (${current}); ${release.tag} is the newest tag.`)
     }
     try {
       await flushOffset()
       await replyNow(
         message,
         noTrial
-          ? 'reinstalling the connector — no trial; this restarted state becomes the rollback point.'
-          : 'reinstalling the connector from its configured ref — the bot will be away for a few minutes. The new version comes up in a trial: commit it, or it rolls back automatically.',
+          ? `updating the connector ${current} → ${release.version} — no trial; this restarted state becomes the rollback point.`
+          : `updating the connector ${current} → ${release.version} — the bot will be away for a few minutes. The new version comes up in a trial: commit it, or it rolls back automatically.`,
       )
-      await supervisor.update(!noTrial)
+      await supervisor.update(!noTrial, release.spec)
     } catch (error) {
       return reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -2598,6 +2642,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     result: ChangeResult,
     pastTense: string,
     liveTrial?: { id: string; deadline: number | null },
+    trial = true,
   ): Promise<void> => {
     const text = describeChange(result, pastTense)
     const restartBound = result.application === 'restart-required' && supervisor !== undefined
@@ -2630,14 +2675,117 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return
     }
     try {
-      await replyNow(message, 'restarting into a **trial** — the bot will be right back, then `/system confirm` or `/system rollback`.')
+      await replyNow(
+        message,
+        trial
+          ? 'restarting into a **trial** — the bot will be right back, then `/system confirm` or `/system rollback`.'
+          : 'restarting — no trial; the new state becomes the rollback point.',
+      )
       await flushOffset()
-      await supervisor.restart(true)
+      await supervisor.restart(trial)
     } catch (error) {
       await reply(
         message,
         `the change is saved, but the restart did not start: ${error instanceof Error ? error.message : String(error)}`,
       )
+    }
+  }
+
+  /**
+   * Move an installed bundle to a newer tag through the host's plugin manager.
+   *
+   * The manager cannot install a git package over an already-installed one, so
+   * an update is remove-then-install. A trial opened before the removal covers
+   * both steps; when the install fails, the previous spec is put back at once
+   * rather than leaving the profile without the plugin until the deadline.
+   */
+  const updateManagedPlugin = async (
+    message: TgMessage,
+    name: string,
+    noTrial: boolean,
+    explicit?: string,
+  ): Promise<void> => {
+    const manager = pluginManager()
+    if (manager === undefined) return noPluginManager(message)
+    const bundle = await findBundle(name)
+    if (bundle === undefined) {
+      return reply(message, `no bundle matching \`${name}\` — \`/plugins\` lists them.`)
+    }
+    if (bundle.name === SELF_BUNDLE) return updateConnector(message, noTrial, explicit)
+    if (bundle.source === undefined || bundle.source.length === 0) {
+      return reply(
+        message,
+        `\`${bundle.name}\` has no recorded source — it came from the installation or a linked path. Update it from the host.`,
+      )
+    }
+    const lookup = await resolveRelease(bundle.source, explicit === undefined ? {} : { explicit })
+    if (lookup.release === undefined) {
+      return reply(message, `**cannot update \`${bundle.name}\`** — ${lookup.problem ?? 'no release found.'}`)
+    }
+    const release = lookup.release
+    const current = bundle.version
+    if (current !== undefined) {
+      const order = compareVersions(release.version, current)
+      if (order < 0) {
+        return reply(
+          message,
+          `\`${bundle.name}\` is ${current}; ${release.tag} is older — rollback is a separate operation.`,
+        )
+      }
+      if (order === 0 && explicit === undefined) {
+        return reply(message, `\`${bundle.name}\` is current (${current}); ${release.tag} is the newest tag.`)
+      }
+    }
+
+    let liveTrial: { id: string; deadline: number | null } | undefined
+    if (!noTrial && supervisor !== undefined) {
+      try {
+        const opened = await supervisor.openTrial()
+        if (opened.trial === undefined) throw new Error('the supervisor returned no trial')
+        liveTrial = { id: opened.trial.id, deadline: opened.trial.deadline }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        return reply(message, `cannot open a rollback window (${detail}) — nothing was changed.`)
+      }
+    }
+
+    const previous = bundle.source
+    try {
+      await reply(message, `updating \`${bundle.name}\` ${current ?? ''} → ${release.version} — pnpm may take a minute.`)
+      const removed = await manager.removeBundle(bundle.name)
+      if (removed.application === 'failed' || removed.application === 'cancelled') {
+        if (liveTrial !== undefined) await supervisor?.abandonTrial().catch(() => undefined)
+        return reply(message, describeChange(removed, 'remove'))
+      }
+      const installed = await manager.installBundle(release.spec, { enabled: bundle.enabled })
+      if (installed.application === 'failed' || installed.application === 'cancelled') {
+        await reply(message, describeChange(installed, 'update'))
+        let restored: ChangeResult | undefined
+        try {
+          restored = await manager.installBundle(previous, { enabled: bundle.enabled })
+        } catch (error) {
+          stderr(`restoring ${bundle.name} failed: ${String(error)}`)
+        }
+        if (restored !== undefined && restored.application !== 'failed' && restored.application !== 'cancelled') {
+          if (liveTrial !== undefined) await supervisor?.abandonTrial().catch(() => undefined)
+          return reply(message, `\`${bundle.name}\` ${current ?? ''} is back in place — the update changed nothing.`)
+        }
+        // The fallback install failed too. Let the supervisor's snapshot do the
+        // only restoration that is guaranteed to be complete.
+        if (liveTrial !== undefined && supervisor !== undefined) {
+          await reply(message, 'the previous version could not be reinstalled; rolling the profile back…')
+          await supervisor.rollback(`plugin update of ${bundle.name} failed`).catch((error: unknown) => {
+            stderr(`rollback after failed update: ${String(error)}`)
+          })
+        } else {
+          await reply(message, 'the previous version could not be reinstalled — install it again from the host.')
+        }
+        return
+      }
+      await finishPluginChange(message, installed, 'updated', liveTrial, !noTrial)
+    } catch (error) {
+      if (liveTrial !== undefined) await supervisor?.abandonTrial().catch(() => undefined)
+      await reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

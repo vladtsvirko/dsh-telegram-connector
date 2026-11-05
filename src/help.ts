@@ -245,7 +245,7 @@ export const COMMANDS: CommandDoc[] = [
     admin: '`status`',
     summary: 'runtime lifecycle: status, restarts, connector and setup updates, optional components',
     details:
-      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update setup` posts a confirmation card, then drains agents and moves the setup checkout through the updater service. `confirm` and `rollback` close the profile trial; rollback does not move the checkout or the DSH install. `components` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
+      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and every `update` default to a trial, `now` skips it. `update connector` moves the connector to its newest compatible tag; `update penpot` (or `update plugin <name>`) does the same for another bundle through the plugin manager; `update setup` posts a confirmation card, then drains agents and moves the setup checkout through the updater service. Plugin versions are independent of the setup tag. `confirm` and `rollback` close the profile trial; rollback does not move the checkout or the DSH install. `components` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
     examples: ['/system status', '/system restart now', '/system update connector'],
     surfaces: ['control'],
     group: 'system',
@@ -305,11 +305,33 @@ export const COMMANDS: CommandDoc[] = [
   {
     path: 'system update connector',
     admin: true,
-    usage: '/system update connector [now]',
-    summary: 'reinstall the connector from its pinned ref',
+    usage: '/system update connector [to <version>] [now]',
+    summary: 'move the connector to its newest compatible tag',
     details:
-      'The supervisor stops the runtime, runs the entrypoint reset-plugin (allow-builds and compatibility handling included), and starts it into a trial. It reinstalls the connector pinned to the current setup version; it cannot move to a different setup tag. `now` skips the trial and makes the new state the rollback point. A failed reinstall restores the previous state.',
-    examples: ['/system update connector', '/system update connector now'],
+      'Resolves the newest tag in the connector repository (or the exact `to <version>`), checks the tag\'s declared DSH range against this runtime, then asks the supervisor to stop the runtime and run the entrypoint reset-plugin into that ref. The new version comes up in a trial; `now` skips the trial and makes the restarted state the rollback point. A failed install or an unhealthy boot restores the previous state. The setup tag is no longer involved: connector and setup versions move independently.',
+    examples: ['/system update connector', '/system update connector to v0.13.1', '/system update connector now'],
+    surfaces: ['control'],
+    group: 'system',
+  },
+  {
+    path: 'system update penpot',
+    admin: true,
+    usage: '/system update penpot [to <version>] [now]',
+    summary: 'move the Penpot plugin to its newest compatible tag',
+    details:
+      'Resolves the newest tag for the installed Penpot bundle, opens a rollback trial, removes the old package and installs the new one through the host plugin manager. If the install fails, the previous version is put back at once; if that also fails, the supervisor restores the pre-update profile. The `dsh-penpot` row configuration is untouched. `/system update plugin <name>` does the same for any GitHub-installed bundle.',
+    examples: ['/system update penpot', '/system update penpot to v0.3.1'],
+    surfaces: ['control'],
+    group: 'system',
+  },
+  {
+    path: 'system update plugin',
+    admin: true,
+    usage: '/system update plugin <name> [to <version>] [now]',
+    summary: 'update any GitHub-installed bundle through the plugin manager',
+    details:
+      'The generic form of `update penpot`. The bundle must record a GitHub source; registry, linked and installation-supplied bundles are reported as host-managed. The connector refuses to remove itself here — use `update connector`, which goes through the supervisor. Plugin versions are independent of the setup tag.',
+    examples: ['/system update plugin dsh-penpot-plugin', '/system update plugin dsh-penpot-plugin to v0.3.1'],
     surfaces: ['control'],
     group: 'system',
   },
