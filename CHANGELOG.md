@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.6
+
+Maintenance release; no connector change. Aligned with the setup fix for the
+numeric UID in the unit and the DESIGN environment override.
+
 ## 0.2.1-rc.5-0.12.5
 
 Maintenance release; no connector change. Aligned with the setup fix that
