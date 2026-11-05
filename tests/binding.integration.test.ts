@@ -136,7 +136,7 @@ describe('session bookkeeping', () => {
     harness.registry.attached.push(SESSION_ID)
     harness.pushUpdate(harness.makeUpdate({ text: '/sync', threadId: 0 }))
     const reply = await harness.waitFor(
-      () => harness.sent.find((call) => callText(call).includes('could not be probed')),
+      () => harness.edited.find((call) => callText(call).includes('could not be probed')),
       'the sync summary that reports the kept topic',
       8000,
     )

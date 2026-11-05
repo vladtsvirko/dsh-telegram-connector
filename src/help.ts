@@ -21,6 +21,8 @@ export interface CommandDoc {
   surfaces: Surface[]
   group: string
   aliases?: string[]
+  /** `true` = admin only; a string names the subcommand still open to everyone. */
+  admin?: boolean | string
 }
 
 const GROUP_ORDER = ['start', 'workspace', 'sessions', 'plugins', 'system', 'runtime', 'time']
@@ -32,6 +34,9 @@ const ALIASES: Record<string, string> = {
   'plugin install': 'plugin add',
   'plugin rm': 'plugin remove',
   'plugin del': 'plugin remove',
+  'list archived': 'archived',
+  list: 'archived',
+  'workspace rm': 'workspace remove',
 }
 
 const SURFACE_NOTE: Record<Surface, string> = {
@@ -43,7 +48,7 @@ const SURFACE_NOTE: Record<Surface, string> = {
     'This topic is one session — plain text is a turn. Only a leading `/` starts a command; slashes later in the text are literal. `/commands` lists host commands, `/skills` lists user-invocable skills, `/run` bypasses connector names and `/skill` forces a skill. `//text` sends a message that starts with `/`. `/help` and `/man` work here too.',
 }
 
-const COMMANDS: CommandDoc[] = [
+export const COMMANDS: CommandDoc[] = [
   {
     path: 'help',
     usage: '/help [command]',
@@ -113,6 +118,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'workspace new',
+    admin: true,
     usage: '/workspace new <title>',
     summary: 'create a workspace directory and register it in DSH',
     details:
@@ -123,6 +129,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'workspace link',
+    admin: true,
     usage: '/workspace link <name>',
     summary: 'print the startgroup link again',
     details: '`<name>` matches the workspace id, a prefix, its title or its path basename.',
@@ -130,13 +137,15 @@ const COMMANDS: CommandDoc[] = [
     group: 'workspace',
   },
   {
-    path: 'workspace rm',
-    usage: '/workspace rm <name>',
+    path: 'workspace remove',
+    usage: '/workspace remove <name>',
+    aliases: ['/workspace rm'],
     summary: 'unregister a workspace and clear its group',
     details:
-      'Removes the workspace from DSH, deletes the binding, and deletes that group\'s session topics. The directory, the sessions and the group itself are untouched.',
+      'Shows how many session topics will be deleted, then asks for confirmation. Removes the workspace from DSH and deletes the binding; the directory, the sessions and the group itself are untouched.',
     surfaces: ['control'],
     group: 'workspace',
+    admin: true,
   },
   {
     path: 'plugins',
@@ -159,6 +168,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'plugin add',
+    admin: true,
     usage: '/plugin add <spec>',
     aliases: ['/plugin install'],
     summary: 'inspect a package, then install it after confirmation',
@@ -174,6 +184,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'plugin remove',
+    admin: true,
     usage: '/plugin remove <name>',
     aliases: ['/plugin rm'],
     summary: 'uninstall a bundle (confirmation + trial)',
@@ -184,6 +195,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'plugin enable',
+    admin: true,
     usage: '/plugin enable <name>',
     summary: 'select a bundle',
     details: 'Confirms first, then applies live under HMR or restarts into a trial.',
@@ -192,6 +204,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'plugin disable',
+    admin: true,
     usage: '/plugin disable <name>',
     summary: 'deselect a bundle, keeping the package installed',
     details: 'Confirms first. The connector refuses to disable itself.',
@@ -200,6 +213,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'plugin confirm',
+    admin: true,
     usage: '/plugin confirm',
     summary: 'run the pending plugin action',
     details:
@@ -209,6 +223,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'plugin cancel',
+    admin: true,
     usage: '/plugin cancel',
     summary: 'drop the pending plugin action',
     surfaces: ['control'],
@@ -216,6 +231,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'plugin approve',
+    admin: true,
     usage: '/plugin approve',
     summary: 'allow the install scripts pnpm blocked, then retry',
     details:
@@ -226,6 +242,7 @@ const COMMANDS: CommandDoc[] = [
   {
     path: 'system',
     usage: '/system <status|restart|update|confirm|rollback|cancel|components|takechat>',
+    admin: '`status`',
     summary: 'runtime lifecycle: status, restarts, connector and setup updates, optional components',
     details:
       'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and `update connector` default to a trial, `now` skips it. `update connector` changes the pinned profile only; `update setup` posts a confirmation card, then drains agents and moves the setup checkout through the updater service. `confirm` and `rollback` close the profile trial; rollback does not move the checkout or the DSH install. `components` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
@@ -245,6 +262,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system takechat',
+    admin: true,
     usage: '/system takechat',
     summary: 'make this private chat the control chat',
     details:
@@ -255,6 +273,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system components',
+    admin: true,
     usage: '/system components [<component> <enable|disable|port> [<port>]]',
     summary: 'optional components: list, enable, disable, change the port',
     details:
@@ -274,6 +293,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system restart',
+    admin: true,
     usage: '/system restart [now]',
     summary: 'restart the runtime; default is a trial with a rollback window',
     details:
@@ -284,6 +304,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system update connector',
+    admin: true,
     usage: '/system update connector [now]',
     summary: 'reinstall the connector from its pinned ref',
     details:
@@ -294,6 +315,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system update setup',
+    admin: true,
     usage: '/system update setup [--i-know-versions-are-incompatible]',
     summary: 'confirm, then drain sessions and update the setup',
     details:
@@ -303,6 +325,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system confirm',
+    admin: true,
     usage: '/system confirm',
     summary: 'commit the open trial',
     details: 'The Commit button on the trial message does the same. The committed state becomes the new rollback point.',
@@ -311,6 +334,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system rollback',
+    admin: true,
     usage: '/system rollback',
     summary: 'restore the last committed state and restart',
     details: 'Also available as the Roll back button. Sessions and workspace files are untouched.',
@@ -366,7 +390,7 @@ const COMMANDS: CommandDoc[] = [
   {
     path: 'schedules',
     usage: '/schedules',
-    summary: 'automation surface — not implemented yet',
+    summary: 'planned — not implemented yet',
     details: 'The scheduled-job surface lands after the plugin surface.',
     surfaces: ['control'],
     group: 'time',
@@ -390,6 +414,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'dashboard',
+    admin: true,
     usage: '/dashboard',
     summary: 'make this empty topic the command surface',
     details:
@@ -407,7 +432,7 @@ const COMMANDS: CommandDoc[] = [
     group: 'sessions',
   },
   {
-    path: 'list archived',
+    path: 'archived',
     usage: '/archived',
     summary: 'archived sessions, with whether a topic exists',
     surfaces: ['dashboard'],
@@ -461,6 +486,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'bind',
+    admin: true,
     usage: '/bind <workspace id or title>',
     summary: 'attach this group to a workspace (the startgroup link does the same)',
     details:
@@ -471,6 +497,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'unbind',
+    admin: true,
     usage: '/unbind',
     summary: 'detach this group from the workspace',
     details: 'Deletes the group\'s session topics and clears the bindings. The workspace and its sessions stay in DSH.',
@@ -479,6 +506,7 @@ const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'dangerous cleanup',
+    admin: true,
     usage: '/dangerous cleanup [confirm]',
     summary: 'delete known topics that are not sessions',
     details:
@@ -523,7 +551,10 @@ function availability(doc: CommandDoc, surface: Surface): string {
 }
 
 function renderDoc(doc: CommandDoc, surface: Surface): string {
-  const lines = [`**${title(doc)}**`, doc.summary]
+  const admin = doc.admin === undefined
+    ? ''
+    : doc.admin === true ? ' · requires admin' : ` · admin (except ${doc.admin})`
+  const lines = [`**${title(doc)}**`, doc.summary + admin]
   if (doc.details !== undefined) lines.push('', doc.details)
   if (doc.aliases !== undefined && doc.aliases.length > 0) {
     lines.push('', `aliases: ${doc.aliases.map((alias) => `\`${alias}\``).join(' · ')}`)
@@ -558,7 +589,10 @@ export function indexText(surface: Surface): string {
   for (const group of [...groups.keys()].sort((a, b) => groupRank(a) - groupRank(b))) {
     lines.push('', `**${group}**`)
     for (const doc of groups.get(group) ?? []) {
-      lines.push(`· ${title(doc)} — ${doc.summary}`)
+      const admin = doc.admin === undefined
+        ? ''
+        : doc.admin === true ? ' · admin' : ` · admin (except ${doc.admin})`
+      lines.push(`· ${title(doc)} — ${doc.summary}${admin}`)
     }
   }
   if (surface === 'control') {
@@ -588,7 +622,10 @@ export function manualText(surface: Surface, only?: string): string {
   for (const group of [...groups.keys()].sort((a, b) => groupRank(a) - groupRank(b))) {
     lines.push('', `# ${group}`)
     for (const doc of groups.get(group) ?? []) {
-      lines.push('', `**${doc.usage}**`, doc.summary)
+      const admin = doc.admin === undefined
+        ? ''
+        : doc.admin === true ? ' · requires admin' : ` · admin (except ${doc.admin})`
+      lines.push('', `**${doc.usage}**`, doc.summary + admin)
       if (doc.details !== undefined) lines.push(doc.details)
       if (doc.aliases !== undefined && doc.aliases.length > 0) {
         lines.push(`aliases: ${doc.aliases.map((alias) => `\`${alias}\``).join(' · ')}`)
@@ -659,7 +696,10 @@ export function commandMenu(scope: 'private' | 'group'): MenuEntry[] {
     const command = doc.path.replace(/^\/+/, '').slice(0, 32)
     if (command.length === 0 || seen.has(command)) continue
     seen.add(command)
-    entries.push({ command, description: doc.summary.slice(0, 256) })
+    const admin = doc.admin === undefined
+      ? ''
+      : doc.admin === true ? ' · admin' : ` · admin (except ${doc.admin})`
+    entries.push({ command, description: (doc.summary + admin).slice(0, 256) })
   }
   return entries.slice(0, 100)
 }

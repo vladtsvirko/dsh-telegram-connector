@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag,
+import { COMMANDS, hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag,
   commandMenu,
 } from '../src/help.js'
 
@@ -122,5 +122,33 @@ describe('firewall command', () => {
     expect(text).toContain('ufw')
     expect(text).toContain('allow <port>')
     expect(text).toContain('never a command from the chat')
+  })
+})
+
+describe('registry invariants', () => {
+  it('resolves every documented path through the same first token as its usage', () => {
+    for (const doc of COMMANDS) {
+      const first = doc.usage.trim().split(/\s+/)[0]!.replace(/^\/+/, '')
+      expect(doc.path.split(' ')[0], `path/usage drift for ${doc.path}`).toBe(first)
+      expect(lookupText(doc.path, doc.surfaces[0]!), `no help for ${doc.path}`).toBeDefined()
+    }
+  })
+
+  it('resolves every alias to a documented command', () => {
+    for (const doc of COMMANDS) {
+      for (const alias of doc.aliases ?? []) {
+        expect(lookupText(alias, doc.surfaces[0]!), `alias ${alias} does not resolve`).toBeDefined()
+      }
+    }
+  })
+
+  it('only puts commands that exist into the menus', () => {
+    for (const scope of ['private', 'group'] as const) {
+      for (const entry of commandMenu(scope)) {
+        const surface = scope === 'private' ? 'control' : 'dashboard'
+        const found = lookupText(entry.command, surface) ?? lookupText(entry.command, 'session')
+        expect(found, `${scope} menu entry /${entry.command} has no command`).toBeDefined()
+      }
+    }
   })
 })

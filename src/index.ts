@@ -445,6 +445,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   let staleUpdateBatch = false
   const staleUpdateNotified = new Set<number>()
   let drainState: { mode: 'compatible' | 'available'; startedAt: number; blockers: string[] } | undefined
+  /** chatId → start time of a running /sync; also refuses a concurrent sync. */
+  const syncingChats = new Map<number, number>()
   const blockedNotified = new Map<number, number>()
   const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
   const updaterToken = process.env.DSH_UPDATER_TOKEN ?? ''
@@ -1080,6 +1082,26 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
+  /** Turn the updater's JSON error into one sentence a person can act on. */
+  const updaterFailure = async (response: Response): Promise<string> => {
+    const raw = await response.text().catch(() => '')
+    let detail = raw.trim()
+    try {
+      const parsed = JSON.parse(raw) as { error?: unknown }
+      if (typeof parsed.error === 'string') detail = parsed.error
+    } catch {
+      // not JSON: keep the body, but never dump a page into the chat
+    }
+    if (detail.length > 300) detail = `${detail.slice(0, 299)}…`
+    const known: Record<number, string> = {
+      401: 'the updater rejected the token — check `DSH_UPDATER_TOKEN` in the deployment .env',
+      409: 'another update or component job is already running — wait for it or cancel it',
+      422: detail,
+      503: 'the updater is disabled or cannot read release tags — check `systemctl status dsh-updater.service`',
+    }
+    return known[response.status] ?? (detail.length > 0 ? detail : `the updater answered HTTP ${String(response.status)}`)
+  }
+
   const describeBlockingAgent = (agent: Agent): string => {
     const sessionId = agent.session.header.id
     const found = bindingForSession(String(sessionId))
@@ -1089,11 +1111,23 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return workspace === undefined ? topic : `${workspace.title} / ${topic}`
   }
 
-  const updateKeyboard = (id: string, phase: 'pending' | 'draining' | 'accepted') => {
+  const updateKeyboard = (
+    id: string,
+    phase: 'pending' | 'cross' | 'draining' | 'accepted',
+    crosses = false,
+  ) => {
     if (phase === 'pending') {
       return {
         inline_keyboard: [[
-          { text: '⬆️ Update now', callback_data: `upd:start:${id}` },
+          { text: crosses ? '⚠️ Review crossing' : '⬆️ Update now', callback_data: `upd:start:${id}` },
+          { text: 'Cancel', callback_data: `upd:cancel:${id}` },
+        ]],
+      }
+    }
+    if (phase === 'cross') {
+      return {
+        inline_keyboard: [[
+          { text: '⚠️ Cross anyway', callback_data: `upd:cross:${id}` },
           { text: 'Cancel', callback_data: `upd:cancel:${id}` },
         ]],
       }
@@ -1107,18 +1141,44 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const updateStatusText = (update: NonNullable<typeof bindings.update>): string => {
     const blockers = drainState?.blockers ?? []
     const lines = [`🔄 **setup update** \`${update.from} → ${update.target}\``]
+    const dshLine = update.dshFrom === undefined
+      ? ''
+      : `dsh: \`${update.dshFrom} → ${update.dshTo ?? '?'}\``
+    const notes = update.commits === undefined || update.commits.length === 0
+      ? []
+      : ['', 'changes:', ...update.commits.slice(0, 6).map((line) => `· ${line}`), ...(update.commits.length > 6 ? [`· … and ${String(update.commits.length - 6)} more`] : [])]
+    const rollback = 'rollback: automatic if the health gate fails; `data/home` is restored, `data/workspace` is not.'
+    if (update.phase === 'cross') {
+      lines.push(
+        '⚠️ **incompatible jump** — this crosses a DSH line or a product major; the connector API may change.',
+        ...(dshLine.length > 0 ? [dshLine] : []),
+        ...notes,
+        '',
+        rollback,
+        '',
+        'Nothing has started. **Cross anyway** confirms it; **Cancel** leaves the deployment untouched.',
+      )
+      return lines.join('\n')
+    }
     if (update.phase === 'pending') {
       const running = agents.list().filter((agent) => agent.status === 'running').length
       lines.push(
+        ...(dshLine.length > 0 ? [dshLine] : []),
+        ...notes,
+        '',
         running === 0
-          ? 'ready — no sessions are running. **Update now** hands over to the updater; dsh restarts when it applies.'
-          : `ready — ${String(running)} session(s) are running. **Update now** drains them first; dsh restarts when it applies.`,
-        'Nothing happens until you press **Update now**.',
+          ? `ready — no sessions are running. ${update.crosses === true ? '**Review crossing**' : '**Update now**'} hands over to the updater; dsh restarts when it applies.`
+          : `ready — ${String(running)} session(s) are running. ${update.crosses === true ? '**Review crossing**' : '**Update now**'} drains them first; dsh restarts when it applies.`,
+        '',
+        rollback,
+        update.crosses === true
+          ? '⚠️ this target crosses a DSH line or a product major — you will confirm it separately.'
+          : 'Nothing happens until you press **Update now**.',
       )
       return lines.join('\n')
     }
     if (update.phase === 'accepted') {
-      lines.push('🚀 updater accepted — the runtime restarts now; the updater reports the result.', 'The cancel button is gone; `/system cancel` no longer applies after acceptance.')
+      lines.push('🚀 updater accepted — the runtime restarts now; the updater reports the result.', 'The cancel button is gone; `/system cancel` still stops the updater job.')
       return lines.join('\n')
     }
     lines.push(
@@ -1138,7 +1198,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await botPool.waitEdit(botPool.main, update.chatId)
     await client.editMessageText(update.chatId, update.messageId, toTelegramHtml(updateStatusText(update)), {
       parseMode: 'HTML',
-      replyMarkup: keyboard ? updateKeyboard(update.id, update.phase) : { inline_keyboard: [] },
+      replyMarkup: keyboard ? updateKeyboard(update.id, update.phase, update.crosses === true) : { inline_keyboard: [] },
     })
   }
 
@@ -1204,6 +1264,21 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await clearUpdate()
   }
 
+  const beginDrain = async (
+    update: NonNullable<typeof bindings.update>,
+    query: TgCallbackQuery,
+    toast: string,
+  ): Promise<void> => {
+    update.phase = 'draining'
+    drainState = { mode: update.mode, startedAt: update.startedAt, blockers: [] }
+    await persist()
+    await editUpdateStatus(true).catch((error: unknown) => {
+      logger.warn(`dsh-telegram-connector: cannot edit drain status: ${String(error)}`)
+    })
+    await client.answerCallbackQuery(query.id, toast).catch(() => undefined)
+    void runSetupUpdate(update.mode)
+  }
+
   const startUpdate = async (query: TgCallbackQuery): Promise<void> => {
     if (!isAdmin(query.from?.id)) {
       await client.answerCallbackQuery(query.id, 'only the admin can do that').catch(() => undefined)
@@ -1215,14 +1290,33 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await client.answerCallbackQuery(query.id, 'this update already started or expired').catch(() => undefined)
       return
     }
-    update.phase = 'draining'
-    drainState = { mode: update.mode, startedAt: update.startedAt, blockers: [] }
-    await persist()
-    await editUpdateStatus(true).catch((error: unknown) => {
-      logger.warn(`dsh-telegram-connector: cannot edit drain status: ${String(error)}`)
-    })
-    await client.answerCallbackQuery(query.id, 'draining…').catch(() => undefined)
-    void runSetupUpdate(update.mode)
+    if (update.crosses === true && update.crossConfirmed !== true) {
+      // A cross-line jump gets its own decision screen: the flag selects the
+      // intent, the card is where the consequence is accepted.
+      update.phase = 'cross'
+      await persist()
+      await editUpdateStatus(true).catch((error: unknown) => {
+        logger.warn(`dsh-telegram-connector: cannot edit cross status: ${String(error)}`)
+      })
+      await client.answerCallbackQuery(query.id, 'confirm the incompatible jump').catch(() => undefined)
+      return
+    }
+    await beginDrain(update, query, 'draining…')
+  }
+
+  const crossUpdate = async (query: TgCallbackQuery): Promise<void> => {
+    if (!isAdmin(query.from?.id)) {
+      await client.answerCallbackQuery(query.id, 'only the admin can do that').catch(() => undefined)
+      return
+    }
+    const id = query.data?.split(':')[2]
+    const update = bindings.update
+    if (update === undefined || id === undefined || update.id !== id || update.phase !== 'cross') {
+      await client.answerCallbackQuery(query.id, 'this confirmation already started or expired').catch(() => undefined)
+      return
+    }
+    update.crossConfirmed = true
+    await beginDrain(update, query, 'crossing — draining…')
   }
 
   const cancelUpdate = async (query: TgCallbackQuery): Promise<void> => {
@@ -1320,8 +1414,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // the flag has to travel with the request.
       const response = await updaterFetch('/update', { mode, incompatible: mode === 'available' })
       if (response.status !== 202) {
-        const detail = await response.text().catch(() => '')
-        await finishUpdateStatus(`❌ setup update was not accepted: ${detail.slice(0, 300)}`)
+        await finishUpdateStatus(`❌ setup update was not accepted: ${await updaterFailure(response)}`)
         return
       }
       const accepted = await response.json() as { job?: string; from?: string; target?: string }
@@ -1355,7 +1448,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, 'a setup update is already in progress — `/system status` shows what it is waiting for.')
     }
     let health: { canApply?: boolean; tag?: string | null } | undefined
-    let resolved: { from?: string; target?: string } | undefined
+    let resolved: {
+      from?: string
+      target?: string
+      crosses?: boolean
+      dshFrom?: string
+      dshTo?: string
+      commits?: string[]
+    } | undefined
     try {
       const response = await updaterFetch('/health')
       if (!response.ok) throw new Error(`updater answered ${String(response.status)}`)
@@ -1368,10 +1468,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         // Older updater without /target: /update still resolves the target.
         resolved = { from: health.tag ?? 'current', target: 'next compatible' }
       } else if (!target.ok) {
-        const detail = await target.text().catch(() => '')
-        return reply(message, `⚠️ no setup update target: ${detail.slice(0, 300)}`)
+        return reply(message, `⚠️ no setup update target: ${await updaterFailure(target)}`)
       } else {
-        resolved = await target.json() as { from?: string; target?: string }
+        resolved = await target.json() as {
+          from?: string
+          target?: string
+          crosses?: boolean
+          dshFrom?: string
+          dshTo?: string
+          commits?: string[]
+        }
       }
     } catch (error) {
       return reply(message, `⚠️ updater is not reachable: ${String(error)}`)
@@ -1388,6 +1494,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       phase: 'pending',
       from: resolved.from,
       target: resolved.target,
+      crosses: resolved.crosses === true,
+      dshFrom: resolved.dshFrom,
+      dshTo: resolved.dshTo,
+      commits: resolved.commits,
       chatId: message.chat.id,
     }
     drainState = undefined
@@ -1396,7 +1506,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await botPool.takeMain(message.chat.id)
       const sent = await client.sendMessage(message.chat.id, toTelegramHtml(updateStatusText(bindings.update)), {
         parseMode: 'HTML',
-        replyMarkup: updateKeyboard(id, 'pending'),
+        replyMarkup: updateKeyboard(id, 'pending', resolved.crosses === true),
       })
       bindings.update.messageId = sent.message_id
       await persist()
@@ -1454,7 +1564,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const detail = await response.text().catch(() => '')
       return `⚠️ updater refused (${String(response.status)})${detail.length > 0 ? `: ${detail.slice(0, 200)}` : ''}`
     }
-    return `⏳ ${name}: ${action}${port === undefined ? '' : ` ${String(port)}`} accepted — the updater reports when it is done.`
+    return `⏳ ${name}: ${action}${port === undefined ? '' : ` ${String(port)}`} accepted — the updater reports when it is done. Send \`/system components\` for the card again.`
   }
 
   const showComponents = async (message: TgMessage): Promise<void> => {
@@ -1560,6 +1670,27 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await client.answerCallbackQuery(query.id, 'only the admin can do that').catch(() => undefined)
       return
     }
+    if (action === 'restart') {
+      await client.answerCallbackQuery(query.id, 'confirm first').catch(() => undefined)
+      return askConfirm(
+        { ...card, from: query.from },
+        [
+          '**restart dsh?**',
+          '',
+          'Every running turn stops. The restart opens a trial: **Commit** keeps the new state, **Roll back** returns to the committed one.',
+          'The typed form is `/system restart`; `/system restart now` skips the trial and makes this state the rollback point.',
+        ].join('\n'),
+        'Restart dsh',
+        async () => {
+          if (supervisor === undefined) {
+            throw new Error('this runtime has no supervisor — restart it from the host.')
+          }
+          await flushOffset()
+          await supervisor.restart(true)
+          return 'restarting into a **trial** — the bot will be back in a moment. Commit or roll back from the trial card.'
+        },
+      )
+    }
     const command = {
       new: '/new',
       sync: '/sync',
@@ -1567,7 +1698,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       sessions: '/sessions',
       web: '/web',
       update: '/system update setup',
-      restart: '/system restart',
       plugins: '/plugins',
       components: '/system components',
     }[action]
@@ -1588,18 +1718,46 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     if (action === 'port') {
       await client.answerCallbackQuery(query.id, 'choose a port').catch(() => undefined)
-      const current = value ?? ''
-      await client.editMessageText(card.chat.id, card.message_id, toTelegramHtml(`**${name}** — port\n\npick one, or send \`/system components ${name} port <n>\` for another.`), {
+      let component: ComponentInfo | undefined
+      try {
+        component = (await fetchComponents()).find((entry) => entry.name === name)
+      } catch {
+        // the updater may be unreachable; the text form still works
+      }
+      const current = component?.port
+      const base = current ?? 8090
+      const options = [...new Set([base, base + 1, base + 2])]
+        .filter((port) => port >= 1024 && port <= 65535)
+        .slice(0, 3)
+      await client.editMessageText(card.chat.id, card.message_id, toTelegramHtml([
+        `**${component?.label ?? name}** — port`,
+        '',
+        current === undefined ? 'current: not set' : `current: \`${String(current)}\``,
+        '',
+        'pick one, use Back, or send `/system components ' + name + ' port <n>` for another.',
+      ].join('\n')), {
         parseMode: 'HTML',
         replyMarkup: {
           inline_keyboard: [[
-            { text: '8090', callback_data: `cmp:set:${name}:8090` },
-            { text: '8091', callback_data: `cmp:set:${name}:8091` },
-            { text: '8092', callback_data: `cmp:set:${name}:8092` },
+            ...options.map((port) => ({ text: String(port), callback_data: `cmp:set:${name}:${port}` })),
+            { text: 'Back', callback_data: `cmp:portback:${name}` },
           ]],
         },
       }).catch(() => undefined)
-      void current
+      void value
+      return
+    }
+    if (action === 'portback') {
+      await client.answerCallbackQuery(query.id, 'components').catch(() => undefined)
+      try {
+        const components = await fetchComponents()
+        await client.editMessageText(card.chat.id, card.message_id, toTelegramHtml(componentsText(components)), {
+          parseMode: 'HTML',
+          replyMarkup: componentsKeyboard(components),
+        })
+      } catch (error) {
+        await client.answerCallbackQuery(query.id, `cannot reload components: ${String(error)}`).catch(() => undefined)
+      }
       return
     }
     if (action === 'set') {
@@ -1931,7 +2089,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return [
       `**dsh-telegram-connector** ${connectorVersion()}`,
       `dsh runtime: ${runtime === undefined ? 'unknown' : `\`${runtime}\``}`,
-      `declared peer range: ${supportedRange() === undefined ? 'unknown' : `\`${supportedRange()}\``}`,
+      `connector supports DSH: ${supportedRange() === undefined ? 'unknown' : `\`${supportedRange()}\``}`,
       webLine(),
       adminLine(),
       `updater: ${await updaterLine()}`,
@@ -2118,6 +2276,125 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     await persist()
   }
 
+  // --- consequential-action confirmation --------------------------------
+  // One component for every action that deletes something or changes the
+  // deployment: a consequence line, Confirm / Cancel, a toast on each press,
+  // and the card edited to the outcome. Typed confirmations remain as the
+  // scriptable fallback.
+
+  interface PendingConfirm {
+    id: string
+    userId: number | undefined
+    chatId: number
+    messageId: number
+    createdAt: number
+    adminOnly: boolean
+    run: () => Promise<string>
+  }
+
+  const CONFIRM_TTL_MS = 10 * 60_000
+  const pendingConfirms = new Map<string, PendingConfirm>()
+
+  const editCard = async (chatId: number, messageId: number, text: string): Promise<void> => {
+    await client.editMessageText(chatId, messageId, toTelegramHtml(text), {
+      parseMode: 'HTML',
+      replyMarkup: { inline_keyboard: [] },
+    }).catch(async () => {
+      await client.editMessageText(chatId, messageId, text, {
+        replyMarkup: { inline_keyboard: [] },
+      }).catch(() => undefined)
+    })
+  }
+
+  /** Post a card and remember what its Confirm button will do. */
+  const askConfirm = async (
+    message: TgMessage,
+    markdown: string,
+    confirmLabel: string,
+    run: () => Promise<string>,
+    options: { adminOnly?: boolean } = {},
+  ): Promise<void> => {
+    const now = Date.now()
+    for (const [key, entry] of pendingConfirms) {
+      if (now - entry.createdAt > CONFIRM_TTL_MS) pendingConfirms.delete(key)
+    }
+    const id = randomUUID().slice(0, 8)
+    await botPool.takeMain(message.chat.id)
+    let sent: TgMessage
+    try {
+      sent = await client.sendMessage(message.chat.id, toTelegramHtml(markdown), {
+        parseMode: 'HTML',
+        ...(message.message_thread_id === undefined ? {} : { threadId: message.message_thread_id }),
+        replyMarkup: {
+          inline_keyboard: [[
+            { text: confirmLabel, callback_data: `cfm:${id}` },
+            { text: 'Cancel', callback_data: `cxl:${id}` },
+          ]],
+        },
+      })
+    } catch (error) {
+      await reply(message, `${markdown}\n\n⚠️ cannot post the confirmation buttons: ${String(error)}`)
+      return
+    }
+    pendingConfirms.set(id, {
+      id,
+      userId: message.from?.id,
+      chatId: message.chat.id,
+      messageId: sent.message_id,
+      createdAt: now,
+      adminOnly: options.adminOnly ?? true,
+      run,
+    })
+  }
+
+  const handleConfirmCallback = async (
+    query: TgCallbackQuery,
+    action: 'confirm' | 'cancel',
+  ): Promise<void> => {
+    const id = query.data?.split(':')[1]
+    const pending = id === undefined ? undefined : pendingConfirms.get(id)
+    if (pending === undefined || id === undefined) {
+      await client.answerCallbackQuery(query.id, 'this confirmation expired — run the command again').catch(() => undefined)
+      const message = query.message
+      if (message !== undefined) {
+        await editCard(message.chat.id, message.message_id, '⌛ this confirmation expired — run the command again.')
+      }
+      return
+    }
+    if (pending.userId !== undefined && query.from?.id !== pending.userId) {
+      await client.answerCallbackQuery(query.id, 'that confirmation belongs to someone else').catch(() => undefined)
+      return
+    }
+    if (pending.adminOnly && !isAdmin(query.from?.id)) {
+      await client.answerCallbackQuery(query.id, 'only the admin can do that').catch(() => undefined)
+      return
+    }
+    if (Date.now() - pending.createdAt > CONFIRM_TTL_MS) {
+      pendingConfirms.delete(id)
+      await client.answerCallbackQuery(query.id, 'this confirmation expired').catch(() => undefined)
+      await editCard(pending.chatId, pending.messageId, '⌛ this confirmation expired — run the command again.')
+      return
+    }
+    if (action === 'cancel') {
+      pendingConfirms.delete(id)
+      await client.answerCallbackQuery(query.id, 'cancelled').catch(() => undefined)
+      await editCard(pending.chatId, pending.messageId, 'cancelled — nothing changed.')
+      return
+    }
+    pendingConfirms.delete(id)
+    await client.answerCallbackQuery(query.id, 'working…').catch(() => undefined)
+    try {
+      const result = await pending.run()
+      await editCard(pending.chatId, pending.messageId, result)
+    } catch (error) {
+      await editCard(
+        pending.chatId,
+        pending.messageId,
+        `⚠️ ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+
   const handleTrialButton = async (query: TgCallbackQuery): Promise<void> => {
     const parsed = parseTrialCallback(query.data)
     if (parsed === undefined) {
@@ -2284,7 +2561,15 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return reply(message, describeBundle(bundle))
   }
 
-  const pluginFooter = (): string => '`/plugin confirm` to go ahead · `/plugin cancel` to drop it.'
+  const pluginFooter = (): string => 'press **Confirm** below, or send `/plugin confirm` · `/plugin cancel` to drop it.'
+
+  /** The plugin preview uses the same card component as every other action. */
+  const confirmPlugin = (message: TgMessage, text: string, label: string): Promise<void> =>
+    askConfirm(message, `${text}\n\n${pluginFooter()}`, label, async () => {
+      if (pendingPlugin === undefined) return 'nothing is waiting — start again.'
+      await runPendingPlugin(message)
+      return 'plugin confirmation submitted — the result follows.'
+    })
 
   /**
    * What a confirmation will cost. Without HMR a bundle change only lands on a
@@ -2375,7 +2660,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       )
     }
     pendingPlugin = { userId: message.from?.id, at: Date.now(), action: { kind: 'install', spec } }
-    return reply(
+    return confirmPlugin(
       message,
       [
         describeInspection(inspection),
@@ -2383,9 +2668,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         '⚠️ a plugin runs with this runtime\'s permissions: its install scripts and its code execute on the host.',
         '',
         await restartPreview(),
-        '',
-        pluginFooter(),
       ].join('\n'),
+      'Install plugin',
     )
   }
 
@@ -2403,7 +2687,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, `\`${bundle.name}\` cannot be removed from here${reason}.`)
     }
     pendingPlugin = { userId: message.from?.id, at: Date.now(), action: { kind: 'remove', name: bundle.name } }
-    return reply(
+    return confirmPlugin(
       message,
       [
         `**remove** \`${bundle.name}\`${bundle.version === undefined ? '' : ` ${bundle.version}`}`,
@@ -2411,9 +2695,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         'the package leaves this profile and its rows stop running. Files and configuration it wrote stay.',
         '',
         await restartPreview(),
-        '',
-        pluginFooter(),
       ].join('\n'),
+      'Remove plugin',
     )
   }
 
@@ -2518,7 +2801,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       at: Date.now(),
       action: { kind: 'bundle', name: bundle.name, enabled },
     }
-    return reply(
+    return confirmPlugin(
       message,
       [
         `**${enabled ? 'enable' : 'disable'}** \`${bundle.name}\`${bundle.version === undefined ? '' : ` ${bundle.version}`}`,
@@ -2528,9 +2811,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           : 'the bundle\'s rows stop running; the package stays installed.',
         '',
         await restartPreview(),
-        '',
-        pluginFooter(),
       ].join('\n'),
+      enabled ? 'Enable plugin' : 'Disable plugin',
     )
   }
 
@@ -2570,6 +2852,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           return reply(message, 'no blocked build scripts are waiting — start with `/plugin add <spec>`.')
         }
         return runPendingPlugin(message)
+      case '':
+        return pluginList(message)
       default:
         return reply(message, PLUGIN_USAGE)
     }
@@ -3432,7 +3716,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       `workspace: \`${workspaceId}\``,
       `sessions: ${rows.length} (${live} live)`,
       `model route: \`${config.provider ?? 'default'}/${config.model ?? 'default'}\``,
-      `poller: ${stopped ? 'stopped' : 'running'}`,
+      `Telegram polling: ${stopped ? 'stopped' : 'running'}`,
       `timezone: \`${timeZone()}\``,
     ].join('\n')
   }
@@ -3529,7 +3813,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const [sub, ...tail] = rest
       const target = tail.join(' ').trim()
 
-      if (sub === 'new' || sub === 'link' || sub === 'rm') {
+      if (sub === 'new' || sub === 'link' || sub === 'rm' || sub === 'remove') {
         // Creating, adopting or forgetting a workspace changes what every user
         // in every group can reach.
         if (!requireAdmin(message)) return
@@ -3574,28 +3858,51 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         return reply(message, `**${found[1].title}**\n${linkFor(found[0])}`)
       }
 
-      if (sub === 'rm') {
+      if (sub === 'rm' || sub === 'remove') {
         const found = findWorkspace(bindings, target)
         if (found === undefined) return reply(message, `no workspace matching \`${target}\``)
-        const controller = controllerOf(ctx)
-        if (controller !== undefined) {
-          await controller.delete({ workspaceId: found[0] }).catch((error: unknown) => {
-            logger.warn(`dsh-telegram-connector: workspace delete failed: ${String(error)}`)
-          })
-        }
-        const topics = found[1].chatId === 0 ? 0 : sessionsOfChat(bindings, found[1].chatId).length
-        if (found[1].chatId !== 0) await clearChatSessions(found[1].chatId)
-        delete bindings.workspaces[found[0]]
-        await persist()
-        return reply(
+        const [workspaceId, workspace] = found
+        const rows = workspace.chatId === 0 ? [] : sessionsOfChat(bindings, workspace.chatId)
+        const preview = rows
+          .slice(0, 8)
+          .map(([threadId, bound]) => `· ${bound.title ?? `topic ${String(threadId)}`}`)
+          .join('\n')
+        return askConfirm(
           message,
-          topics === 0
-            ? 'removed from DSH. The directory, its sessions and the group are untouched.'
-            : `removed from DSH, and ${String(topics)} topic(s) in its group were deleted. The directory, its sessions and the group are untouched.`,
+          [
+            `**remove ${workspace.title}?**`,
+            '',
+            `workspace: \`${workspaceId}\``,
+            rows.length === 0
+              ? 'no session topics are attached.'
+              : `${String(rows.length)} session topic(s) and their history will be deleted.`,
+            'the directory, the DSH sessions and the group itself stay.',
+            ...(preview.length === 0
+              ? []
+              : ['', preview, ...(rows.length > 8 ? [`· … and ${String(rows.length - 8)} more`] : [])]),
+          ].join('\n'),
+          rows.length === 0 ? 'Remove workspace' : `Delete ${String(rows.length)} topic(s)`,
+          async () => {
+            const current = bindings.workspaces[workspaceId]
+            if (current === undefined) return 'already removed — nothing to do.'
+            const controller = controllerOf(ctx)
+            if (controller !== undefined) {
+              await controller.delete({ workspaceId }).catch((error: unknown) => {
+                logger.warn(`dsh-telegram-connector: workspace delete failed: ${String(error)}`)
+              })
+            }
+            const topics = current.chatId === 0 ? 0 : sessionsOfChat(bindings, current.chatId).length
+            if (current.chatId !== 0) await clearChatSessions(current.chatId)
+            delete bindings.workspaces[workspaceId]
+            await persist()
+            return topics === 0
+              ? 'removed from DSH. The directory, its sessions and the group are untouched.'
+              : `removed from DSH, and ${String(topics)} topic(s) in its group were deleted. The directory, its sessions and the group are untouched.`
+          },
         )
       }
 
-      return reply(message, 'usage: `/workspace new|link|rm …`')
+      return reply(message, 'usage: `/workspace new|link|remove …`')
     }
 
     if (command === '/plugins') return pluginList(message)
@@ -3604,7 +3911,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (command === '/firewall') return handleFirewall(message, rest)
     if (command === '/timezone') return setTimeZone(message, argument)
     if (command === '/reactions') return handleReactions(message, rest)
-    if (command === '/schedules') return reply(message, '_automation surface lands in the next batch_')
+    if (command === '/schedules') return reply(message, '`/schedules` is planned — not implemented yet.')
 
     if (command === '/status') {
       const bound = Object.keys(bindings.workspaces).length
@@ -3659,28 +3966,37 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (unbound.length === 0) {
       return reply(message, 'nothing to clean: every topic this group has shown me is a session')
     }
-    if (rest[1] !== 'confirm') {
-      return reply(
-        message,
-        [
-          `would delete **${unbound.length}** topic(s): ${unbound.map((id) => `\`${id}\``).join(', ')}`,
-          '',
-          'send `/dangerous cleanup confirm` to proceed.',
-          '_Telegram does not let a bot list topics, so this covers only topics this group has shown since the bot joined. Anything older has to go by hand._',
-        ].join('\n'),
-      )
+    const execute = async (): Promise<string> => {
+      let deleted = 0
+      for (const id of unbound) {
+        await deleteTopic(message.chat.id, id)
+        removeSession(bindings, message.chat.id, id)
+        runtimes.delete(runtimeKey(message.chat.id, id))
+        deleted += 1
+      }
+      const current = bindings.workspaces[workspaceId] ?? workspace
+      current.seenThreads = (current.seenThreads ?? seen).filter((id) => !unbound.includes(id))
+      bindings.workspaces[workspaceId] = current
+      await persist()
+      return `deleted ${String(deleted)} unbound topic(s)`
     }
-    let deleted = 0
-    for (const id of unbound) {
-      await deleteTopic(message.chat.id, id)
-      removeSession(bindings, message.chat.id, id)
-      runtimes.delete(runtimeKey(message.chat.id, id))
-      deleted += 1
+    if (rest[1] === 'confirm') {
+      // Typed fallback kept for scripts; the card is the normal path.
+      return reply(message, await execute())
     }
-    workspace.seenThreads = seen.filter((id) => !unbound.includes(id))
-    bindings.workspaces[workspaceId] = workspace
-    await persist()
-    return reply(message, `deleted ${deleted} unbound topic(s)`)
+    return askConfirm(
+      message,
+      [
+        `**delete ${String(unbound.length)} topic(s)?**`,
+        '',
+        `would delete: ${unbound.map((id) => `\`${id}\``).join(', ')}`,
+        '',
+        'their history goes with them. This cannot be undone.',
+        '_Telegram does not let a bot list topics, so this covers only topics this group has shown since the bot joined. Anything older has to go by hand._',
+      ].join('\n'),
+      `Delete ${String(unbound.length)} topic(s)`,
+      execute,
+    )
   }
 
   /**
@@ -3749,6 +4065,28 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return tail.length
   }
 
+  interface LlmCatalogService {
+    listProviders(): Array<{ id: string; name: string }>
+    listModels(provider: string): Promise<Array<{ provider: string; id: string; name: string }>>
+  }
+
+  /** The same catalog the web model picker uses, if this composition mounts it. */
+  const modelCatalog = async (): Promise<Array<{ provider: string; model: string; name: string }>> => {
+    const llm = serviceOf<LlmCatalogService>(ctx, 'llm')
+    if (llm === undefined) return []
+    const routes: Array<{ provider: string; model: string; name: string }> = []
+    for (const provider of llm.listProviders()) {
+      try {
+        for (const model of await llm.listModels(provider.id)) {
+          routes.push({ provider: provider.id, model: model.id, name: model.name })
+        }
+      } catch (error) {
+        stderr(`model catalog: ${provider.id} unavailable: ${String(error)}`)
+      }
+    }
+    return routes
+  }
+
   const handleDashboard = async (message: TgMessage, workspaceId: string, workspace: WorkspaceBinding): Promise<void> => {
     const [command, ...rest] = (message.text ?? '').trim().split(/\s+/)
     const argument = rest.join(' ').trim()
@@ -3801,13 +4139,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return postDashboardCard(message.chat.id, thread, 'group', dashboardText(workspaceId, workspace))
     }
 
-    if (command === '/list') {
-      if (rest[0] !== 'archived') return reply(message, '`/archived` lists archived sessions')
+    if (command === '/archived' || (command === '/list' && rest[0] === 'archived')) {
       const archived = (registryOf(ctx)?.archivedSessionIds ?? []).map(String)
       if (archived.length === 0) return reply(message, 'nothing archived')
       const shown = sessionsOfChat(bindings, message.chat.id).map(([, session]) => session.sessionId)
       const rows = archived.map((id) => `\`${id}\`${shown.includes(id) ? ' (has topic)' : ''}`)
       return reply(message, `**archived sessions**\n${rows.join('\n')}\n\n\`/unarchive <id>\` restores one and gives it a topic`)
+    }
+
+    if (command === '/list') {
+      return reply(message, '`/archived` lists archived sessions')
     }
 
     if (command === '/unarchive') {
@@ -3899,15 +4240,34 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
 
       if (command === '/model') {
-        const [provider, model] = tail.join(' ').split('/')
-        if (provider === undefined || provider.length === 0) {
-          return reply(message, `usage: \`/model <session> <provider>/<model>\`\ncurrent: \`${bound.model?.provider ?? config.provider ?? 'default'}/${bound.model?.model ?? config.model ?? 'default'}\``)
+        const current = `${bound.model?.provider ?? config.provider ?? 'default'}/${bound.model?.model ?? config.model ?? 'default'}`
+        const catalog = await modelCatalog()
+        if (tail.length === 0) {
+          const lines = [`model for \`${bound.sessionId.slice(-8)}\` — current \`${current}\``]
+          if (catalog.length === 0) {
+            lines.push('', 'this runtime advertises no model catalog — set one explicitly with `/model <session> <provider>/<model>`.')
+          } else {
+            lines.push('', 'available:')
+            for (const entry of catalog) {
+              const route = `${entry.provider}/${entry.model}`
+              lines.push(`· \`${route}\`${entry.name === entry.model ? '' : ` — ${entry.name}`}${route === current ? ' (current)' : ''}`)
+            }
+            lines.push('', `choose one with \`/model ${bound.sessionId.slice(-8)} <provider>/<model>\`.`)
+          }
+          return reply(message, lines.join('\n'))
         }
-        bound.model = { provider, ...(model === undefined ? {} : { model }) }
+        const [provider, model] = tail.join(' ').split('/')
+        if (provider === undefined || provider.length === 0 || model === undefined || model.length === 0) {
+          return reply(message, `usage: \`/model <session> <provider>/<model>\`\ncurrent: \`${current}\``)
+        }
+        if (catalog.length > 0 && !catalog.some((entry) => entry.provider === provider && entry.model === model)) {
+          return reply(message, `\`${provider}/${model}\` is not in this runtime's catalog — send \`/model ${bound.sessionId.slice(-8)}\` to list what is.`)
+        }
+        bound.model = { provider, model }
         setSession(bindings, message.chat.id, threadId, bound)
         await persist()
         if (runtime !== undefined) await disposeRuntime(runtime)
-        return reply(message, `model for \`${bound.sessionId.slice(-8)}\` set to \`${provider}${model === undefined ? '' : `/${model}`}\``)
+        return reply(message, `model for \`${bound.sessionId.slice(-8)}\` set to \`${provider}/${model}\` — effective next turn.`)
       }
 
       const registry = registryOf(ctx)
@@ -3927,8 +4287,19 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (command === '/sync') {
+      const now = Date.now()
+      for (const [chatId, startedAt] of syncingChats) {
+        if (now - startedAt > 10 * 60_000) syncingChats.delete(chatId)
+      }
+      if (syncingChats.has(message.chat.id)) {
+        return reply(message, 'a sync is already running in this group — wait for its status card.')
+      }
+      syncingChats.set(message.chat.id, now)
       const registry = registryOf(ctx)
-      if (registry === undefined) return reply(message, 'this composition exposes no workspace registry')
+      if (registry === undefined) {
+        syncingChats.delete(message.chat.id)
+        return reply(message, 'this composition exposes no workspace registry')
+      }
       let target = registry.get(workspaceId)
       if (target === undefined) {
         // The bindings survived but the runtime's registry did not. Recreate it
@@ -3937,6 +4308,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         const healed = await healRegistry()
         target = registry.get(workspaceId)
         if (target === undefined) {
+          syncingChats.delete(message.chat.id)
           return reply(message, [
             `the runtime does not know workspace \`${workspaceId}\` (path \`${workspace.path}\`).`,
             healed.rebinds > 0 ? 'Its registration was restored under a new id — run `/sync` again.' : '',
@@ -3946,6 +4318,41 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
 
       const archived = new Set((registry?.archivedSessionIds ?? []).map(String))
+      const total = target.sessionIds.length
+      let card: TgMessage | undefined
+      let lastEdit = 0
+      let lastText = ''
+      const renderSync = async (text: string, force = false): Promise<void> => {
+        if (card === undefined) return
+        if (!force && (text === lastText || Date.now() - lastEdit < 1200)) return
+        lastText = text
+        lastEdit = Date.now()
+        await botPool.waitEdit(botPool.main, message.chat.id)
+        await client.editMessageText(message.chat.id, card.message_id, toTelegramHtml(text), {
+          parseMode: 'HTML',
+        }).catch(() => undefined)
+      }
+      const finishSync = async (text: string): Promise<void> => {
+        syncingChats.delete(message.chat.id)
+        if (card === undefined) {
+          await reply(message, text)
+          return
+        }
+        await renderSync(text, true)
+      }
+      try {
+        await botPool.takeMain(message.chat.id)
+        card = await client.sendMessage(
+          message.chat.id,
+          toTelegramHtml(`🔄 **sync** — checking ${String(total)} session(s)…`),
+          {
+            parseMode: 'HTML',
+            ...(message.message_thread_id === undefined ? {} : { threadId: message.message_thread_id }),
+          },
+        )
+      } catch (error) {
+        logger.warn(`dsh-telegram-connector: cannot post the sync card: ${String(error)}`)
+      }
       let created = 0
       let skipped = 0
       let purged = 0
@@ -3960,12 +4367,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const rateLimitNotice = async (): Promise<void> => {
         if (noticeSent) return
         noticeSent = true
-        await sendTo(
-          message.chat.id,
-          workspace.systemThreadId ?? 0,
-          'sync is rate-limited by telegram api, waiting for rate-limit to proceed, please wait',
-          'control',
-        )
+        await renderSync('⏳ **sync** — waiting for Telegram\'s rate limit; it continues automatically.', true)
       }
 
       const paused = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -3993,10 +4395,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // Decide per session, not from a pre-computed "already known" set: a binding
       // is only worth keeping if its thread still answers, and that has to be
       // checked in the same pass that would otherwise skip the session.
+      let checked = 0
       for (const raw of target.sessionIds) {
+        checked += 1
         const sessionId = String(raw)
         if (archived.has(sessionId)) {
           skipped += 1
+          await renderSync(`🔄 **sync** · ${String(checked)}/${String(total)} checked · adopted ${String(created)} · archived ${String(skipped)}`)
           continue
         }
 
@@ -4017,6 +4422,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           }
           if (alive) {
             if (agents.get(SessionId(sessionId)) !== undefined) live += 1
+            await renderSync(`🔄 **sync** · ${String(checked)}/${String(total)} checked · adopted ${String(created)} · kept ${String(kept)}`)
             continue
           }
           if (!gone) {
@@ -4043,6 +4449,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // this is a snapshot, not a setting.)
       let provisional = 0
       for (const sessionId of pending.reverse()) {
+        await renderSync(`🔄 **sync** — creating topics for ${String(pending.length)} session(s) · adopted ${String(created)}`)
         const stored = await sessionTitleOf(sessionId)
         if (stored === undefined) provisional += 1
         const base = stored ?? `session ${sessionId.slice(-6)}`
@@ -4051,8 +4458,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         try {
           topic = await paced(() => createTopic(message.chat.id, title, true))
         } catch (error) {
-          return reply(
-            message,
+          return finishSync(
             `⚠️ sync stopped while waiting for Telegram: ${error instanceof Error ? error.message : String(error)}`,
           )
         }
@@ -4065,13 +4471,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         if (agents.get(SessionId(sessionId)) !== undefined) live += 1
       }
 
-      return reply(
-        message,
+      return finishSync(
         [
-          `adopted ${created}; ${skipped} archived skipped; ${purged} dead binding(s) replaced.`,
-          kept > 0 ? `${kept} topic(s) could not be probed (rate limit or network) — kept as they are.` : '',
-          live > 0 ? `${live} are open in a web UI: their topics mirror that tab, and Telegram prompts are refused until it closes.` : '',
-          provisional > 0 ? `${provisional} had no title: name them with \`/rename <session> <title>\`.` : '',
+          `🔄 **sync** — adopted ${String(created)}; ${String(skipped)} archived skipped; ${String(purged)} dead binding(s) replaced.`,
+          kept > 0 ? `${String(kept)} topic(s) could not be probed (rate limit or network) — kept as they are.` : '',
+          live > 0 ? `${String(live)} are open in a web UI: their topics mirror that tab, and Telegram prompts are refused until it closes.` : '',
+          provisional > 0 ? `${String(provisional)} had no title: name them with \`/rename <session> <title>\`.` : '',
         ]
           .filter((line) => line.length > 0)
           .join('\n'),
@@ -4106,13 +4511,25 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     if (command === '/unbind') {
       if (!requireAdmin(message)) return
-      const topics = sessionsOfChat(bindings, message.chat.id).length
-      await clearChatSessions(message.chat.id)
-      delete bindings.workspaces[workspaceId]
-      await persist()
-      return reply(
+      const rows = sessionsOfChat(bindings, message.chat.id)
+      return askConfirm(
         message,
-        `detached. \`${String(topics)}\` topic(s) deleted with their bindings; the workspace still exists in DSH, and the group is yours to keep or delete.`,
+        [
+          `**detach ${workspace.title} from this group?**`,
+          '',
+          rows.length === 0
+            ? 'no session topics are attached.'
+            : `${String(rows.length)} session topic(s) and their history will be deleted with their bindings.`,
+          'the workspace and its sessions stay in DSH; the group stays yours.',
+        ].join('\n'),
+        rows.length === 0 ? 'Detach group' : `Detach and delete ${String(rows.length)} topic(s)`,
+        async () => {
+          const topics = sessionsOfChat(bindings, message.chat.id).length
+          await clearChatSessions(message.chat.id)
+          delete bindings.workspaces[workspaceId]
+          await persist()
+          return `detached. \`${String(topics)}\` topic(s) deleted with their bindings; the workspace still exists in DSH, and the group is yours to keep or delete.`
+        },
       )
     }
 
@@ -4868,7 +5285,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (isReservedConnectorCommand(name)) {
       await stageSlashMedia(message, threadId, media, groupItems)
       if (name === 'restart' || name === 'confirm' || name === 'rollback' || name === 'update' || name === 'plugin' || name === 'plugins') {
-        await reply(message, 'that one is profile-global — the private chat with the bot has it.')
+        await reply(message, `\`/${name}\` is a bot-chat command — send it in the private chat with the bot.`)
         return
       }
       // Reserved means the connector's own command wins, not that a host command
@@ -4878,7 +5295,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (await executeHostCommand(message, runtime, name, parsed.args.trim(), `/${name}`, false)) return
       await reply(
         message,
-        `this is a session topic — connector commands live in the dashboard topic. Try \`/commands\` or \`/skills\` here.`,
+        `\`/${name}\` is a dashboard command — use General, or the topic you claimed with \`/dashboard\`. Try \`/commands\` or \`/skills\` here.`,
       )
       return
     }
@@ -5190,6 +5607,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
               await cancelUpdate(query)
               continue
             }
+            if (query.data?.startsWith('upd:cross:')) {
+              await crossUpdate(query)
+              continue
+            }
             if (staleUpdateBatch) {
               await client.answerCallbackQuery(query.id, 'update finished — send your request again').catch(() => undefined)
               continue
@@ -5200,6 +5621,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             }
             if (!isAllowed(query.from?.id)) {
               await client.answerCallbackQuery(query.id, 'not authorized').catch(() => undefined)
+              continue
+            }
+            // Confirm/Cancel cards carry their own author and admin checks.
+            if (query.data?.startsWith('cfm:') || query.data?.startsWith('cxl:')) {
+              await handleConfirmCallback(query, query.data.startsWith('cfm:') ? 'confirm' : 'cancel')
               continue
             }
             // Dashboard buttons decide their own permissions: workspace actions
@@ -5246,7 +5672,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             if (message.text !== undefined) {
               await reply(
                 message,
-                `⛔ You are not authorized to use this bot.\n\nyour id: \`${String(message.from?.id)}\``,
+                `⛔ You are not authorized to use this bot.\n\nyour id: \`${String(message.from?.id)}\`\n\nAsk whoever installed the bot to add this id to \`ALLOWED_USER_IDS\` in the deployment \`.env\`, then restart dsh.`,
               ).catch(() => undefined)
             }
             continue

@@ -1,6 +1,47 @@
 # Changelog
 
-## 0.2.1-rc.5-0.10.7
+## 0.2.1-rc.5-0.11.0
+
+### Added
+
+- **One confirmation card for consequential actions.** `/workspace remove`,
+  `/unbind`, `/dangerous cleanup`, plugin add/remove/enable/disable and the
+  dashboard **Restart** button now post a consequence summary with **Confirm**
+  and **Cancel**. Every press answers with a toast and the card is edited to the
+  result; the typed `confirm` forms remain as the scriptable fallback.
+- **`/sync` reports progress.** It posts a live card (`checked 4/12`, `adopted 2`)
+  and refuses a second sync in the same group.
+- **`/model` lists the runtime's models.** Without a route it queries the
+  runtime's model catalog, marks the current route and rejects a route outside
+  it.
+- **Admin markers.** `/help`, `/man` and the Telegram menu mark admin-only
+  commands (`· admin`), with `/system status` called out as the open subcommand.
+- **Release notes and a cross-version gate.** The setup-update card shows the DSH
+  delta, recent commit subjects and the rollback contract; a target that crosses
+  a DSH line or product major gets a separate **Cross anyway** confirmation.
+- **Component Port sub-card.** It shows the current port, derived choices and a
+  **Back** button instead of the fixed 8090/8091/8092 triplet.
+
+### Fixed
+
+- **`/archived` is reachable.** It was documented, listed in `/help` and never
+  dispatched; the only working spelling was `/list archived`. Both now work and
+  the menu lists `/archived`.
+- **The setup-update card no longer denies `/system cancel`.** It says the
+  command still stops an accepted job, which is what the code does.
+- **Deleting topics is previewed.** `/workspace remove` (alias `/workspace rm`)
+  and `/unbind` show how many topics and which ones go, then ask.
+- **Canonical verbs.** `/workspace remove` is the documented form; `/plugin` with
+  no subcommand lists bundles like `/plugins`.
+- **Actionable refusals.** A command used in the wrong topic names itself and its
+  home; the unauthorized reply names the fix.
+- **Errors are sentences.** Updater failures no longer print raw JSON, and
+  truncated reports say they were truncated.
+- **Copy and icons.** `/system status` uses plain labels, `/schedules` is marked
+  planned, and the button icon roles are documented.
+
+
+## 0.2.1-rc.5-0.11.0
 
 Maintenance release; no connector change. Aligned with the setup fix for the
 Penpot compose service names (`penpot-backend`/`penpot-exporter`).

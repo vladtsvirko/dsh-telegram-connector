@@ -47,9 +47,17 @@ export interface UpdateBinding {
   id: string
   startedAt: number
   mode: 'compatible' | 'available'
-  phase: 'pending' | 'draining' | 'accepted'
+  phase: 'pending' | 'cross' | 'draining' | 'accepted'
   from: string
   target: string
+  /** Set when the target crosses a DSH line or a product major. */
+  crosses?: boolean
+  /** The operator explicitly accepted an incompatible jump. */
+  crossConfirmed?: boolean
+  dshFrom?: string
+  dshTo?: string
+  /** Commit subjects between the two tags, for the confirmation card. */
+  commits?: string[]
   /** Control chat and the editable status message. */
   chatId: number
   messageId?: number

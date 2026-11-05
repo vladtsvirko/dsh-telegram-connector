@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.10.7 | `0.2.1-rc.5` | tested | maintenance: setup Penpot service-name fix |
+| 0.2.1-rc.5-0.11.0 | `0.2.1-rc.5` | tested | confirmation cards with feedback, live `/sync` progress, runtime model list, admin markers, release notes on the update card, `/archived` fix |
+| 0.2.1-rc.5-0.10.7 | `0.2.1-rc.5` | previous | maintenance: setup Penpot service-name fix |
 | 0.2.1-rc.5-0.10.6 | `0.2.1-rc.5` | previous | maintenance: setup Podman DNS/.env-permission fixes |
 | 0.2.1-rc.5-0.10.5 | `0.2.1-rc.5` | previous | maintenance: setup git-manifest reporting fix |
 | 0.2.1-rc.5-0.10.4 | `0.2.1-rc.5` | previous | maintenance: no connector code change; aligned with the setup release that fixes the `apple-hig` skill and its release notes |

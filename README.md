@@ -157,7 +157,7 @@ allowBuilds:
 YAML
 
 # 2. add the plugin at an exact tag — the one equal to the setup VERSION
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.10.7
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.11.0
 
 # 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
@@ -249,13 +249,13 @@ session id, an id prefix, or the topic title.
 | `/workspaces` | list workspaces, their groups and links (a link only for a group-less workspace) |
 | `/workspace new <title>` | create directory + workspace, print the group link |
 | `/workspace link <name>` | print the group link again |
-| `/workspace rm <name>` | unregister from DSH, delete the binding and the group's session topics (files and sessions are untouched) |
+| `/workspace remove <name>` | preview the topics, confirm, then unregister from DSH and delete the group's session topics (files and sessions are untouched) |
 | `/plugins` | list the profile's bundles: enabled, disabled, available |
 | `/plugin info <name>` | version, source, rows, overrides and any error |
-| `/plugin add <spec>` | inspect a package, then install it after `/plugin confirm` |
+| `/plugin add <spec>` | inspect a package, then install it after **Confirm** (or `/plugin confirm`) |
 | `/plugin enable <name>` · `/plugin disable <name>` | select or deselect a bundle (confirmed like the rest) |
 | `/plugin remove <name>` | uninstall a bundle (asks for confirmation) |
-| `/plugin confirm` · `/plugin cancel` | finish or drop a pending install/removal |
+| `/plugin confirm` · `/plugin cancel` | finish or drop a pending install/removal (the card has the same buttons) |
 | `/plugin approve` | allow the install scripts pnpm blocked, and retry |
 | `/system restart` | restart into a trial: the new state is live, with a rollback window |
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
@@ -385,7 +385,7 @@ session store — there is no export step and no second copy of a conversation.
   saturated, the owner gets a weekly digest instead of silence. Streaming edits
   use a separate budget and are owned by the bot that sent the message.
   `/sync` announces its own wait in the dashboard chat with
-  `sync is rate-limited by telegram api, waiting for rate-limit to proceed, please wait`.
+  the sync card says `waiting for Telegram's rate limit; it continues automatically`.
 
   **Exactly-once:** a send that Telegram accepted and acknowledged is removed
   from the queue and never repeated. The unavoidable window is a process death
@@ -493,7 +493,7 @@ session it has open.
 - The bot is an admin of its groups and can delete topics. `/dangerous cleanup`
   requires an explicit `confirm`; `/forget` never deletes anything.
 - **Plugins execute host code.** `/plugin add` inspects first and installs only
-  after `/plugin confirm`; blocked install scripts need `/plugin approve`, which
+  after **Confirm** (or `/plugin confirm`); blocked install scripts need `/plugin approve`, which
   names exactly the packages allowed. The connector refuses to remove or disable
   itself, since that would cut the line mid-command.
 - `bindings.json` contains chat ids and session ids, not message contents.

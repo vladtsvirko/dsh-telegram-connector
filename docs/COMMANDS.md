@@ -18,9 +18,10 @@ Conventions:
   instead of its own help.
 - Aliases: `/start` = `/help`, `/?` = `/help`, `/plugin list` = `/plugins`,
   `/plugin install` = `/plugin add`, `/plugin rm` = `/plugin del` =
-  `/plugin remove`.
+  `/plugin remove`, `/workspace rm` = `/workspace remove`. `/plugin` with no
+  subcommand lists the bundles, like `/plugins`.
 - Admin-only (the `adminUserId` account, or the control-chat owner when unset):
-  `/workspace new|link|rm`, every `/system` subcommand except `status`,
+  `/workspace new|link|remove`, every `/system` subcommand except `status`,
   `/plugin add|remove|enable|disable|confirm|cancel|approve`, `/bind`,
   `/system takechat`, `/firewall allow`, `/unbind`, `/dashboard`,
   `/dangerous cleanup`. The inline buttons that do the same things — trial
@@ -41,7 +42,7 @@ Conventions:
 | `/workspaces` | list workspaces, their group, and the startgroup link (only for a workspace that has no group yet) |
 | `/workspace new <title>` | create `<workspaceRoot>/<slug>`, register it in DSH, print the link |
 | `/workspace link <name>` | print that link again |
-| `/workspace rm <name>` | unregister from DSH, delete the binding, delete the group's session topics; files and sessions are untouched |
+| `/workspace remove <name>` | unregister from DSH, delete the binding, delete the group's session topics after a confirmation card; files and sessions are untouched |
 
 A workspace lives in exactly one group. A group that is already bound **cannot**
 be rebound: binding a different workspace there is refused, and you must
@@ -65,7 +66,7 @@ dashboard.
 | `/plugin approve` | allow the install scripts pnpm blocked, then retry |
 
 A spec is a registry name (`pkg`, `pkg@1.2`), `github:owner/repo`, an absolute
-path, or a tarball URL. `/plugin add` never mutates before `/plugin confirm`;
+path, or a tarball URL. `/plugin add` never mutates before you press **Confirm** (or send `/plugin confirm`);
 the pending action expires after ten minutes and is bound to its author.
 
 Every confirmed plugin action opens a **trial** first: under HMR the change is
@@ -83,7 +84,7 @@ connector refuses to disable or remove itself.
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
 | `/system update connector` | reinstall the pinned connector, in a trial |
 | `/system update connector now` | reinstall without a trial |
-| `/system update setup [--i-know-versions-are-incompatible]` | show a confirmation card (target + running sessions), then drain and update through the updater service; the flag permits a major/DSH jump |
+| `/system update setup [--i-know-versions-are-incompatible]` | show a card with the target, DSH change, recent commit subjects and running sessions, then drain and update through the updater service; a cross-line jump gets a second **Cross anyway** confirmation |
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
 | `/system components [<component> <enable\|disable\|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form. The Port button offers three presets (8090/8091/8092); use the text form for anything else |
@@ -152,7 +153,7 @@ one zone to become an instant.
 
 | Command | State |
 |---|---|
-| `/schedules` | not implemented yet |
+| `/schedules` | planned — not implemented yet (kept as a roadmap signal) |
 
 ---
 
@@ -170,6 +171,16 @@ The **flow cards** are confirmation prompts: trial Commit/Roll back, the update
 card's ✖ (while draining), component Enable/Disable/Port, and Take over (confirmed; restarts dsh) for a
 held session. They are admin-only, like their commands.
 
+Every consequential action uses one **Confirm / Cancel** card: `/workspace
+remove`, `/unbind`, `/dangerous cleanup`, plugin add/remove/enable/disable and
+the dashboard **Restart** button. Each press answers with a toast
+(`deleting…` / `cancelled`), and the card is edited to the result. The typed
+`confirm` forms remain as the scriptable fallback.
+
+Icon roles (labels stand alone; the icon never carries the meaning): `✅`
+confirm/commit, `✖` cancel, `⏳` in progress. Area icons (`📊`, `🌐`, `🧩`,
+`⚙️`) are decorative and may change; no flow depends on them.
+
 ## Workspace dashboard (General or the `/dashboard` topic)
 
 | Command | What it does |
@@ -182,7 +193,7 @@ held session. They are admin-only, like their commands.
 | `/archived` | archived sessions and whether they have a topic |
 | `/unarchive <id\|all>` | restore archived sessions and create their topics |
 | `/rename <session> <title>` | rename session and topic |
-| `/model <session> <provider>/<model>` | per-session model route |
+| `/model <session> [<provider>/<model>]` | per-session model route; without a route it lists the models this runtime advertises |
 | `/close <session>` | archive the session and close its topic |
 | `/reopen <session>` | unarchive and reopen |
 | `/forget <session>` | drop the topic→session binding; both stay |
@@ -206,7 +217,7 @@ messages. Safe to repeat; the second run reports `adopted 0`.
 It paces itself to Telegram's group limits (about one call per second, twenty
 per minute) and retries a 429 after `retry_after`. When a wait is enforced it
 posts once in the dashboard chat:
-`sync is rate-limited by telegram api, waiting for rate-limit to proceed, please wait`.
+the sync card says `waiting for Telegram's rate limit; it continues automatically`.
 
 `/dangerous cleanup` lists what it would delete; nothing is deleted without
 `/dangerous cleanup confirm`. Telegram cannot list topics, so only topics this

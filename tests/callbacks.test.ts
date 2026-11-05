@@ -147,3 +147,37 @@ describe('dashboard status and sessions are distinct', () => {
     expect(callText(sessions)).toContain('Test Workspace')
   })
 })
+
+describe('consequential actions use one confirmation card', () => {
+  it('previews /unbind, refuses a non-admin, then executes for the admin with feedback', async () => {
+    const harness = await start()
+    harness.pushUpdate(harness.makeUpdate({ text: '/unbind', threadId: 0, userId: ADMIN_ID }))
+    const card = await harness.waitFor(
+      () => harness.sent.find((call) => {
+        const markup = call.params.reply_markup as
+          | { inline_keyboard?: Array<Array<{ callback_data?: string }>> }
+          | undefined
+        return markup?.inline_keyboard?.[0]?.[0]?.callback_data?.startsWith('cfm:') === true
+      }),
+      'the unbind confirmation card',
+      6000,
+    )
+    const markup = card.params.reply_markup as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>
+    }
+    const confirm = markup.inline_keyboard[0]![0]!.callback_data
+    expect(callText(card)).toContain('session topic')
+    expect(callText(card)).toContain('will be deleted')
+
+    press(harness, confirm, USER_ID)
+    await harness.waitFor(() => answers(harness).includes('that confirmation belongs to someone else'), 'non-admin refusal')
+
+    press(harness, confirm, ADMIN_ID)
+    await harness.waitFor(
+      () => harness.edited.some((call) => callText(call).includes('detached')),
+      'the executed result',
+      6000,
+    )
+    expect(harness.answered.map(callText)).toContain('working…')
+  })
+})

@@ -137,7 +137,7 @@ a workspace topic, and it rides on the host's `pluginManager` service:
 | `/plugins` | `listBundles()` |
 | `/plugin info <name>` | `listBundles()`, matched by name, title or scope-less name |
 | `/plugin add <spec>` | `inspect(spec)` — no mutation |
-| `/plugin confirm` | `installBundle(spec)` |
+| **Confirm** button or `/plugin confirm` | `installBundle(spec)` |
 | `/plugin approve` | `installBundle(spec, { approvedBuilds })` |
 | `/plugin enable\|disable <name>` | `setBundleEnabled(name, boolean)` |
 | `/plugin remove <name>` | `removeBundle(name)` |
@@ -321,7 +321,7 @@ and directories.
   an explicit `confirm`, and `/forget` never deletes anything.
 - Plugin mutations are the highest-risk surface: a bundle's code and install
   scripts run with the runtime's permissions. `/plugin add` inspects first and
-  installs only after an explicit `/plugin confirm`; blocked install scripts are
+  installs only after an explicit confirmation (the card's **Confirm** or `/plugin confirm`); blocked install scripts are
   named and only `/plugin approve` allows exactly those names; `/plugin remove`
   confirms too. Enable/disable is confirmed like the rest, and reversible. The
   connector refuses to disable or remove its own bundle.
@@ -371,7 +371,7 @@ a rollback, which is what makes the swap cheap and safe.
 |---|---|---|
 | `/system restart` (default) | connector → `POST /restart {trial:true}` | supervisor persists the trial, then restarts `dsh` |
 | `/system restart now` | connector → `POST /restart {trial:false}` | supervisor snapshots the current profile, then restarts |
-| plugin confirmation | connector → `POST /trial/open` | trial opens *before* the change, without restarting |
+| plugin confirmation (**Confirm** / `/plugin confirm`) | connector → `POST /trial/open` | trial opens *before* the change, without restarting |
 | change applied live | connector | keeps the trial; the message is the confirmation |
 | change needs a restart | connector → abandon + `/system restart` | the live trial is closed and a restart trial opened |
 | `/system update connector` | connector → `POST /update {trial:true}` | supervisor stops the runtime, runs `dsh-entrypoint reset-plugin`, starts a trial |
@@ -400,7 +400,7 @@ deserves the same window. The connector therefore opens the trial *before* the
 manager runs the operation:
 
 ```
-/plugin confirm ─► POST /trial/open ─► mutation ─┬─ applied        ─► keep trial, announce
+Confirm / /plugin confirm ─► POST /trial/open ─► mutation ─┬─ applied        ─► keep trial, announce
                                                  ├─ restart-required ─► abandon, restart trial
                                                  └─ failed         ─► abandon
 ```
