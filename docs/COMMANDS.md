@@ -175,7 +175,8 @@ Every consequential action uses one **Confirm / Cancel** card: `/workspace
 remove`, `/unbind`, `/dangerous cleanup`, plugin add/remove/enable/disable and
 the dashboard **Restart** button. Each press answers with a toast
 (`deleting…` / `cancelled`), and the card is edited to the result. The typed
-`confirm` forms remain as the scriptable fallback.
+fallback remains: `/workspace remove <name> confirm`, `/unbind confirm`,
+`/dangerous cleanup confirm` and `/plugin confirm`.
 
 Icon roles (labels stand alone; the icon never carries the meaning): `✅`
 confirm/commit, `✖` cancel, `⏳` in progress. Area icons (`📊`, `🌐`, `🧩`,

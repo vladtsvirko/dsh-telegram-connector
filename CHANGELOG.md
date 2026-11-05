@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1-rc.5-0.11.1
+
+### Fixed
+
+- **The typed confirmation stays available for scripts.** `/workspace remove
+  <name> confirm` and `/unbind confirm` execute without pressing the card;
+  `/dangerous cleanup confirm` and `/plugin confirm` already did. The card is
+  still the normal path.
+
 ## 0.2.1-rc.5-0.11.0
 
 ### Added

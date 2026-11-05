@@ -3859,14 +3859,35 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
 
       if (sub === 'rm' || sub === 'remove') {
-        const found = findWorkspace(bindings, target)
-        if (found === undefined) return reply(message, `no workspace matching \`${target}\``)
+        const words = target.split(/\s+/).filter((word) => word.length > 0)
+        const confirmed = words.length > 1 && words[words.length - 1] === 'confirm'
+        const name = confirmed ? words.slice(0, -1).join(' ') : target
+        const found = findWorkspace(bindings, name)
+        if (found === undefined) return reply(message, `no workspace matching \`${name}\``)
         const [workspaceId, workspace] = found
         const rows = workspace.chatId === 0 ? [] : sessionsOfChat(bindings, workspace.chatId)
         const preview = rows
           .slice(0, 8)
           .map(([threadId, bound]) => `· ${bound.title ?? `topic ${String(threadId)}`}`)
           .join('\n')
+        const execute = async (): Promise<string> => {
+          const current = bindings.workspaces[workspaceId]
+          if (current === undefined) return 'already removed — nothing to do.'
+          const controller = controllerOf(ctx)
+          if (controller !== undefined) {
+            await controller.delete({ workspaceId }).catch((error: unknown) => {
+              logger.warn(`dsh-telegram-connector: workspace delete failed: ${String(error)}`)
+            })
+          }
+          const topics = current.chatId === 0 ? 0 : sessionsOfChat(bindings, current.chatId).length
+          if (current.chatId !== 0) await clearChatSessions(current.chatId)
+          delete bindings.workspaces[workspaceId]
+          await persist()
+          return topics === 0
+            ? 'removed from DSH. The directory, its sessions and the group are untouched.'
+            : `removed from DSH, and ${String(topics)} topic(s) in its group were deleted. The directory, its sessions and the group are untouched.`
+        }
+        if (confirmed) return reply(message, await execute())
         return askConfirm(
           message,
           [
@@ -3882,23 +3903,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
               : ['', preview, ...(rows.length > 8 ? [`· … and ${String(rows.length - 8)} more`] : [])]),
           ].join('\n'),
           rows.length === 0 ? 'Remove workspace' : `Delete ${String(rows.length)} topic(s)`,
-          async () => {
-            const current = bindings.workspaces[workspaceId]
-            if (current === undefined) return 'already removed — nothing to do.'
-            const controller = controllerOf(ctx)
-            if (controller !== undefined) {
-              await controller.delete({ workspaceId }).catch((error: unknown) => {
-                logger.warn(`dsh-telegram-connector: workspace delete failed: ${String(error)}`)
-              })
-            }
-            const topics = current.chatId === 0 ? 0 : sessionsOfChat(bindings, current.chatId).length
-            if (current.chatId !== 0) await clearChatSessions(current.chatId)
-            delete bindings.workspaces[workspaceId]
-            await persist()
-            return topics === 0
-              ? 'removed from DSH. The directory, its sessions and the group are untouched.'
-              : `removed from DSH, and ${String(topics)} topic(s) in its group were deleted. The directory, its sessions and the group are untouched.`
-          },
+          execute,
         )
       }
 
@@ -4512,6 +4517,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (command === '/unbind') {
       if (!requireAdmin(message)) return
       const rows = sessionsOfChat(bindings, message.chat.id)
+      const unbind = async (): Promise<string> => {
+        const topics = sessionsOfChat(bindings, message.chat.id).length
+        await clearChatSessions(message.chat.id)
+        delete bindings.workspaces[workspaceId]
+        await persist()
+        return `detached. \`${String(topics)}\` topic(s) deleted with their bindings; the workspace still exists in DSH, and the group is yours to keep or delete.`
+      }
+      if (rest[0] === 'confirm') return reply(message, await unbind())
       return askConfirm(
         message,
         [
@@ -4523,13 +4536,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           'the workspace and its sessions stay in DSH; the group stays yours.',
         ].join('\n'),
         rows.length === 0 ? 'Detach group' : `Detach and delete ${String(rows.length)} topic(s)`,
-        async () => {
-          const topics = sessionsOfChat(bindings, message.chat.id).length
-          await clearChatSessions(message.chat.id)
-          delete bindings.workspaces[workspaceId]
-          await persist()
-          return `detached. \`${String(topics)}\` topic(s) deleted with their bindings; the workspace still exists in DSH, and the group is yours to keep or delete.`
-        },
+        unbind,
       )
     }
 
