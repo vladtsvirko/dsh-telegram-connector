@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.4
+
+Maintenance release; no connector change. Aligned with the setup fix that moves
+rootless Podman's runtime dir to /run/dsh.
+
 ## 0.2.1-rc.5-0.12.3
 
 Maintenance release; no connector change. Aligned with the setup fix that

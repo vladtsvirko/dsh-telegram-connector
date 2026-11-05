@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.12.3 | `0.2.1-rc.5` | tested | maintenance: setup passt/linger fix for rootless Podman |
+| 0.2.1-rc.5-0.12.4 | `0.2.1-rc.5` | tested | maintenance: setup /run/dsh runtime dir for rootless Podman |
+| 0.2.1-rc.5-0.12.3 | `0.2.1-rc.5` | previous | maintenance: setup passt/linger fix for rootless Podman |
 | 0.2.1-rc.5-0.12.2 | `0.2.1-rc.5` | previous | maintenance: setup dsh-home fix for rootless Podman |
 | 0.2.1-rc.5-0.12.1 | `0.2.1-rc.5` | previous | maintenance: setup ufw/Podman bridge rules |
 | 0.2.1-rc.5-0.12.0 | `0.2.1-rc.5` | previous | words-only controls: no emoji on buttons, status lines, process rows or speaker markers; reactions remain the platform-limited exception |
