@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.1
+
+Maintenance release; no connector change. Aligned with the setup fix that adds
+the ufw bridge rules Podman needs for the Penpot stack.
+
 ## 0.2.1-rc.5-0.12.0
 
 ### Changed
