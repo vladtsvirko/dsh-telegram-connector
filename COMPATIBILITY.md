@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.12.10 | `0.2.1-rc.5` | tested | maintenance: setup pins API-only penpot plugin 0.2.0 |
+| 0.2.1-rc.5-0.12.11 | `0.2.1-rc.5` | tested | maintenance: setup keeps the Penpot token in both env files |
+| 0.2.1-rc.5-0.12.10 | `0.2.1-rc.5` | previous | maintenance: setup pins API-only penpot plugin 0.2.0 |
 | 0.2.1-rc.5-0.12.9 | `0.2.1-rc.5` | previous | maintenance: setup ufw LAN-to-bridge route |
 | 0.2.1-rc.5-0.12.8 | `0.2.1-rc.5` | previous | maintenance: setup Penpot URI fix |
 | 0.2.1-rc.5-0.12.7 | `0.2.1-rc.5` | previous | maintenance: setup ProtectHome runtime path |

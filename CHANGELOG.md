@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.11
+
+Maintenance release; no connector change. Aligned with the setup fix that keeps
+the Penpot access token across both .env files.
+
 ## 0.2.1-rc.5-0.12.10
 
 Maintenance release; no connector change. Aligned with the setup that pins the
