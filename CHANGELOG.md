@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.3
+
+Maintenance release; no connector change. Aligned with the setup fix that
+installs `passt` (pasta) and enables lingering for rootless Podman.
+
 ## 0.2.1-rc.5-0.12.2
 
 Maintenance release; no connector change. Aligned with the setup fix that moves
