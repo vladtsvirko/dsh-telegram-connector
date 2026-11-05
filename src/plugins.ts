@@ -159,7 +159,7 @@ function bundleLine(bundle: BundleInfo): string {
   const version = bundle.version === undefined ? '' : ` ${bundle.version}`
   const notes: string[] = []
   if (bundle.optional === true) notes.push('optional')
-  if (bundle.error !== undefined) notes.push(`⚠️ ${bundle.error.code}`)
+  if (bundle.error !== undefined) notes.push(`error ${bundle.error.code}`)
   const suffix = notes.length === 0 ? '' : ` — ${notes.join(', ')}`
   return `${code(bundle.name)}${version}${suffix}`
 }
@@ -186,9 +186,9 @@ export function describeBundleList(bundles: readonly BundleInfo[]): string {
     }
   }
 
-  section('enabled', enabled, '✓')
-  section('disabled', disabled, '·')
-  section('available', available, '+')
+  section('enabled', enabled, 'on')
+  section('disabled', disabled, 'off')
+  section('available', available, 'available')
 
   if (bundles.length > shown) lines.push('', `… and ${bundles.length - shown} more`)
   lines.push(
@@ -240,7 +240,7 @@ export function describeBundle(bundle: BundleInfo): string {
     const diagnostic = bundle.error.diagnostic === undefined
       ? ''
       : ` — ${limit(oneLine(bundle.error.diagnostic), 300)}`
-    lines.push('', `⚠️ **${bundle.error.code}**${diagnostic}`)
+    lines.push('', `error **${bundle.error.code}**${diagnostic}`)
   }
 
   return lines.join('\n')

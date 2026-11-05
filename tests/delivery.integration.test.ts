@@ -247,9 +247,9 @@ describe('ownership refusal', () => {
     expect(text).not.toContain('active write handle')
     expect(text).not.toContain('Error:')
     expect(text).not.toMatch(/\n\s+at\s/)
-    expect(text.startsWith('⚠️')).toBe(false) // not the generic "⚠️ <raw error>" path
+    expect(text.startsWith('warning —')).toBe(false) // not the generic error path
     expect(refusal.params.reply_markup).toEqual({
-      inline_keyboard: [[{ text: '↪️ Take over (restarts dsh)', callback_data: 'own:take' }]],
+      inline_keyboard: [[{ text: 'Take over (restarts dsh)', callback_data: 'own:take' }]],
     })
 
     // The refused attempt must not leave a runtime that claims the topic: a
@@ -365,7 +365,7 @@ describe('who holds a session', () => {
       6000,
     )
     expect(refusal.params.reply_markup).toEqual({
-      inline_keyboard: [[{ text: '↪️ Take over (restarts dsh)', callback_data: 'own:take' }]],
+      inline_keyboard: [[{ text: 'Take over (restarts dsh)', callback_data: 'own:take' }]],
     })
   }, 20_000)
 })

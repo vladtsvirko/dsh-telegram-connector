@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.0
+
+### Changed
+
+- **Controls are words only.** Buttons, dashboard cards, trial and update
+  cards, status lines, process rows and speaker markers no longer use emoji.
+  The first word carries the status (`committed`, `failed`, `queued`,
+  `waiting`); a bare exception is prefixed `error:`. Process rows read
+  `Read: path`, `Search: query`, `Skill: name`; task lists use `[x]` / `[ ]`.
+- **Reactions are the documented exception.** Telegram only accepts emoji from
+  its fixed set, so `/reactions` keeps 👀, ✍ and 🙉 (and `/reactions allowed`
+  lists the valid set). No other surface uses them.
+- The icon policy is in `docs/COMMANDS.md` and a test fails if a button label
+  contains an emoji.
+
 ## 0.2.1-rc.5-0.11.1
 
 ### Fixed

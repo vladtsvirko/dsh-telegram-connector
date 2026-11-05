@@ -19,7 +19,7 @@ What protects it:
   unset) is required for deployment-wide actions: `/system restart|update|
   rollback`, plugin mutations, `/workspace`, `/bind`.
 - **Buttons need the same admin.** Inline callbacks — trial Commit/Roll back,
-  component Enable/Disable/Port, the update card's ✖ and Take over — check
+  component Enable/Disable/Port, the update card's **Cancel** and Take over — check
   `adminUserId` exactly like the typed commands; an allowlisted non-admin is
   answered with "only the admin can do that" and nothing happens.
 - **Token handling.** The bot token is read from the environment or plugin

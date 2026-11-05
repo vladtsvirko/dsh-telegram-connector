@@ -25,7 +25,7 @@ Conventions:
   `/plugin add|remove|enable|disable|confirm|cancel|approve`, `/bind`,
   `/system takechat`, `/firewall allow`, `/unbind`, `/dashboard`,
   `/dangerous cleanup`. The inline buttons that do the same things — trial
-  Commit/Roll back, the component card, the update card's ✖, Take over, the
+  Commit/Roll back, the component card, the update card's **Cancel**, Take over, the
   deployment buttons on the dashboard card — are admin-only too.
 - A `<session>` argument accepts the full session id, an id prefix, or the topic title.
 - You can only use a command on the surface it belongs to; elsewhere the bot
@@ -88,7 +88,7 @@ connector refuses to disable or remove itself.
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
 | `/system components [<component> <enable\|disable\|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form. The Port button offers three presets (8090/8091/8092); use the text form for anything else |
-| `/system cancel` | abandon a pending update and unblock the bot (same as the card's ✖); after acceptance it stops the running updater job |
+| `/system cancel` | abandon a pending update and unblock the bot (same as the card's **Cancel**); after acceptance it stops the running updater job |
 | `/system takechat` | make this private chat the control chat; notices, update reports and failure cards move here |
 | `/status` | model route, workspace/session counts, poller, timezone, supervisor |
 | `/dashboard` | post the control card: status, web link, update, restart, plugins, components |
@@ -168,7 +168,7 @@ button runs the same command you could type, so permissions are identical:
 | bot chat (`/dashboard`) | Status · Web link · Update setup · Restart · Plugins · Components |
 
 The **flow cards** are confirmation prompts: trial Commit/Roll back, the update
-card's ✖ (while draining), component Enable/Disable/Port, and Take over (confirmed; restarts dsh) for a
+card's **Cancel** (while draining), component Enable/Disable/Port, and Take over (confirmed; restarts dsh) for a
 held session. They are admin-only, like their commands.
 
 Every consequential action uses one **Confirm / Cancel** card: `/workspace
@@ -178,9 +178,22 @@ the dashboard **Restart** button. Each press answers with a toast
 fallback remains: `/workspace remove <name> confirm`, `/unbind confirm`,
 `/dangerous cleanup confirm` and `/plugin confirm`.
 
-Icon roles (labels stand alone; the icon never carries the meaning): `✅`
-confirm/commit, `✖` cancel, `⏳` in progress. Area icons (`📊`, `🌐`, `🧩`,
-`⚙️`) are decorative and may change; no flow depends on them.
+## Icons and marks
+
+Controls are words. No emoji appears on a button, menu entry, status line or
+process row: Telegram renders emoji differently per client, screen readers
+announce their names, and a label that needs an icon next to it is not yet a
+label.
+
+- Buttons: verb-first text only (`Update now`, `Commit`, `Delete 3 topics`).
+- Status: the first word carries it (`committed`, `failed`, `queued`,
+  `waiting`); a bare exception is prefixed `error:`.
+- Structure: `·` for list items and `→` for transitions; both are typographic.
+- Process rows: `Read: path`, `Search: query`, `Skill: name` — no tool glyphs.
+- Tasks: `[x]` and `[ ]`.
+- **Reactions are the exception.** Telegram only accepts emoji from its fixed
+  set, so `/reactions` is the one place the bot uses them; the defaults are
+  👀, ✍ and 🙉, and `/reactions allowed` lists the valid set.
 
 ## Workspace dashboard (General or the `/dashboard` topic)
 

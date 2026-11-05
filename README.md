@@ -157,7 +157,7 @@ allowBuilds:
 YAML
 
 # 2. add the plugin at an exact tag — the one equal to the setup VERSION
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.11.1
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.12.0
 
 # 3. token in the environment, never in the YAML
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
@@ -361,7 +361,7 @@ session store — there is no export step and no second copy of a conversation.
   are mirrored into the topic (one-way) and answers appear in both places.
 - **Handing one session over.** A session has one live agent. If a browser tab
   holds the session's write handle, a Telegram prompt is refused, the message is
-  journaled, and the bot offers **↪️ Take over (restarts dsh)**. The button asks
+  journaled, and the bot offers **Take over (restarts dsh)**. The button asks
   for confirmation, then restarts the runtime, which releases *every* handle
   (not just this session's) and delivers the queued prompt. Closing the tab is
   the cheaper move; `/system restart now` does the same thing by hand.
@@ -435,7 +435,7 @@ session store — there is no export step and no second copy of a conversation.
   applied: live under HMR, or around a restart when the manager asks for one.
   The trial message carries **Commit** and **Roll back** buttons; it rolls back
   on a crash, on a boot that never checks in, or when the window closes, and a
-  container restart inside the window resumes it. A plain restart announces itself on the next boot (`✅ back up …`),
+  container restart inside the window resumes it. A plain restart announces itself on the next boot (`back up …`),
   and the Telegram offset is written before any restart, so the command cannot be
   redelivered and run twice. Without a supervisor the commands say so and point
   at the host.
@@ -462,7 +462,7 @@ data: /srv/dsh/data · this runtime (native)
 ```
 
 The `data` line names a second live runtime over the same directory
-(`⚠ another runtime holds it (pid …, since …)`) — the one failure a
+(`warning: another runtime holds it (pid …, since …)`) — the one failure a
 restart cannot clear, because that process keeps the kernel lock on every
 session it has open.
 
@@ -470,7 +470,7 @@ session it has open.
 
 | Symptom | Cause / fix |
 |---|---|
-| `⛔ You are not authorized` with an id | add that id to `allowedUserIds` |
+| `You are not authorized` with an id | add that id to `allowedUserIds` |
 | bot ignores plain messages in topics | privacy mode is on — BotFather → `/setprivacy` → Disable |
 | `could not create the session topic` | bot is not admin, or lacks *Manage Topics* |
 | `/sync` reports `adopted 0` | every session is archived, already bound to a live topic, or the workspace id does not match — check `/archived` and the dashboard |

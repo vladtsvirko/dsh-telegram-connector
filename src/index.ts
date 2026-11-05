@@ -705,7 +705,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       runtime.process = []
       runtime.processCard = undefined
       if (card !== undefined) {
-        if (items.length > 0) void finalizeProcessCard(card, items, '⚠️ Process interrupted')
+        if (items.length > 0) void finalizeProcessCard(card, items, 'Process interrupted')
         else forgetProcessCard(card.sessionId)
       }
     }
@@ -808,7 +808,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const clean = item.text.replace(/\s+/g, ' ').trim()
     const snippet = clean.slice(0, 160)
     const lines = [
-      `⚠️ **a message ${kind}** in ${where}`,
+      `**a message ${kind}** in ${where}`,
       snippet.length > 0 ? `> ${snippet}${clean.length > 160 ? '…' : ''}` : '',
       suppressed > 0 ? `_and ${suppressed} earlier item(s) in this group since the last notice_` : '',
       unconfirmed
@@ -865,7 +865,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (existing === undefined) return
       queueStatusMessages.delete(chatId)
       await botPool.waitEdit(botPool.main, chatId).catch(() => undefined)
-      await client.editMessageText(chatId, existing, '✅ queue clear — every reply was delivered.').catch(() => undefined)
+      await client.editMessageText(chatId, existing, 'queue clear — every reply was delivered.').catch(() => undefined)
       return
     }
     const text = `⏳ Telegram rate limit — ${depth} message(s) queued; delivery is automatic.`
@@ -1060,7 +1060,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       )
       await supervisor.restart(trial)
     } catch (error) {
-      return reply(message, `⚠️ ${error instanceof Error ? error.message : String(error)}`)
+      return reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -1119,7 +1119,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (phase === 'pending') {
       return {
         inline_keyboard: [[
-          { text: crosses ? '⚠️ Review crossing' : '⬆️ Update now', callback_data: `upd:start:${id}` },
+          { text: crosses ? 'Review crossing' : 'Update now', callback_data: `upd:start:${id}` },
           { text: 'Cancel', callback_data: `upd:cancel:${id}` },
         ]],
       }
@@ -1127,20 +1127,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (phase === 'cross') {
       return {
         inline_keyboard: [[
-          { text: '⚠️ Cross anyway', callback_data: `upd:cross:${id}` },
+          { text: 'Cross anyway', callback_data: `upd:cross:${id}` },
           { text: 'Cancel', callback_data: `upd:cancel:${id}` },
         ]],
       }
     }
     if (phase === 'draining') {
-      return { inline_keyboard: [[{ text: '✖ Cancel update', callback_data: `upd:cancel:${id}` }]] }
+      return { inline_keyboard: [[{ text: 'Cancel update', callback_data: `upd:cancel:${id}` }]] }
     }
     return { inline_keyboard: [] }
   }
 
   const updateStatusText = (update: NonNullable<typeof bindings.update>): string => {
     const blockers = drainState?.blockers ?? []
-    const lines = [`🔄 **setup update** \`${update.from} → ${update.target}\``]
+    const lines = [`**setup update** \`${update.from} → ${update.target}\``]
     const dshLine = update.dshFrom === undefined
       ? ''
       : `dsh: \`${update.dshFrom} → ${update.dshTo ?? '?'}\``
@@ -1150,7 +1150,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const rollback = 'rollback: automatic if the health gate fails; `data/home` is restored, `data/workspace` is not.'
     if (update.phase === 'cross') {
       lines.push(
-        '⚠️ **incompatible jump** — this crosses a DSH line or a product major; the connector API may change.',
+        '**incompatible jump** — this crosses a DSH line or a product major; the connector API may change.',
         ...(dshLine.length > 0 ? [dshLine] : []),
         ...notes,
         '',
@@ -1172,13 +1172,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         '',
         rollback,
         update.crosses === true
-          ? '⚠️ this target crosses a DSH line or a product major — you will confirm it separately.'
+          ? 'this target crosses a DSH line or a product major — you will confirm it separately.'
           : 'Nothing happens until you press **Update now**.',
       )
       return lines.join('\n')
     }
     if (update.phase === 'accepted') {
-      lines.push('🚀 updater accepted — the runtime restarts now; the updater reports the result.', 'The cancel button is gone; `/system cancel` still stops the updater job.')
+      lines.push('updater accepted — the runtime restarts now; the updater reports the result.', 'The cancel button is gone; `/system cancel` still stops the updater job.')
       return lines.join('\n')
     }
     lines.push(
@@ -1232,15 +1232,15 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const dsh = target.includes('-') ? target.slice(1, target.lastIndexOf('-')) : 'unknown'
       const clean = (result.logTail ?? '').split('\n').slice(-20).join('\n')
       const report = result.state === 'done'
-        ? `✅ setup update finished: ${from} → ${target} (DSH ${dsh}).`
+        ? `setup update finished: ${from} → ${target} (DSH ${dsh}).`
         : result.state === 'rolled-back'
-          ? `⚠️ setup update failed and rolled back to ${from}.\n\n${clean}`
-          : `⚠️ setup update failed (${result.state}).\n\n${clean}`
+          ? `setup update failed and rolled back to ${from}.\n\n${clean}`
+          : `setup update failed (${result.state}).\n\n${clean}`
       const card = result.state === 'done'
-        ? `✅ setup update finished: ${from} → ${target}.`
+        ? `setup update finished: ${from} → ${target}.`
         : result.state === 'rolled-back'
-          ? `⚠️ setup update failed and rolled back to ${from}.`
-          : '⚠️ setup update failed.'
+          ? `setup update failed and rolled back to ${from}.`
+          : 'setup update failed.'
 
       if (bindings.controlChatId !== undefined && result.reported !== true) {
         await sendTo(bindings.controlChatId, 0, report, 'control')
@@ -1320,7 +1320,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   }
 
   const cancelUpdate = async (query: TgCallbackQuery): Promise<void> => {
-    // The card's ✖ changes the deployment for everyone, exactly like
+    // The card's Cancel button changes the deployment for everyone, exactly like
     // `/system cancel`; the allowlist alone is not enough.
     if (!isAdmin(query.from?.id)) {
       await client.answerCallbackQuery(query.id, 'only the admin can do that').catch(() => undefined)
@@ -1344,7 +1344,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const messageId = update.messageId
     await clearUpdate()
     if (messageId !== undefined) {
-      await client.editMessageText(chatId, messageId, '❌ setup update cancelled.', { replyMarkup: { inline_keyboard: [] } })
+      await client.editMessageText(chatId, messageId, 'setup update cancelled.', { replyMarkup: { inline_keyboard: [] } })
         .catch((error: unknown) => logger.warn(`dsh-telegram-connector: cannot edit cancelled status: ${String(error)}`))
     }
     await client.answerCallbackQuery(query.id, 'setup update cancelled').catch(() => undefined)
@@ -1371,7 +1371,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           await client.editMessageText(
             update.chatId,
             update.messageId,
-            toTelegramHtml(`🔄 **setup update** \`${update.from} → ${update.target}\`\n\nno active sessions — handing over to the updater; cancel is no longer available.`),
+            toTelegramHtml(`**setup update** \`${update.from} → ${update.target}\`\n\nno active sessions — handing over to the updater; cancel is no longer available.`),
             { parseMode: 'HTML', replyMarkup: { inline_keyboard: [] } },
           ).catch((error: unknown) => {
             logger.warn(`dsh-telegram-connector: cannot update idle drain status: ${String(error)}`)
@@ -1414,7 +1414,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // the flag has to travel with the request.
       const response = await updaterFetch('/update', { mode, incompatible: mode === 'available' })
       if (response.status !== 202) {
-        await finishUpdateStatus(`❌ setup update was not accepted: ${await updaterFailure(response)}`)
+        await finishUpdateStatus(`setup update was not accepted: ${await updaterFailure(response)}`)
         return
       }
       const accepted = await response.json() as { job?: string; from?: string; target?: string }
@@ -1427,7 +1427,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       })
       if (accepted.job !== undefined) void watchUpdate(accepted.job)
     } catch (error) {
-      await finishUpdateStatus(`❌ setup update failed: ${String(error)}`)
+      await finishUpdateStatus(`setup update failed: ${String(error)}`)
     }
   }
 
@@ -1468,7 +1468,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         // Older updater without /target: /update still resolves the target.
         resolved = { from: health.tag ?? 'current', target: 'next compatible' }
       } else if (!target.ok) {
-        return reply(message, `⚠️ no setup update target: ${await updaterFailure(target)}`)
+        return reply(message, `no setup update target: ${await updaterFailure(target)}`)
       } else {
         resolved = await target.json() as {
           from?: string
@@ -1480,7 +1480,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         }
       }
     } catch (error) {
-      return reply(message, `⚠️ updater is not reachable: ${String(error)}`)
+      return reply(message, `updater is not reachable: ${String(error)}`)
     }
     if (resolved?.from === undefined || resolved.target === undefined) {
       return reply(message, 'the updater returned no target.')
@@ -1512,7 +1512,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await persist()
     } catch (error) {
       await clearUpdate()
-      return reply(message, `⚠️ cannot post the update status: ${String(error)}`)
+      return reply(message, `cannot post the update status: ${String(error)}`)
     }
     void runSetupUpdate(mode)
   }
@@ -1548,11 +1548,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const componentsKeyboard = (components: readonly ComponentInfo[]) => ({
     inline_keyboard: components.map((component) => ([
       {
-        text: component.enabled ? '⏹ Disable' : '▶️ Enable',
+        text: component.enabled ? 'Disable' : 'Enable',
         callback_data: `cmp:${component.enabled ? 'disable' : 'enable'}:${component.name}`,
       },
       {
-        text: component.port === undefined ? '⚙️ Port' : `⚙️ Port ${String(component.port)}`,
+        text: component.port === undefined ? 'Port' : `Port ${String(component.port)}`,
         callback_data: `cmp:port:${component.name}`,
       },
     ])),
@@ -1562,7 +1562,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const response = await updaterFetch('/components', { name, action, ...(port === undefined ? {} : { port }) })
     if (!response.ok) {
       const detail = await response.text().catch(() => '')
-      return `⚠️ updater refused (${String(response.status)})${detail.length > 0 ? `: ${detail.slice(0, 200)}` : ''}`
+      return `updater refused (${String(response.status)})${detail.length > 0 ? `: ${detail.slice(0, 200)}` : ''}`
     }
     return `⏳ ${name}: ${action}${port === undefined ? '' : ` ${String(port)}`} accepted — the updater reports when it is done. Send \`/system components\` for the card again.`
   }
@@ -1575,7 +1575,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     try {
       components = await fetchComponents()
     } catch (error) {
-      return reply(message, `⚠️ cannot reach the updater: ${error instanceof Error ? error.message : String(error)}`)
+      return reply(message, `cannot reach the updater: ${error instanceof Error ? error.message : String(error)}`)
     }
     await client.sendMessage(message.chat.id, toTelegramHtml(componentsText(components)), {
       parseMode: 'HTML',
@@ -1623,7 +1623,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await client.sendMessage(
         card.chat.id,
         toTelegramHtml([
-          '↪️ **take over this session?**',
+          '**take over this session?**',
           '',
           'A web UI tab owns the session write handle. The only way to release it is to **restart dsh** — that interrupts **every** running session and tool call, not only this one.',
           '',
@@ -1634,7 +1634,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           ...(card.message_thread_id === undefined ? {} : { threadId: card.message_thread_id }),
           replyMarkup: {
             inline_keyboard: [[
-              { text: '♻️ Restart dsh and take over', callback_data: 'own:take:confirm' },
+              { text: 'Restart dsh and take over', callback_data: 'own:take:confirm' },
               { text: 'Cancel', callback_data: 'own:take:cancel' },
             ]],
           },
@@ -1798,13 +1798,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           already?: boolean
         }
         if (!response.ok) {
-          return reply(message, `⚠️ could not allow ${String(port)}: ${body.error ?? `HTTP ${String(response.status)}`}`)
+          return reply(message, `could not allow ${String(port)}: ${body.error ?? `HTTP ${String(response.status)}`}`)
         }
         return reply(message, body.already === true
           ? `${String(port)}/tcp is already allowed from ${body.network ?? 'the LAN'}.`
-          : `✅ allowed ${String(port)}/tcp from ${body.network ?? 'the LAN'} — the web UI is reachable from the LAN now.`)
+          : `allowed ${String(port)}/tcp from ${body.network ?? 'the LAN'} — the web UI is reachable from the LAN now.`)
       } catch (error) {
-        return reply(message, `⚠️ the updater is not reachable: ${String(error)}`)
+        return reply(message, `the updater is not reachable: ${String(error)}`)
       }
     }
     if (sub !== undefined && sub !== '') {
@@ -1817,19 +1817,19 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         reason?: string
         ports?: Array<{ port: number; network: string; allowed: boolean }>
       }
-      if (!response.ok) return reply(message, `⚠️ the updater answered ${String(response.status)}`)
+      if (!response.ok) return reply(message, `the updater answered ${String(response.status)}`)
       if (body.applicable !== true) {
         return reply(message, `firewall: nothing to do — ${body.reason ?? 'not applicable'}`)
       }
       const lines = ['**firewall**']
       for (const entry of body.ports ?? []) {
         lines.push(entry.allowed
-          ? `✅ ${String(entry.port)}/tcp from ${entry.network} — allowed`
-          : `⚠️ ${String(entry.port)}/tcp from ${entry.network} — blocked; fix: \`/firewall allow ${String(entry.port)}\``)
+          ? `${String(entry.port)}/tcp from ${entry.network} — allowed`
+          : `${String(entry.port)}/tcp from ${entry.network} — blocked; fix: \`/firewall allow ${String(entry.port)}\``)
       }
       return reply(message, lines.join('\n'))
     } catch (error) {
-      return reply(message, `⚠️ the updater is not reachable: ${String(error)}`)
+      return reply(message, `the updater is not reachable: ${String(error)}`)
     }
   }
 
@@ -1858,15 +1858,15 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     if (sub === 'components') return manageComponents(message, tail)
     if (sub === 'cancel') {
-      // The card's ✖ button was the only way out of a pending update; a card
+      // The card's Cancel button was the only way out of a pending update; a card
       // deleted from the chat left the bot refusing every message.
       if (bindings.update === undefined) return reply(message, 'no update is pending.')
       // The updater service is the side that is actually running update.sh: a local card
       // reset alone leaves a build running and the updater's only job slot busy.
       const stopped = await cancelUpdaterJob()
       await finishUpdateStatus(stopped
-        ? '❌ setup update cancelled; the updater stopped the job.'
-        : '❌ setup update cancelled (the updater had no running job).')
+        ? 'setup update cancelled; the updater stopped the job.'
+        : 'setup update cancelled (the updater had no running job).')
       return
     }
     if (sub === 'restart') return restartRuntime(message, mode)
@@ -1949,7 +1949,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, `web UI: ${link.root}\n\nopen it from a browser that can reach this host.`)
     }
     return reply(message, [
-      '🔗 **web UI** — this link signs you in, so treat it like a password.',
+      '**web UI** — this link signs you in, so treat it like a password.',
       link.signed,
       '',
       'The topics there are the same sessions as here: driving one in the browser hands the session over, and `/system restart now` returns it to Telegram.',
@@ -2070,7 +2070,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (ownInstance(info)) return `${info.root} · this runtime (${info.mode ?? '?'})`
     const other = anotherRuntime()
     if (other === undefined) return `${info.root} · stale marker from pid ${String(info.pid)}`
-    return `${info.root} · ⚠ another ${other.mode ?? '?'} runtime holds it (pid ${String(other.pid)}, since ${other.startedAt ?? '?'}) — stop it, a restart cannot clear its session locks`
+    return `${info.root} · warning: another ${other.mode ?? '?'} runtime holds it (pid ${String(other.pid)}, since ${other.startedAt ?? '?'}) — stop it, a restart cannot clear its session locks`
   }
 
   /** A line for `/system status`; never the signing token. */
@@ -2149,7 +2149,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         return reply(message, `usage: \`/reactions ${slot} <emoji>\` — or \`/reactions ${slot} off\``)
       }
       const parsed = parseReactionValue(argument)
-      if ('error' in parsed) return reply(message, `⚠️ ${parsed.error}`)
+      if ('error' in parsed) return reply(message, `${parsed.error}`)
       bindings.reactions = { ...bindings.reactions, [slot]: parsed.value }
       await persist()
       return reply(message, `${slot} reaction set to ${parsed.value.length === 0 ? '_off_' : parsed.value}.`)
@@ -2162,9 +2162,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     try {
       await supervisor.commit()
     } catch (error) {
-      return reply(message, `⚠️ ${error instanceof Error ? error.message : String(error)}`)
+      return reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
     }
-    if (!await retireStoredTrialMessage('✅ committed — this state is the rollback point.')) {
+    if (!await retireStoredTrialMessage('committed — this state is the rollback point.')) {
       return reply(message, 'committed — this state is now the rollback point.')
     }
   }
@@ -2177,13 +2177,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // runs, and a promise the runtime cannot keep is worse than a refusal.
       const status = await supervisor.status().catch(() => undefined)
       if (status !== undefined && status.busy === true) {
-        return reply(message, '⚠️ the supervisor is busy with another operation — try again when it finishes; `/system status` shows it.')
+        return reply(message, 'the supervisor is busy with another operation — try again when it finishes; `/system status` shows it.')
       }
-      const retired = await retireStoredTrialMessage('↩️ rolling back to the last committed state…')
+      const retired = await retireStoredTrialMessage('rolling back to the last committed state…')
       if (!retired) await replyNow(message, 'rolling back to the last committed state — the bot will be back in a moment.')
       await supervisor.rollback('rollback requested from Telegram')
     } catch (error) {
-      return reply(message, `⚠️ ${error instanceof Error ? error.message : String(error)}`)
+      return reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -2205,14 +2205,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       )
       await supervisor.update(!noTrial)
     } catch (error) {
-      return reply(message, `⚠️ ${error instanceof Error ? error.message : String(error)}`)
+      return reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
   const trialKeyboard = (trialId: string) => ({
     inline_keyboard: [[
-      { text: '✅ Commit', callback_data: trialCallbackData('commit', trialId) },
-      { text: '↩️ Roll back', callback_data: trialCallbackData('rollback', trialId) },
+      { text: 'Commit', callback_data: trialCallbackData('commit', trialId) },
+      { text: 'Roll back', callback_data: trialCallbackData('rollback', trialId) },
     ]],
   })
 
@@ -2333,7 +2333,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         },
       })
     } catch (error) {
-      await reply(message, `${markdown}\n\n⚠️ cannot post the confirmation buttons: ${String(error)}`)
+      await reply(message, `${markdown}\n\ncannot post the confirmation buttons: ${String(error)}`)
       return
     }
     pendingConfirms.set(id, {
@@ -2390,7 +2390,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await editCard(
         pending.chatId,
         pending.messageId,
-        `⚠️ ${error instanceof Error ? error.message : String(error)}`,
+        `error: ${error instanceof Error ? error.message : String(error)}`,
       )
     }
   }
@@ -2418,20 +2418,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       try {
         await supervisor.commit()
       } catch (error) {
-        await retireCallbackMessage(query, `⚠️ commit failed: ${error instanceof Error ? error.message : String(error)}`)
+        await retireCallbackMessage(query, `commit failed: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
-      await retireCallbackMessage(query, '✅ committed — this state is the rollback point.')
+      await retireCallbackMessage(query, 'committed — this state is the rollback point.')
       return
     }
 
     await client.answerCallbackQuery(query.id, 'rolling back…').catch(() => undefined)
     // edit first: the supervisor stops the runtime as soon as rollback starts
-    await retireCallbackMessage(query, '↩️ rolling back to the last committed state…')
+    await retireCallbackMessage(query, 'rolling back to the last committed state…')
     try {
       await supervisor.rollback('rollback from the trial message')
     } catch (error) {
-      await retireCallbackMessage(query, `⚠️ rollback failed: ${error instanceof Error ? error.message : String(error)}`)
+      await retireCallbackMessage(query, `rollback failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -2455,7 +2455,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           await sendTo(
             bindings.controlChatId,
             0,
-            '✅ back up after a plain restart — the current state is the rollback point.',
+            'back up after a plain restart — the current state is the rollback point.',
           )
         }
         return
@@ -2578,14 +2578,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    */
   const restartPreview = async (): Promise<string> => {
     if (supervisor === undefined) {
-      return '⚠️ this changes the profile on disk; a restart from the host is needed to load it.'
+      return 'this changes the profile on disk; a restart from the host is needed to load it.'
     }
     const status = await supervisorStatus()
     const minutes = Math.round((status?.trialSeconds ?? 300) / 60)
     if (serviceOf<unknown>(ctx, 'hmr') !== undefined) {
-      return `⚠️ HMR applies this live, and the change opens a trial: you then have ${minutes} minutes to \`/system confirm\` it, or it rolls back automatically.`
+      return `HMR applies this live, and the change opens a trial: you then have ${minutes} minutes to \`/system confirm\` it, or it rolls back automatically.`
     }
-    return `⚠️ this runtime has no HMR: confirming **restarts** it into a trial. You then have ${minutes} minutes to \`/system confirm\` the new state, or it rolls back automatically.`
+    return `this runtime has no HMR: confirming **restarts** it into a trial. You then have ${minutes} minutes to \`/system confirm\` the new state, or it rolls back automatically.`
   }
 
   /**
@@ -2636,7 +2636,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     } catch (error) {
       await reply(
         message,
-        `⚠️ the change is saved, but the restart did not start: ${error instanceof Error ? error.message : String(error)}`,
+        `the change is saved, but the restart did not start: ${error instanceof Error ? error.message : String(error)}`,
       )
     }
   }
@@ -2650,7 +2650,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     try {
       inspection = await manager.inspect(spec)
     } catch (error) {
-      return reply(message, `⚠️ ${error instanceof Error ? error.message : String(error)}`)
+      return reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
     }
     if (inspection.status === 'refused') return reply(message, describeInspection(inspection))
     if (inspection.bundle === false) {
@@ -2665,7 +2665,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       [
         describeInspection(inspection),
         '',
-        '⚠️ a plugin runs with this runtime\'s permissions: its install scripts and its code execute on the host.',
+        'a plugin runs with this runtime\'s permissions: its install scripts and its code execute on the host.',
         '',
         await restartPreview(),
       ].join('\n'),
@@ -2723,7 +2723,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         liveTrial = { id: opened.trial.id, deadline: opened.trial.deadline }
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error)
-        return reply(message, `⚠️ cannot open a rollback window (${detail}) — nothing was changed.`)
+        return reply(message, `cannot open a rollback window (${detail}) — nothing was changed.`)
       }
     }
 
@@ -2778,7 +2778,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           stderr(`abandon trial failed: ${String(abandonError)}`)
         })
       }
-      await reply(message, `⚠️ ${error instanceof Error ? error.message : String(error)}`)
+      await reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -3158,7 +3158,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       void sendTo(
         runtime.chatId,
         runtime.threadId,
-        '⚠️ Part of this reply could not be delivered — Telegram refused it. The full text is in the session.',
+        'Part of this reply could not be delivered — Telegram refused it. The full text is in the session.',
       )
     }
   }
@@ -3394,7 +3394,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (previous !== undefined) {
       if (previous.timer !== undefined) clearTimeout(previous.timer)
       if (previousItems.length > 0) {
-        void finalizeProcessCard(previous, previousItems, '⚠️ Process interrupted')
+        void finalizeProcessCard(previous, previousItems, 'Process interrupted')
       } else {
         forgetProcessCard(previous.sessionId)
       }
@@ -3439,7 +3439,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     runtime.processCard = undefined
     if (!active || items.length === 0 || processMode() === 'off') return
     if (processMode() === 'live' && card !== undefined) {
-      await finalizeProcessCard(card, items, heading ?? '✅ Process')
+      await finalizeProcessCard(card, items, heading ?? 'Process')
       return
     }
     await sendProcessSummary(runtime.chatId, runtime.threadId, items, heading)
@@ -3452,13 +3452,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (previousCard !== undefined) {
       if (previousCard.timer !== undefined) clearTimeout(previousCard.timer)
       if (previousItems.length > 0) {
-        void finalizeProcessCard(previousCard, previousItems, '⚠️ Process interrupted')
+        void finalizeProcessCard(previousCard, previousItems, 'Process interrupted')
       } else if (previousCard.messageId !== undefined) {
         void updateProcessCard(
           previousCard,
           [{ id: 'reset', kind: 'tool', label: 'process view closed', status: 'error' }],
           true,
-          '⚠️ Process interrupted',
+          'Process interrupted',
         )
         forgetProcessCard(previousCard.sessionId)
       }
@@ -3727,13 +3727,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const dashboardKeyboard = (surface: 'control' | 'group'): TgInlineKeyboard => ({
     inline_keyboard: surface === 'control'
       ? [
-          [{ text: '📊 Status', callback_data: 'dash:status' }, { text: '🌐 Web link', callback_data: 'dash:web' }],
-          [{ text: '⬆️ Update setup', callback_data: 'dash:update' }, { text: '♻️ Restart', callback_data: 'dash:restart' }],
-          [{ text: '🧩 Plugins', callback_data: 'dash:plugins' }, { text: '⚙️ Components', callback_data: 'dash:components' }],
+          [{ text: 'Status', callback_data: 'dash:status' }, { text: 'Web link', callback_data: 'dash:web' }],
+          [{ text: 'Update setup', callback_data: 'dash:update' }, { text: 'Restart', callback_data: 'dash:restart' }],
+          [{ text: 'Plugins', callback_data: 'dash:plugins' }, { text: 'Components', callback_data: 'dash:components' }],
         ]
       : [
-          [{ text: '➕ New session', callback_data: 'dash:new' }, { text: '🔄 Sync', callback_data: 'dash:sync' }],
-          [{ text: '📊 Status', callback_data: 'dash:status' }, { text: '📋 Sessions', callback_data: 'dash:sessions' }],
+          [{ text: 'New session', callback_data: 'dash:new' }, { text: 'Sync', callback_data: 'dash:sync' }],
+          [{ text: 'Status', callback_data: 'dash:status' }, { text: 'Sessions', callback_data: 'dash:sessions' }],
         ],
   })
 
@@ -4052,20 +4052,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (ev.type === 'user/message') {
         const text = promptText(ev.data)?.trim()
         if (text === undefined || text.length === 0) continue
-        lines.push(`👤 **you (web)**\n\n${quote(text)}`)
+        lines.push(`**you (web)**\n\n${quote(text)}`)
       } else if (ev.type === 'assistant/message') {
         const text = messageText(ev.data?.message).trim()
         if (text.length === 0) continue
         // quote both sides: a transcript where only one speaker is indented reads
         // like two different kinds of content
-        lines.push(`🤖 **assistant**\n\n${quote(text)}`)
+        lines.push(`**assistant**\n\n${quote(text)}`)
       }
     }
     const tail = lines.slice(-20)
     if (tail.length === 0) return 0
     // one message, not twenty: Telegram caps ~20 messages per minute per group and
     // a per-session replay used to trip it, which silently ate the /sync reply too
-    const body = [`🗂 **history** · last ${tail.length} message(s)`, '', ...tail].join('\n\n')
+    const body = [`**history** · last ${tail.length} message(s)`, '', ...tail].join('\n\n')
     await send(chatId, threadId, body)
     return tail.length
   }
@@ -4349,7 +4349,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         await botPool.takeMain(message.chat.id)
         card = await client.sendMessage(
           message.chat.id,
-          toTelegramHtml(`🔄 **sync** — checking ${String(total)} session(s)…`),
+          toTelegramHtml(`**sync** — checking ${String(total)} session(s)…`),
           {
             parseMode: 'HTML',
             ...(message.message_thread_id === undefined ? {} : { threadId: message.message_thread_id }),
@@ -4406,7 +4406,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         const sessionId = String(raw)
         if (archived.has(sessionId)) {
           skipped += 1
-          await renderSync(`🔄 **sync** · ${String(checked)}/${String(total)} checked · adopted ${String(created)} · archived ${String(skipped)}`)
+          await renderSync(`**sync** · ${String(checked)}/${String(total)} checked · adopted ${String(created)} · archived ${String(skipped)}`)
           continue
         }
 
@@ -4427,7 +4427,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           }
           if (alive) {
             if (agents.get(SessionId(sessionId)) !== undefined) live += 1
-            await renderSync(`🔄 **sync** · ${String(checked)}/${String(total)} checked · adopted ${String(created)} · kept ${String(kept)}`)
+            await renderSync(`**sync** · ${String(checked)}/${String(total)} checked · adopted ${String(created)} · kept ${String(kept)}`)
             continue
           }
           if (!gone) {
@@ -4454,7 +4454,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // this is a snapshot, not a setting.)
       let provisional = 0
       for (const sessionId of pending.reverse()) {
-        await renderSync(`🔄 **sync** — creating topics for ${String(pending.length)} session(s) · adopted ${String(created)}`)
+        await renderSync(`**sync** — creating topics for ${String(pending.length)} session(s) · adopted ${String(created)}`)
         const stored = await sessionTitleOf(sessionId)
         if (stored === undefined) provisional += 1
         const base = stored ?? `session ${sessionId.slice(-6)}`
@@ -4464,7 +4464,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           topic = await paced(() => createTopic(message.chat.id, title, true))
         } catch (error) {
           return finishSync(
-            `⚠️ sync stopped while waiting for Telegram: ${error instanceof Error ? error.message : String(error)}`,
+            `sync stopped while waiting for Telegram: ${error instanceof Error ? error.message : String(error)}`,
           )
         }
         if (topic?.threadId === undefined) break
@@ -4478,7 +4478,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
       return finishSync(
         [
-          `🔄 **sync** — adopted ${String(created)}; ${String(skipped)} archived skipped; ${String(purged)} dead binding(s) replaced.`,
+          `**sync** — adopted ${String(created)}; ${String(skipped)} archived skipped; ${String(purged)} dead binding(s) replaced.`,
           kept > 0 ? `${String(kept)} topic(s) could not be probed (rate limit or network) — kept as they are.` : '',
           live > 0 ? `${String(live)} are open in a web UI: their topics mirror that tab, and Telegram prompts are refused until it closes.` : '',
           provisional > 0 ? `${String(provisional)} had no title: name them with \`/rename <session> <title>\`.` : '',
@@ -4672,13 +4672,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             parseMode: 'HTML',
             ...(message.message_thread_id === undefined ? {} : { threadId: message.message_thread_id }),
             ...(queued && diagnosis.takeover
-              ? { replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over (restarts dsh)', callback_data: 'own:take' }]] } }
+              ? { replyMarkup: { inline_keyboard: [[{ text: 'Take over (restarts dsh)', callback_data: 'own:take' }]] } }
               : {}),
           },
         ).catch((sendError: unknown) => stderr(`cannot post the take-over card: ${String(sendError)}`))
         return
       }
-      await reply(message, `⚠️ ${detail}`)
+      await reply(message, `${detail}`)
     }
   }
 
@@ -4825,7 +4825,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       lines.push('', 'Run `/name` in this topic; output stays out of the model history. `/run <name>` forces a host command when a connector command owns the name.')
       return lines.join('\n')
     } catch (error) {
-      return `⚠️ cannot list commands: ${error instanceof Error ? error.message : String(error)}`
+      return `cannot list commands: ${error instanceof Error ? error.message : String(error)}`
     }
   }
 
@@ -4900,7 +4900,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   ): Promise<void> => {
     void markPromptRead(message)
     if (attachmentStore() === undefined) {
-      await reply(message, '⚠️ image/file attachments are not available in this runtime')
+      await reply(message, 'image/file attachments are not available in this runtime')
       return
     }
     const prompt = text.trim().length > 0 ? text.trim() : attachmentPlaceholder(items)
@@ -4908,7 +4908,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (downloaded.errors.length > 0) {
       // The agent is told in the prompt, but the user is the one who has to send
       // the file again — and used to be told nothing.
-      await reply(message, `⚠️ some attachments could not be read:\n${downloaded.errors.map((line) => `· ${line}`).join('\n')}`)
+      await reply(message, `some attachments could not be read:\n${downloaded.errors.map((line) => `· ${line}`).join('\n')}`)
     }
     const fullPrompt = downloaded.errors.length > 0
       ? `${prompt}\n\n[Attachment errors: ${downloaded.errors.join('; ')}]`
@@ -4936,7 +4936,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       .filter((item) => !fresh.some((candidate) => candidate.fileId === item.fileId))
     const needsAttachments = fresh.length > 0 || referenced.length > 0
     if (needsAttachments && attachmentStore() === undefined) {
-      await reply(message, '⚠️ image/file attachments are not available in this runtime')
+      await reply(message, 'image/file attachments are not available in this runtime')
       return
     }
 
@@ -4969,7 +4969,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     void markPromptRead(message)
     const items = forward.media.map((media) => referenceStaged(message, media))
     if (items.length > 0 && attachmentStore() === undefined) {
-      await reply(message, '⚠️ image/file attachments are not available in this runtime')
+      await reply(message, 'image/file attachments are not available in this runtime')
       return
     }
     const downloaded = items.length > 0
@@ -5097,7 +5097,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   // --- session slash bridge -----------------------------------------------
 
-  const MEDIA_STAGED_NOTICE = '📎 media staged for the next prompt (commands don\'t take attachments).'
+  const MEDIA_STAGED_NOTICE = 'media staged for the next prompt (commands don\'t take attachments).'
 
   /** Items a slash gesture owns: already staged + this album/message. */
   const takeSlashItems = (
@@ -5202,11 +5202,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const result = execution.result
       const body = result.text?.trim() ?? (result.kind === 'success' ? 'done' : 'command failed')
       const safeBody = result.kind === 'success' ? body : redactSecrets(body)
-      await reply(message, `⚡ \`${label}\`\n\n${result.kind === 'success' ? '✅' : '⚠️'} ${safeBody}`)
+      await reply(message, `\`${label}\`\n\n${result.kind === 'success' ? 'done' : 'warning'} ${safeBody}`)
       return true
     } catch (error) {
       const detail = redactPreview(error instanceof Error ? error.message : String(error))
-      await reply(message, `⚠️ \`${label}\` failed: ${detail}`)
+      await reply(message, `\`${label}\` failed: ${detail}`)
       return true
     }
   }
@@ -5679,7 +5679,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             if (message.text !== undefined) {
               await reply(
                 message,
-                `⛔ You are not authorized to use this bot.\n\nyour id: \`${String(message.from?.id)}\`\n\nAsk whoever installed the bot to add this id to \`ALLOWED_USER_IDS\` in the deployment \`.env\`, then restart dsh.`,
+                `You are not authorized to use this bot.\n\nyour id: \`${String(message.from?.id)}\`\n\nAsk whoever installed the bot to add this id to \`ALLOWED_USER_IDS\` in the deployment \`.env\`, then restart dsh.`,
               ).catch(() => undefined)
             }
             continue
@@ -5695,7 +5695,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             }
             if (!staleUpdateNotified.has(message.chat.id)) {
               staleUpdateNotified.add(message.chat.id)
-              await reply(message, '✅ the update finished — commands sent while it restarted are not executed; send it again.').catch(() => undefined)
+              await reply(message, 'the update finished — commands sent while it restarted are not executed; send it again.').catch(() => undefined)
             }
             continue
           }
@@ -5736,7 +5736,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         continue
       }
       const shown = turns.slice(-10)
-      const lines = [`🗂 **while the connector was away** · ${turns.length} turn(s)`]
+      const lines = [`**while the connector was away** · ${turns.length} turn(s)`]
       if (turns.length > shown.length) lines.push(`_(${turns.length - shown.length} earlier turn(s) omitted)_`)
       for (const turn of shown) {
         if (turn.user !== undefined) lines.push(`> **you**: ${turn.user.replace(/\s+/g, ' ').slice(0, 300)}`)
@@ -5830,7 +5830,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             bindings.controlChatId,
             0,
             [
-              `⚠️ **${bot.label}** token is unusable: ${reason}.`,
+              `**${bot.label}** token is unusable: ${reason}.`,
               '',
               'That bot is ignored until dsh restarts, so messages are paced on the main bot only.',
               'Check the token with @BotFather (it must be the bot HTTP API token, not a chat id),',
@@ -5868,7 +5868,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           await sendTo(
             workspace.chatId,
             workspace.systemThreadId ?? 0,
-            `⚠️ ${who} (${bot.label}) is not in this group — add it as a member to raise the rate limit (20 messages/min per bot).`,
+            `${who} (${bot.label}) is not in this group — add it as a member to raise the rate limit (20 messages/min per bot).`,
             'control',
           )
         } catch (error) {
@@ -5899,14 +5899,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         await sendTo(
           chat,
           0,
-          `⚠️ **bindings.json could not be used** — ${loadWarning}.\n\nEvery topic binding is gone; run \`/sync\` in each group to rebuild them.`,
+          `**bindings.json could not be used** — ${loadWarning}.\n\nEvery topic binding is gone; run \`/sync\` in each group to rebuild them.`,
           'control',
         )
       })()
     }
     startStagedSweep()
     startProcessCardSweep()
-    await closeAllProcessCards('⚠️ Connector restarted — process view closed.')
+    await closeAllProcessCards('Connector restarted — process view closed.')
       .catch((error: unknown) => stderr(`cannot close stale process cards: ${String(error)}`))
     offset = bindings.lastUpdateId ?? 0
     if (bindings.update !== undefined && bindings.update.phase === 'pending') {
@@ -5969,7 +5969,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         await sendTo(
           chat,
           0,
-          `♻️ the runtime's workspace registry did not list ${String(healed.restored)} workspace(s) / ${String(healed.attached)} session(s) that Telegram still had — they are back, and the web UI lists them again.`,
+          `the runtime's workspace registry did not list ${String(healed.restored)} workspace(s) / ${String(healed.attached)} session(s) that Telegram still had — they are back, and the web UI lists them again.`,
           'control',
         )
       })
@@ -6026,7 +6026,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       runtime.process = []
       runtime.processCard = undefined
     }
-    await closeAllProcessCards('⚠️ Connector stopped — process view closed.')
+    await closeAllProcessCards('Connector stopped — process view closed.')
       .catch((error: unknown) => stderr(`cannot close process cards: ${String(error)}`))
     for (const group of pendingGroups.values()) {
       if (group.timer !== undefined) clearTimeout(group.timer)
@@ -6102,7 +6102,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       sink.mirror = true
       sink.lastPrompt = text
       sink.lastPromptAt = Date.now()
-      sink.gate = sendToConfirmed(target.chatId, target.threadId, `💬 **you (web)** · ${name}\n${text}`)
+      sink.gate = sendToConfirmed(target.chatId, target.threadId, `**you (web)** · ${name}\n${text}`)
       return
     }
     // The answer streams through the sink, so the topic shows it the way a
@@ -6311,7 +6311,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         const diagnosis = ownershipDiagnosis(runtime.session.sessionId, runtime.threadId)
         void (async () => {
           await finishStream(runtime)
-          await finishProcessTurn(runtime, diagnosis.kind === 'topic' ? '↪️ Session moved to another topic' : '↪️ Session taken over by another client')
+          await finishProcessTurn(runtime, diagnosis.kind === 'topic' ? 'Session moved to another topic' : 'Session taken over by another client')
         })()
         // The prompt that provoked this never reached the agent, and the normal
         // path already marked it delivered — journal it again so the Take over
@@ -6337,7 +6337,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             parseMode: 'HTML',
             ...(runtime.threadId === 0 ? {} : { threadId: runtime.threadId }),
             ...(queued && diagnosis.takeover
-              ? { replyMarkup: { inline_keyboard: [[{ text: '↪️ Take over (restarts dsh)', callback_data: 'own:take' }]] } }
+              ? { replyMarkup: { inline_keyboard: [[{ text: 'Take over (restarts dsh)', callback_data: 'own:take' }]] } }
               : {}),
           },
         ).catch((error: unknown) => stderr(`cannot post the take-over card: ${String(error)}`))
@@ -6350,11 +6350,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       void (async () => {
         await finishStream(runtime)
-        await finishProcessTurn(runtime, '⚠️ Process interrupted')
+        await finishProcessTurn(runtime, 'Process interrupted')
       })()
       // The error text can quote a provider response, which occasionally echoes
       // the key it rejected: redact before it reaches a group.
-      void sendTo(runtime.chatId, runtime.threadId, `⚠️ Agent error: ${redactPreview(message)}`)
+      void sendTo(runtime.chatId, runtime.threadId, `Agent error: ${redactPreview(message)}`)
       return
     }
 

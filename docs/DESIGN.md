@@ -313,7 +313,7 @@ and directories.
   can restart, update, install plugins, create workspaces or bind groups. An
   empty allowlist refuses everyone.
 - Inline callbacks are admin-gated like their typed equivalents: trial
-  Commit/Roll back, component Enable/Disable/Port, the update card's ✖ and Take
+  Commit/Roll back, component Enable/Disable/Port, the update card's **Cancel** and Take
   over all check `adminUserId`. The allowlist only decides who may talk to the
   agent; a button that changes the deployment is an admin action.
 - The bot token comes from the environment, never from `cordis.patch.yml`.

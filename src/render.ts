@@ -483,7 +483,7 @@ function renderListItem(line: string, mode: Mode): string {
   const body = task === null ? content : content.replace(/^\[[ xX]\]\s+/, '')
   const bullet = task === null
     ? (ordered ? `${marker.replace(/[.)]$/, '')}.` : '•')
-    : (task[1]?.toLowerCase() === 'x' ? '☑' : '☐')
+    : (task[1]?.toLowerCase() === 'x' ? '[x]' : '[ ]')
   return `${indent}${bullet} ${inline(body, mode)}`
 }
 

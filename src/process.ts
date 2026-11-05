@@ -70,61 +70,61 @@ export function toolLabel(name: string, argumentsJson?: string): string {
   const lower = name.toLowerCase()
 
   if (lower === 'skill') {
-    return `🧠 Skill: ${textArgument(args, 'name') ?? 'unknown'}`
+    return `Skill: ${textArgument(args, 'name') ?? 'unknown'}`
   }
   if (lower === 'bash' || lower === 'shell') {
     const command = textArgument(args, 'command') ?? textArgument(args, 'cmd')
-    return command === undefined ? `💻 ${name}` : `💻 ${redactPreview(command)}`
+    return command === undefined ? name : redactPreview(command)
   }
   if (lower === 'read' || lower.endsWith('.read')) {
     const path = textArgument(args, 'path') ?? textArgument(args, 'file')
-    return path === undefined ? '📖 Read' : `📖 Read: ${pathPreview(path)}`
+    return path === undefined ? 'Read' : `Read: ${pathPreview(path)}`
   }
   if (lower === 'write' || lower.endsWith('.write')) {
     const path = textArgument(args, 'path') ?? textArgument(args, 'file')
-    return path === undefined ? '✍️ Write' : `✍️ Write: ${pathPreview(path)}`
+    return path === undefined ? 'Write' : `Write: ${pathPreview(path)}`
   }
   if (lower === 'edit' || lower.endsWith('.edit')) {
     const path = textArgument(args, 'path') ?? textArgument(args, 'file')
-    return path === undefined ? '✏️ Edit' : `✏️ Edit: ${pathPreview(path)}`
+    return path === undefined ? 'Edit' : `Edit: ${pathPreview(path)}`
   }
   if (lower === 'web_search') {
     const query = textArgument(args, 'query')
-    return query === undefined ? '🌐 Search' : `🌐 Search: ${redactPreview(query, 80)}`
+    return query === undefined ? 'Search' : `Search: ${redactPreview(query, 80)}`
   }
   if (lower === 'web_fetch') {
     const url = textArgument(args, 'url')
-    if (url === undefined) return '🌐 Fetch'
+    if (url === undefined) return 'Fetch'
     try {
-      return `🌐 Fetch: ${new URL(url).host}`
+      return `Fetch: ${new URL(url).host}`
     } catch {
-      return `🌐 Fetch: ${redactPreview(url, 80)}`
+      return `Fetch: ${redactPreview(url, 80)}`
     }
   }
   if (lower === 'subagent' || lower === 'subagent_fork') {
     const description = textArgument(args, 'description') ?? textArgument(args, 'prompt')
-    return description === undefined ? `🤖 ${name}` : `🤖 ${redactPreview(description, 80)}`
+    return description === undefined ? name : redactPreview(description, 80)
   }
   if (lower === 'grep' || lower === 'glob' || lower === 'ls') {
     const pattern = textArgument(args, 'pattern') ?? textArgument(args, 'path')
-    return pattern === undefined ? `🔎 ${name}` : `🔎 ${name}: ${redactPreview(pattern, 80)}`
+    return pattern === undefined ? name : `${name}: ${redactPreview(pattern, 80)}`
   }
-  return `🔧 ${name}`
+  return name
 }
 
 /** A short row label for one host command. */
 export function commandLabel(name: string, args?: string): string {
   const suffix = args === undefined || args.trim().length === 0 ? '' : ` ${redactPreview(args, 80)}`
-  return `⚡ /${name}${suffix}`
+  return `/${name}${suffix}`
 }
 
 export function skillLabel(name: string): string {
-  return `🧠 Skill: ${name}`
+  return `Skill: ${name}`
 }
 
 function statusPrefix(item: ProcessItem, live: boolean): string {
-  if (item.status === 'error') return '⚠️'
-  if (item.status === 'running' && live) return '⏳'
+  if (item.status === 'error') return 'failed'
+  if (item.status === 'running' && live) return 'running'
   return '•'
 }
 
@@ -147,7 +147,7 @@ function visible(items: readonly ProcessItem[]): ProcessItem[] {
 /** The live “Working…” card used while a web-UI session runs. */
 export function formatLiveProcess(items: readonly ProcessItem[]): string {
   const lines = visible(items).map((item) => processLine(item, true))
-  return ['⚙️ Working…', ...lines].join('\n')
+  return ['Working…', ...lines].join('\n')
 }
 
 export interface ProcessSummaryOptions {
