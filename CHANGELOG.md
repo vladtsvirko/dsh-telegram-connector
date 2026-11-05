@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.10
+
+Maintenance release; no connector change. Aligned with the setup that pins the
+API-only Penpot plugin 0.2.0.
+
 ## 0.2.1-rc.5-0.12.9
 
 Maintenance release; no connector change. Aligned with the setup fix that adds
