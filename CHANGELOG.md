@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1-rc.5-0.12.2
+
+Maintenance release; no connector change. Aligned with the setup fix that moves
+the `dsh` home to the data directory for rootless Podman.
+
 ## 0.2.1-rc.5-0.12.1
 
 Maintenance release; no connector change. Aligned with the setup fix that adds

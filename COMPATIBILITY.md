@@ -6,7 +6,8 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
-| 0.2.1-rc.5-0.12.1 | `0.2.1-rc.5` | tested | maintenance: setup ufw/Podman bridge rules |
+| 0.2.1-rc.5-0.12.2 | `0.2.1-rc.5` | tested | maintenance: setup dsh-home fix for rootless Podman |
+| 0.2.1-rc.5-0.12.1 | `0.2.1-rc.5` | previous | maintenance: setup ufw/Podman bridge rules |
 | 0.2.1-rc.5-0.12.0 | `0.2.1-rc.5` | previous | words-only controls: no emoji on buttons, status lines, process rows or speaker markers; reactions remain the platform-limited exception |
 | 0.2.1-rc.5-0.11.1 | `0.2.1-rc.5` | previous | typed `confirm` fallback for `/workspace remove` and `/unbind`, so scripts do not need the card |
 | 0.2.1-rc.5-0.11.0 | `0.2.1-rc.5` | previous | confirmation cards with feedback, live `/sync` progress, runtime model list, admin markers, release notes on the update card, `/archived` fix |
