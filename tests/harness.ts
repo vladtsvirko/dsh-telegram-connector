@@ -545,6 +545,10 @@ export interface BootOptions {
   }
   /** A registry prepared before boot (e.g. one that forgot its workspace). */
   registry?: FakeRegistry
+  /** Extra host services (pluginManager, hmr, commands, …) for one test. */
+  services?: Record<string, unknown>
+  /** Environment variables to set for the boot (e.g. supervisor credentials). */
+  env?: Record<string, string>
   /** Data root (the parent of DSH_HOME) and the instance id this process is. */
   dataRoot?: string
   instanceId?: string
@@ -625,6 +629,7 @@ export async function boot(
   process.env.DSH_TELEGRAM_PUBLISHER_TOKENS = ''
   process.env.DSH_SUPERVISOR_URL = ''
   process.env.DSH_SUPERVISOR_TOKEN = ''
+  for (const [key, value] of Object.entries(options.env ?? {})) process.env[key] = value
 
   const telegram = installFakeTelegram(options.updates, options.failSend)
   const agents = new FakeAgents()
@@ -633,7 +638,7 @@ export async function boot(
   const sessions = new FakeSessions()
   const registry = options.registry ?? new FakeRegistry(WORKSPACE_ID, workspaceRoot)
   const ctx = new FakeContext(
-    { agents, sessions, workspaceRegistry: registry },
+    { agents, sessions, workspaceRegistry: registry, ...options.services },
     agents,
     sessions,
   )

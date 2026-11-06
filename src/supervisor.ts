@@ -72,9 +72,13 @@ export class SupervisorClient {
     return this.request<ArmResult>('/trial/arm', {})
   }
 
-  /** Reinstall the connector: the supervisor stops the runtime, runs reset-plugin, starts a trial. */
-  update(trial = true): Promise<{ ok: boolean }> {
-    return this.request('/update', { trial })
+  /**
+   * Reinstall the connector: the supervisor stops the runtime, runs
+   * reset-plugin, and starts a trial. `ref` names the exact git spec to install;
+   * omitted, the boot pin is reinstalled (the repair path).
+   */
+  update(trial = true, ref?: string): Promise<{ ok: boolean }> {
+    return this.request('/update', ref === undefined ? { trial } : { trial, ref })
   }
 
   /** Open a trial that does not restart: HMR applied the change, the window is still owed. */

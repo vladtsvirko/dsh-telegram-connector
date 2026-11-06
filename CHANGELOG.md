@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.13.0
+
+- **npm distribution.** The package is published as
+  `dsh-telegram-connector@<version>`; the registry tarball already contains
+  `lib/`, so installs no longer run a build script. The release workflow
+  publishes a tag with provenance, and `/system update connector` resolves npm
+  versions. GitHub tags remain supported for source installs and as the setup's
+  fallback.
+- **Independent versioning.** The connector version is now plain semver
+  (`0.13.0`), not `<dsh>-<product>`. The DSH release it was tested against is a
+  row in `COMPATIBILITY.md`; a setup release no longer has to carry a matching
+  connector tag, and a connector release no longer needs a setup release.
+- **`/system update connector` now updates.** It resolves the newest tag in the
+  connector repository (or `to <version>`), refuses a tag whose declared DSH
+  range excludes the running runtime, and asks the supervisor to install that
+  exact ref. Before, it only reinstalled the setup-pinned version.
+- **`/system update penpot` and `/system update plugin <name>`.** Any
+  GitHub-installed bundle can move to its newest compatible tag through the
+  host plugin manager, wrapped in a rollback trial. A failed install puts the
+  previous version back immediately.
+- **The update path is testable without a runtime.** Release discovery,
+  semver range checks and argument parsing live in `src/updates.ts` with unit
+  tests; the supervisor accepts the exact ref in the `/update` request.
+- Standalone use is documented in `docs/STANDALONE.md`: the same plugin runs
+  without the supervisor or updater, and the commands that need them say so.
+  The bundle patch now reads `ALLOWED_USER_IDS`, `DSH_ADMIN_USER_ID`,
+  `DSH_PROVIDER` and `DSH_MODEL` from the environment, so a bare install needs
+  no patch edit.
+
 ## 0.2.1-rc.5-0.12.11
 
 Maintenance release; no connector change. Aligned with the setup fix that keeps

@@ -69,6 +69,11 @@ describe('supervisor client', () => {
     expect(JSON.parse(calls[0]?.body ?? '{}')).toEqual({ trial: true })
     await client.update(false)
     expect(JSON.parse(calls[1]?.body ?? '{}')).toEqual({ trial: false })
+    await client.update(true, 'github:vladtsvirko/dsh-telegram-connector#v0.13.1')
+    expect(JSON.parse(calls[2]?.body ?? '{}')).toEqual({
+      trial: true,
+      ref: 'github:vladtsvirko/dsh-telegram-connector#v0.13.1',
+    })
   })
 
   it('opens a live trial and can abandon it', async () => {

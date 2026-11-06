@@ -2,12 +2,15 @@
     - id: dsh-telegram-connector
       name: dsh-telegram-connector
       config:
-        # secrets come from the environment, never from this file
+        # Secrets and deployment-specific values come from the environment,
+        # never from this file. The expressions also make a bare standalone
+        # install usable without editing the patch.
         botToken: !!js process.env.DSH_TELEGRAM_BOT_TOKEN ?? ''
-        allowedUserIds: []
-        provider: deepseek-official
-        model: deepseek-v4-flash
-        workspaceRoot: ''
+        allowedUserIds: !!js (process.env.ALLOWED_USER_IDS ?? '').split(/[,\s]+/).filter(Boolean).map(Number).filter((id) => Number.isFinite(id))
+        adminUserId: !!js Number(process.env.DSH_ADMIN_USER_ID ?? 0) || undefined
+        provider: !!js process.env.DSH_PROVIDER ?? 'deepseek-official'
+        model: !!js process.env.DSH_MODEL ?? 'deepseek-v4-flash'
+        workspaceRoot: !!js process.env.DSH_WORKSPACE ?? ''
         # Reactions are changed online with /reactions; these are the defaults.
         # reactionsEnabled: true
         # readReaction: 👀

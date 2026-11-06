@@ -1,39 +1,47 @@
 # Release and version rules
 
-Versions are aligned with DSH and carry our own product line:
+This repository is a DSH plugin, versioned on its own — it is **not** released
+together with `dsh-tg-docker-setup`.
 
-```
-<dsh-version>-<major>.<minor>.<patch>      v0.2.1-rc.5-0.12.11
-```
+- Semver: `0.x` is the compatible line; a breaking change is `1.0.0`.
+- Tags are `v` + `package.json` version, and immutable once pushed.
+- The DSH release actually tested is a row in `COMPATIBILITY.md`. It is not
+  encoded in the version and it does not belong in the tag.
+- `peerDependencies` declares the supported DSH range. `/system update
+  connector` reads the range from the published manifest (or the tagged
+  `package.json` for a git install) and refuses a version the running runtime
+  does not satisfy; keep the range honest.
+- Every tag is a release: `.github/workflows/publish.yml` publishes that exact
+  version to npm with provenance. Do not push a tag you would not install.
+  The workflow needs the repository secret `NPM_TOKEN` with publish rights.
+- The setup pins an exact npm `spec`, a GitHub `fallback` of the same release,
+  and a `minimum` in its `plugins.json`; that is a fresh-install floor, not a
+  ceiling. A newer compatible version installed from the bot stays installed
+  across reboots. Bumping the setup pin is a setup change, not a connector
+  release.
 
-- **DSH part** is exactly the DSH release this connector was tested against.
-- **Product part** starts at `0.0.0` when aligning to a new DSH.
-  - patch: fixes
-  - minor: compatible features
-  - **major: incompatible change**. Major 0 is the compatible line; `1.0.0`
-    marks a break. Never ship a breaking change as `0.x`.
-- Tags are `v` + the package version; tags are immutable once pushed.
-- Same major: updates may jump (`0.0.1 → 0.4.2`).
-- Different major or a different DSH part: crossing requires the explicit
-  `--i-know-versions-are-incompatible` flag; `/system` never crosses on its own.
-- The setup entrypoint installs the connector tag derived from the setup
-  `VERSION`. A setup-only release therefore still needs a connector maintenance
-  tag with the same version, and a deployed connector change needs a setup
-  release. The two repositories ship together.
+## Repository metadata
+
+The upstream DSH README asks plugin repositories to carry the GitHub topic
+`dsh-plugin` (the About box, not a file). Keep it set, along with
+`deepseek-harness` and the product topic (`telegram` or `penpot`). Topics need
+repository administration rights; `gh repo edit --add-topic dsh-plugin` or the
+API's `PUT /repos/{owner}/{repo}/topics` are the two ways to set them.
 
 ## Release checklist
 
-1. Align the DSH part with the tested `DSH_VERSION`; reset product to `0.0.0`
-   for a new DSH line. Bump the product for our changes.
-2. Update `package.json`/`package-lock.json`, `COMPATIBILITY.md` (one row per
-   release) and `CHANGELOG.md`. Also bump the manual-install pin in `README.md`
-   (`dsh plugin add …#v<version>`) — it is the only exact tag written in prose,
-   and a stale one is the first thing a hand-installer hits.
-3. Run `npm run typecheck && npm test && npm run build`.
-4. Commit, tag `v<version>`, push the tag. CI runs
-   `scripts/check-version.mjs` and fails if the tag, package and matrix drift.
-5. Bump the setup repo's `VERSION` and its `AGENTS.md` example to the same tag.
-   The connector ref is derived from `VERSION`; there is no image and no `.env`
-   pin to edit. The setup release and this connector release ship together.
+1. Update `package.json`/`package-lock.json`, `COMPATIBILITY.md` (one row per
+   release, with the tested DSH version), `CHANGELOG.md` and the manual-install
+   pin in `README.md`.
+2. If the DSH peer range changed, update `peerDependencies` and say why in
+   `COMPATIBILITY.md`.
+3. Run `npm run typecheck && npm test && npm run build` and
+   `npm publish --dry-run`.
+4. Commit, tag `v<version>`, push the tag. CI validates the tag, and
+   `publish.yml` uploads that exact version to npm.
+5. After the npm version exists, bump the setup's `plugins.json`
+   `spec`/`fallback`/`minimum` and run `scripts/plugin-preflight.mjs --remote`.
+   The setup does not need a matching tag, and this release does not need a
+   setup release.
 
 Do not move or reuse a tag. Do not put a breaking change in the `0.x` line.

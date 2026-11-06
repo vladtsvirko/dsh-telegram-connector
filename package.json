@@ -1,7 +1,7 @@
 {
   "name": "dsh-telegram-connector",
-  "version": "0.2.1-rc.5-0.12.11",
-  "description": "Telegram control plane for DeepSeek Harness \u2014 one group per workspace, one forum topic per session.",
+  "version": "0.13.0",
+  "description": "Telegram control plane for DeepSeek Harness — one group per workspace, one forum topic per session.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -27,9 +27,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepare": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
+    "prebuild": "npm run clean"
   },
   "dsh": {
     "bundle": {
@@ -61,5 +64,8 @@
     "deepseek-harness",
     "telegram",
     "bot"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }

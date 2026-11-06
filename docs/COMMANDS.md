@@ -82,8 +82,9 @@ connector refuses to disable or remove itself.
 | `/system status` | connector and runtime versions, supervisor, open trial |
 | `/system restart` | restart into a trial (default) |
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
-| `/system update connector` | reinstall the pinned connector, in a trial |
-| `/system update connector now` | reinstall without a trial |
+| `/system update connector [to <version>] [now]` | move the connector to its newest compatible version, in a trial |
+| `/system update penpot [to <version>] [now]` | move the Penpot plugin to its newest compatible version through the plugin manager |
+| `/system update plugin <name> [to <version>] [now]` | the generic form for any GitHub-installed bundle |
 | `/system update setup [--i-know-versions-are-incompatible]` | show a card with the target, DSH change, recent commit subjects and running sessions, then drain and update through the updater service; a cross-line jump gets a second **Cross anyway** confirmation |
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
@@ -112,12 +113,19 @@ used or after 15 minutes. All values are saved in the bindings, so an online
 change survives a restart. Telegram only accepts its own reaction emoji; `✓`,
 `✅` and `⏳` are not in that set, which is why the defaults are 👀, ✍ and 🙉.
 
-`/system update connector` runs the entrypoint's `reset-plugin` with the runtime
-stopped: the same allow-builds and version-compatibility logic that installed the
-connector. It reinstalls the connector **pinned to the current setup version**;
-it cannot move to a different setup tag. A failed reinstall restores the previous
-state before the runtime comes back. `now` skips the trial and makes the
+`/system update connector` resolves the newest npm version (or the repository
+tag for a git install, or the exact `to <version>`), refuses a version whose declared DSH range excludes
+this runtime, and runs the entrypoint's `reset-plugin` with the runtime stopped
+and that ref in the environment: the same allow-builds and compatibility logic
+that installed the connector. A failed install or an unhealthy boot restores the
+previous state before the runtime comes back. `now` skips the trial and makes the
 restarted state the rollback point.
+
+`/system update penpot` (and `/system update plugin <name>`) resolves the
+bundle's newest version and replaces the package through the host plugin manager,
+inside a trial opened before the removal. If the new version fails to install,
+the previous spec is reinstalled immediately; if that also fails, the supervisor
+restores the pre-update profile. The bundle's configuration row is untouched.
 
 `/system update setup` blocks new prompts, waits until every agent (web UI and
 Telegram) is idle, then asks the updater sidecar to apply the latest compatible
@@ -127,8 +135,10 @@ printing the host commands. The updater reports the result directly to the
 control chat; queued messages from the downtime are answered once and never
 executed.
 
-The two commands cover different scopes: `update connector` changes only the
-profile; `update setup` changes the setup checkout, DSH install and connector pin.
+The commands cover different scopes: `update connector` and `update plugin`
+change only the profile; `update setup` changes the setup checkout and DSH
+install. Plugin versions are independent of the setup tag, so a setup update no
+longer forces a connector or Penpot version.
 `/system rollback` restores the profile, **not** the image or the setup tag. Once
 the updater accepts an `update setup` job the card's ✖ button is removed, but the
 job is still cancellable with `/system cancel` (the updater stops it with
@@ -287,7 +297,7 @@ A topic created by hand becomes a session on its first message.
 /plugin confirm                           → trial or live window
 /system confirm                          (or the Commit button)
 # ship a new connector
-/system update connector                   → reinstall → trial → /system confirm
+/system update connector                   → newest compatible version → trial → /system confirm
 ```
 
 See [DESIGN.md](DESIGN.md) for the mapping rules and the supervisor, and

@@ -86,8 +86,10 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   admin-only, exactly like the typed commands.
 - **Host-free after install.** The runtime runs under a
   supervisor: every plugin confirmation opens a rollback window (live under HMR,
-  or around a restart), and `/system update connector` reinstalls the pinned
-  connector the same way. `/system update setup` confirms, drains agents and moves the whole
+  or around a restart), and `/system update connector` resolves and installs the
+  newest compatible connector version the same way. `/system update penpot` updates
+  the design plugin through the plugin manager; plugin versions are independent
+  of the setup tag. `/system update setup` confirms, drains agents and moves the whole
   setup through the updater sidecar. The trial comes with Commit / Roll back
   buttons; ignore it and it rolls back by itself. A dead runtime, a dead updater,
   a broken `.env` or the host itself still needs a shell — that boundary is
@@ -144,29 +146,37 @@ cd dsh-tg-docker-setup
 ```
 
 `./install.sh --check` prints the whole plan and changes nothing. The setup
-pins the connector tag to its own `VERSION`, so the two never drift.
+pins a recommended connector tag in its `plugins.json`; the connector is
+versioned on its own and can move to a newer compatible version from the bot without
+a setup release. See [`docs/STANDALONE.md`](docs/STANDALONE.md) for the same
+install without the setup.
 
-Installing by hand into an existing runtime works too, but pin the tag and grant
-the build script, or the install aborts before any code exists:
+The connector is published to npm as an exact version:
 
 ```sh
-# 1. allow the git package's build (its `prepare` compiles src/ into lib/)
+dsh plugin --profile web add dsh-telegram-connector@0.13.0
+export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
+```
+
+The registry tarball already contains the built `lib/`, so there is no
+`prepare` build and no `allowBuilds` entry. Restart the runtime after adding
+the plugin. The setup's `plugins.json` uses the same spec and keeps the GitHub
+tag as a fallback when the registry is unreachable.
+
+Installing from the source repository is still possible:
+
+```sh
 cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-
-# 2. add the plugin at an exact tag — the one equal to the setup VERSION
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.2.1-rc.5-0.12.11
-
-# 3. token in the environment, never in the YAML
-export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.13.0
 ```
 
-The package is a plugin bundle: `cordis.patch.yml` mounts one row. Installing
-from git runs the package's `prepare` build; pnpm ≥ 10 refuses that build until
-the `allowBuilds` entry above exists (pnpm prints the exact key). Restart the
-runtime after adding the plugin.
+That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the
+`allowBuilds` entry exists (pnpm prints the exact key).
+
+The package is a plugin bundle: `cordis.patch.yml` mounts one row.
 
 ## Configuration
 
@@ -259,8 +269,9 @@ session id, an id prefix, or the topic title.
 | `/plugin approve` | allow the install scripts pnpm blocked, and retry |
 | `/system restart` | restart into a trial: the new state is live, with a rollback window |
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
-| `/system update connector` | reinstall the pinned connector, in a trial |
-| `/system update connector now` | reinstall without a trial |
+| `/system update connector [to <version>] [now]` | move the connector to its newest compatible version, in a trial |
+| `/system update penpot [to <version>] [now]` | move the Penpot plugin to its newest compatible version through the plugin manager |
+| `/system update plugin <name> [to <version>] [now]` | the generic form for any GitHub-installed bundle |
 | `/system update setup [--i-know-versions-are-incompatible]` | confirm, drain, then update setup through the updater service |
 | `/system confirm` | commit the running trial (or press **Commit**) |
 | `/system rollback` | restore the last committed state and restart |
@@ -420,14 +431,15 @@ session store — there is no export step and no second copy of a conversation.
   every client renders them in its own zone; logs and stored state stay UTC.
   Times you type — schedules, later — are read in the bot's configured zone
   (`/timezone`, `$DSH_TIMEZONE`, default UTC).
-- **Self-update.** `/system update connector` asks the supervisor to stop the
-  runtime, run the entrypoint's `reset-plugin` (the same path that installed the
-  connector), and start it again inside a trial. `now` skips the trial. A failed
-  reinstall restores the previous state before the runtime comes back, so a bad
-  profile update cannot strand the bot. It reinstalls the **pinned** connector;
-  moving the setup tag is `/system update setup`, which confirms, drains agents and
-  uses the updater sidecar. `/system rollback` restores the profile, not the
-  image.
+- **Self-update.** `/system update connector` resolves the newest npm version
+  (or the repository tag for a git install), checks its declared DSH range, and asks the
+  supervisor to stop the runtime, run the entrypoint's `reset-plugin` into that
+  exact ref, and start it again inside a trial. `now` skips the trial. A failed
+  install or an unhealthy boot restores the previous state before the runtime
+  comes back, so a bad connector release cannot strand the bot. The connector is
+  versioned independently of the setup; moving the setup tag is
+  `/system update setup`, which confirms, drains agents and uses the updater
+  sidecar. `/system rollback` restores the profile, not the image.
 - **Supervised restarts.** The runtime runs under a supervisor
   that owns modifications to the profile and keeps a copy of it. It is the only
   process that does not load plugins, so a plugin that breaks startup cannot take
