@@ -1,7 +1,9 @@
 name: Publish npm
 
-# A tag is the release. The package version must match it (scripts/check-version.mjs)
-# and publishing is immutable, so the tests run again here before the upload.
+# A tag is the release. The package version must match it
+# (scripts/check-version.mjs) and publishing is immutable. Authentication is
+# npm Trusted Publishing (GitHub OIDC): no npm token is stored in this
+# repository or in Actions secrets.
 on:
   push:
     tags: ['v*']
@@ -18,14 +20,33 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11
+      - run: npm --version
 
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
       - run: node scripts/check-version.mjs
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # The first release is published manually before a trusted publisher
+      # exists. Later tag runs for that same version must not fail with E422.
+      - name: Check whether this version is already published
+        id: published
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "${name}@${version} already exists; skipping publish"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.published.outputs.exists != 'true'
+        run: npm publish --provenance --access public

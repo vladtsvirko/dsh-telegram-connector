@@ -13,7 +13,9 @@ together with `dsh-tg-docker-setup`.
   does not satisfy; keep the range honest.
 - Every tag is a release: `.github/workflows/publish.yml` publishes that exact
   version to npm with provenance. Do not push a tag you would not install.
-  The workflow needs the repository secret `NPM_TOKEN` with publish rights.
+  Authentication is npm Trusted Publishing (GitHub OIDC); no npm token is stored
+  in the repository. The npm package must have a trusted publisher configured
+  for `vladtsvirko/<repo>` and `publish.yml`.
 - The setup pins an exact npm `spec`, a GitHub `fallback` of the same release,
   and a `minimum` in its `plugins.json`; that is a fresh-install floor, not a
   ceiling. A newer compatible version installed from the bot stays installed
@@ -38,7 +40,10 @@ API's `PUT /repos/{owner}/{repo}/topics` are the two ways to set them.
 3. Run `npm run typecheck && npm test && npm run build` and
    `npm publish --dry-run`.
 4. Commit, tag `v<version>`, push the tag. CI validates the tag, and
-   `publish.yml` uploads that exact version to npm.
+   `publish.yml` uploads that exact version to npm through the trusted
+   publisher. The first version of a new package is published manually once,
+   because npm only lets you configure a trusted publisher after the package
+   exists.
 5. After the npm version exists, bump the setup's `plugins.json`
    `spec`/`fallback`/`minimum` and run `scripts/plugin-preflight.mjs --remote`.
    The setup does not need a matching tag, and this release does not need a
