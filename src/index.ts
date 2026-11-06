@@ -1988,12 +1988,34 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    */
   const statusProbes = async (): Promise<string[]> => {
     const port = (process.env.DSH_PORT ?? '4310').trim() || '4310'
+    // Probe what the runtime advertises, not just loopback: a deployment may
+    // bind only the LAN address (the setup does), which makes 127.0.0.1 look
+    // down while the Web UI is answering on the host's LAN address.
+    const probes: Array<{ label: string; url: string }> = []
+    const link = webLink()
+    if (link.root.length > 0) {
+      try {
+        const advertised = new URL(link.root)
+        if (advertised.host.length > 0) {
+          probes.push({ label: advertised.host, url: `${advertised.origin}/` })
+        }
+      } catch {
+        // An unparseable advertised URL falls back to loopback below.
+      }
+    }
+    const loopback = { label: `127.0.0.1:${port}`, url: `http://127.0.0.1:${port}/` }
+    if (!probes.some((probe) => probe.url === loopback.url)) probes.push(loopback)
     let web = 'unreachable'
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2000) })
-      web = String(response.status)
-    } catch {
-      web = 'unreachable'
+    let where = probes[0]?.label ?? loopback.label
+    for (const probe of probes) {
+      try {
+        const response = await fetch(probe.url, { signal: AbortSignal.timeout(2000) })
+        web = String(response.status)
+        where = probe.label
+        break
+      } catch {
+        // Try the next address; loopback is the last fallback.
+      }
     }
     const names = providerKeyNames()
     const missing = names.filter((name) => (process.env[name] ?? '').trim().length === 0)
@@ -2011,7 +2033,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (missing > 0) registryLine += ` · ${String(missing)} missing — run /sync to restore`
     }
     return [
-      `web: 127.0.0.1:${port} answered ${web}`,
+      `web: ${where} answered ${web}`,
       `key: ${key}`,
       `registry: ${registryLine}`,
       `data: ${dataDirectoryLine()}`,

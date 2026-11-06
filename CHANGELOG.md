@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.1
+
+- **`/system status` probes the advertised address.** The setup binds the LAN
+  address (for example `192.168.2.98`), so the old hardcoded
+  `127.0.0.1:4310` check reported `answered unreachable` while the Web UI was
+  serving. The probe now tries the URL the web app advertises and falls back to
+  loopback only when there is no advertised URL.
+
 ## 0.13.0
 
 - **npm distribution.** The package is published as

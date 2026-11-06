@@ -154,7 +154,7 @@ install without the setup.
 The connector is published to npm as an exact version:
 
 ```sh
-dsh plugin --profile web add dsh-telegram-connector@0.13.0
+dsh plugin --profile web add dsh-telegram-connector@0.13.1
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
 ```
 
@@ -170,7 +170,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.13.0
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.13.1
 ```
 
 That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the
