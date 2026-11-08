@@ -8,7 +8,7 @@ describe('help registry', () => {
   it('lists control commands and keeps dashboard commands out', () => {
     const index = indexText('control')
     expect(index).toContain('/plugins')
-    expect(index).toContain('/plugin add <spec>')
+    expect(index).toContain('/plugins add <spec>')
     expect(index).toContain('/system restart [now]')
     expect(index).not.toContain('`/sync` — ')
   })
@@ -21,10 +21,9 @@ describe('help registry', () => {
     expect(index).not.toContain('/plugin add')
   })
 
-  it('gives a session topic help, man, commands and skills', () => {
+  it('gives a session topic help, commands and skills', () => {
     const index = indexText('session')
     expect(index).toContain('/help')
-    expect(index).toContain('/man')
     expect(index).toContain('/commands')
     expect(index).toContain('/skills')
     expect(index).toContain('/run <command> [args]')
@@ -33,9 +32,9 @@ describe('help registry', () => {
     expect(index).not.toContain('/system')
   })
 
-  it('resolves a command, an alias and a --help spelling', () => {
-    expect(lookupText('plugin add', 'control')).toContain('github:owner/repo')
-    expect(lookupText('/plugin rm', 'control')).toContain('/plugin remove <name>')
+  it('resolves a command and a --help spelling', () => {
+    expect(lookupText('plugins add', 'control')).toContain('github:owner/repo')
+    expect(lookupText('/plugins remove', 'control')).toContain('/plugins remove <name>')
     expect(lookupText('/workspace new', 'control')).toContain('startgroup')
     expect(lookupText('run', 'session')).toContain('name collisions')
     expect(lookupText('skill', 'session')).toContain('host command')
@@ -50,8 +49,8 @@ describe('help registry', () => {
   it('prints the manual with details and examples', () => {
     const manual = manualText('control')
     expect(manual).toContain('# plugins')
-    expect(manual).toContain('/plugin add <spec>')
-    expect(manual).toContain('/plugin add github:owner/repo')
+    expect(manual).toContain('/plugins add <spec>')
+    expect(manual).toContain('/plugins add github:owner/repo')
   })
 
   it('documents every dispatched command', () => {
@@ -61,6 +60,7 @@ describe('help registry', () => {
     )
     expect(literals.size).toBeGreaterThan(20)
     for (const command of literals) {
+      if (command === 'plugin') continue // moved to /plugins; the reply names it
       const found = lookupText(command, 'control')
         ?? lookupText(command, 'dashboard')
         ?? lookupText(command, 'session')

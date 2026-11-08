@@ -108,17 +108,17 @@ message, never a retry storm.
 
 ## 5. Commands
 
-The full reference is [COMMANDS.md](COMMANDS.md) (and `/man` in the bot); the
+The full reference is [COMMANDS.md](COMMANDS.md) (and `/help` in the bot); the
 shape is what matters here.
 
 - **Control chat** — `/workspaces`, `/workspace new|link|rm`, `/plugins`,
-  `/plugin info|add|enable|disable|remove|confirm|cancel|approve`, `/status`,
+  `/plugins info|add|enable|disable|remove|confirm|cancel|approve`, `/status`,
   `/system status`, `/timezone`, `/reactions`, `/web`, `/firewall`, `/system …`,
   `/schedules` (stub).
 - **Dashboard** — `/new`, `/sessions`, `/status`, `/dashboard`, `/sync`,
   `/archived`, `/unarchive`, `/rename`, `/model`, `/close`, `/reopen`,
   `/forget`, `/unbind`, `/dangerous cleanup`.
-- **Session topic** — plain text is a turn. `/help`, `/man`, `/commands`,
+- **Session topic** — plain text is a turn. `/help`, `/help`, `/commands`,
   `/skills`, `/<skill>`, `/run`, `/skill` and host commands are accepted;
   management commands take the session as an argument in the dashboard, so a
   conversation never has to be command-aware.
@@ -135,12 +135,12 @@ a workspace topic, and it rides on the host's `pluginManager` service:
 | Step | Host call |
 |---|---|
 | `/plugins` | `listBundles()` |
-| `/plugin info <name>` | `listBundles()`, matched by name, title or scope-less name |
-| `/plugin add <spec>` | `inspect(spec)` — no mutation |
-| **Confirm** button or `/plugin confirm` | `installBundle(spec)` |
-| `/plugin approve` | `installBundle(spec, { approvedBuilds })` |
-| `/plugin enable\|disable <name>` | `setBundleEnabled(name, boolean)` |
-| `/plugin remove <name>` | `removeBundle(name)` |
+| `/plugins info <name>` | `listBundles()`, matched by name, title or scope-less name |
+| `/plugins add <spec>` | `inspect(spec)` — no mutation |
+| **Confirm** button or `/plugins confirm` | `installBundle(spec)` |
+| `/plugins approve` | `installBundle(spec, { approvedBuilds })` |
+| `/plugins enable\|disable <name>` | `setBundleEnabled(name, boolean)` |
+| `/plugins remove <name>` | `removeBundle(name)` |
 
 The confirmation gate is deliberate: a plugin runs in-process with the
 runtime's permissions, so the preview lists what the spec names and the
@@ -151,7 +151,7 @@ disabling a bundle goes through the same confirmation for that reason. When the
 manager reports `restart-required`, the connector does not hand the restart back
 to the user — it starts the trial itself, and the trial message is the second
 confirmation.
-pnpm's blocked install scripts are named, and only `/plugin approve` allows the
+pnpm's blocked install scripts are named, and only `/plugins approve` allows the
 exact packages the failed run reported. The connector refuses to disable or
 remove its own bundle, because the in-flight reply would be cut off. A missing
 manager is reported, never assumed.
@@ -320,9 +320,9 @@ and directories.
 - The bot is a group admin and can delete topics: `/dangerous cleanup` requires
   an explicit `confirm`, and `/forget` never deletes anything.
 - Plugin mutations are the highest-risk surface: a bundle's code and install
-  scripts run with the runtime's permissions. `/plugin add` inspects first and
-  installs only after an explicit confirmation (the card's **Confirm** or `/plugin confirm`); blocked install scripts are
-  named and only `/plugin approve` allows exactly those names; `/plugin remove`
+  scripts run with the runtime's permissions. `/plugins add` inspects first and
+  installs only after an explicit confirmation (the card's **Confirm** or `/plugins confirm`); blocked install scripts are
+  named and only `/plugins approve` allows exactly those names; `/plugins remove`
   confirms too. Enable/disable is confirmed like the rest, and reversible. The
   connector refuses to disable or remove its own bundle.
 
@@ -371,7 +371,7 @@ a rollback, which is what makes the swap cheap and safe.
 |---|---|---|
 | `/system restart` (default) | connector → `POST /restart {trial:true}` | supervisor persists the trial, then restarts `dsh` |
 | `/system restart now` | connector → `POST /restart {trial:false}` | supervisor snapshots the current profile, then restarts |
-| plugin confirmation (**Confirm** / `/plugin confirm`) | connector → `POST /trial/open` | trial opens *before* the change, without restarting |
+| plugin confirmation (**Confirm** / `/plugins confirm`) | connector → `POST /trial/open` | trial opens *before* the change, without restarting |
 | change applied live | connector | keeps the trial; the message is the confirmation |
 | change needs a restart | connector → abandon + `/system restart` | the live trial is closed and a restart trial opened |
 | `/system update connector` | connector → `POST /update {trial:true}` | supervisor stops the runtime, runs `dsh-entrypoint reset-plugin`, starts a trial |
@@ -400,7 +400,7 @@ deserves the same window. The connector therefore opens the trial *before* the
 manager runs the operation:
 
 ```
-Confirm / /plugin confirm ─► POST /trial/open ─► mutation ─┬─ applied        ─► keep trial, announce
+Confirm / /plugins confirm ─► POST /trial/open ─► mutation ─┬─ applied        ─► keep trial, announce
                                                  ├─ restart-required ─► abandon, restart trial
                                                  └─ failed         ─► abandon
 ```

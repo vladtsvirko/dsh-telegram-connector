@@ -1,7 +1,7 @@
 /**
  * The command manual.
  *
- * One registry drives `/help`, `/man` and `<command> --help` on all three
+ * One registry drives `/help` and `<command> --help` on all three
  * surfaces (the bot chat, the workspace dashboard, a session topic), so the
  * text cannot drift between the index, the detail view and the README.
  *
@@ -13,7 +13,7 @@ export type Surface = 'control' | 'dashboard' | 'session'
 export interface CommandDoc {
   /** Command path without a slash, e.g. `plugin add`. */
   path: string
-  /** Canonical invocation, e.g. `/plugin add <spec>`. */
+  /** Canonical invocation, e.g. `/plugins add <spec>`. */
   usage: string
   summary: string
   details?: string
@@ -27,17 +27,7 @@ export interface CommandDoc {
 
 const GROUP_ORDER = ['start', 'workspace', 'sessions', 'plugins', 'system', 'runtime', 'time']
 
-const ALIASES: Record<string, string> = {
-  start: 'help',
-  '?': 'help',
-  'plugin list': 'plugins',
-  'plugin install': 'plugin add',
-  'plugin rm': 'plugin remove',
-  'plugin del': 'plugin remove',
-  'list archived': 'archived',
-  list: 'archived',
-  'workspace rm': 'workspace remove',
-}
+const ALIASES: Record<string, string> = {}
 
 const SURFACE_NOTE: Record<Surface, string> = {
   control:
@@ -45,26 +35,35 @@ const SURFACE_NOTE: Record<Surface, string> = {
   dashboard:
     'This topic owns this group\'s workspace. Plugin, restart, update and timezone commands live in the bot chat.',
   session:
-    'This topic is one session — plain text is a turn. Only a leading `/` starts a command; slashes later in the text are literal. `/commands` lists host commands, `/skills` lists user-invocable skills, `/run` bypasses connector names and `/skill` forces a skill. `//text` sends a message that starts with `/`. `/help` and `/man` work here too.',
+    'This topic is one session — plain text is a turn. Only a leading `/` starts a command; slashes later in the text are literal. `/commands` lists host commands, `/skills` lists user-invocable skills, `/run` bypasses connector names and `/skill` forces a skill. `//text` sends a message that starts with `/`. `/help` works here too.',
 }
 
 export const COMMANDS: CommandDoc[] = [
   {
     path: 'help',
     usage: '/help [command]',
-    aliases: ['/start'],
     summary: 'list the commands available in this chat',
     details:
-      'With a command name it shows that command. `<command> --help` does the same. `/man` prints the full manual.',
-    examples: ['/help', '/help plugin add', '/system restart --help'],
+      'With a command name it shows that command. `<command> --help` does the same. `/start` and `/menu` post the control card.',
+    examples: ['/help', '/help plugins add', '/system restart --help'],
     surfaces: ['control', 'dashboard', 'session'],
     group: 'start',
   },
   {
-    path: 'man',
-    usage: '/man [command]',
-    summary: 'the full manual, with semantics and examples',
-    details: 'Same as `/help` but includes every detail, caveat and example.',
+    path: 'menu',
+    usage: '/menu',
+    summary: 'the control card: buttons for the common actions',
+    details:
+      'Status, workspaces, plugins, components, the web link, help, update and restart — the same actions as the typed commands, as buttons. `/start` posts it in the bot chat too.',
+    surfaces: ['control'],
+    group: 'start',
+  },
+  {
+    path: 'start',
+    usage: '/start',
+    summary: 'welcome card with the main actions',
+    details:
+      'In the bot chat it posts the `/menu` card. In a group it is the `startgroup` deep link that binds the workspace.',
     surfaces: ['control', 'dashboard', 'session'],
     group: 'start',
   },
@@ -139,7 +138,6 @@ export const COMMANDS: CommandDoc[] = [
   {
     path: 'workspace remove',
     usage: '/workspace remove <name>',
-    aliases: ['/workspace rm'],
     summary: 'unregister a workspace and clear its group',
     details:
       'Shows how many session topics will be deleted, then asks for confirmation. Removes the workspace from DSH and deletes the binding; the directory, the sessions and the group itself are untouched.',
@@ -150,43 +148,40 @@ export const COMMANDS: CommandDoc[] = [
   {
     path: 'plugins',
     usage: '/plugins',
-    aliases: ['/plugin list'],
     summary: 'list the profile\'s bundles: enabled, disabled, available',
     details:
-      'Enabled = running; disabled = installed but deselected; available = shipped or cataloged but not selected. `/plugin info <name>` explains one.',
+      'Enabled = running; disabled = installed but deselected; available = shipped or cataloged but not selected. `/plugins info <name>` explains one.',
     surfaces: ['control'],
     group: 'plugins',
   },
   {
-    path: 'plugin info',
-    usage: '/plugin info <name>',
+    path: 'plugins info',
+    usage: '/plugins info <name>',
     summary: 'one bundle in detail: version, source, rows, errors',
     details: '`<name>` matches the package name, its scope-less suffix, or its display title.',
-    examples: ['/plugin info dsh-telegram-connector'],
+    examples: ['/plugins info dsh-telegram-connector'],
     surfaces: ['control'],
     group: 'plugins',
   },
   {
-    path: 'plugin add',
+    path: 'plugins add',
     admin: true,
-    usage: '/plugin add <spec>',
-    aliases: ['/plugin install'],
+    usage: '/plugins add <spec>',
     summary: 'inspect a package, then install it after confirmation',
     details:
-      'The spec is a registry name (`pkg`, `pkg@1.2`), `github:owner/repo`, an absolute path or a tarball URL. Nothing mutates until `/plugin confirm`. A confirmation opens a rollback trial: live under HMR, or around a restart.',
+      'The spec is a registry name (`pkg`, `pkg@1.2`), `github:owner/repo`, an absolute path or a tarball URL. Nothing mutates until `/plugins confirm`. A confirmation opens a rollback trial: live under HMR, or around a restart.',
     examples: [
-      '/plugin add github:owner/repo',
-      '/plugin add /data/workspace/hello-plugin',
-      '/plugin add some-package@1.2.3',
+      '/plugins add github:owner/repo',
+      '/plugins add /data/workspace/hello-plugin',
+      '/plugins add some-package@1.2.3',
     ],
     surfaces: ['control'],
     group: 'plugins',
   },
   {
-    path: 'plugin remove',
+    path: 'plugins remove',
     admin: true,
-    usage: '/plugin remove <name>',
-    aliases: ['/plugin rm'],
+    usage: '/plugins remove <name>',
     summary: 'uninstall a bundle (confirmation + trial)',
     details:
       'The connector refuses to remove itself. Removing a bundle that is running may need a restart, which the trial performs.',
@@ -194,45 +189,45 @@ export const COMMANDS: CommandDoc[] = [
     group: 'plugins',
   },
   {
-    path: 'plugin enable',
+    path: 'plugins enable',
     admin: true,
-    usage: '/plugin enable <name>',
+    usage: '/plugins enable <name>',
     summary: 'select a bundle',
     details: 'Confirms first, then applies live under HMR or restarts into a trial.',
     surfaces: ['control'],
     group: 'plugins',
   },
   {
-    path: 'plugin disable',
+    path: 'plugins disable',
     admin: true,
-    usage: '/plugin disable <name>',
+    usage: '/plugins disable <name>',
     summary: 'deselect a bundle, keeping the package installed',
     details: 'Confirms first. The connector refuses to disable itself.',
     surfaces: ['control'],
     group: 'plugins',
   },
   {
-    path: 'plugin confirm',
+    path: 'plugins confirm',
     admin: true,
-    usage: '/plugin confirm',
+    usage: '/plugins confirm',
     summary: 'run the pending plugin action',
     details:
-      'Pending actions expire after 10 minutes and are bound to the user who started them. `/plugin cancel` drops one.',
+      'Pending actions expire after 10 minutes and are bound to the user who started them. `/plugins cancel` drops one.',
     surfaces: ['control'],
     group: 'plugins',
   },
   {
-    path: 'plugin cancel',
+    path: 'plugins cancel',
     admin: true,
-    usage: '/plugin cancel',
+    usage: '/plugins cancel',
     summary: 'drop the pending plugin action',
     surfaces: ['control'],
     group: 'plugins',
   },
   {
-    path: 'plugin approve',
+    path: 'plugins approve',
     admin: true,
-    usage: '/plugin approve',
+    usage: '/plugins approve',
     summary: 'allow the install scripts pnpm blocked, then retry',
     details:
       'Only appears after a failed install lists blocked packages. It allows exactly those names, with the host user\'s permissions.',
@@ -272,13 +267,13 @@ export const COMMANDS: CommandDoc[] = [
     group: 'system',
   },
   {
-    path: 'system components',
+    path: 'components',
     admin: true,
-    usage: '/system components [<component> <enable|disable|port> [<port>]]',
+    usage: '/components [<component> <enable|disable|port> [<port>]]',
     summary: 'optional components: list, enable, disable, change the port',
     details:
-      'No argument posts a card with one row per component (Enable/Disable and Port). The updater starts or stops the stack on the host and restarts the runtime so the tools follow; it reports the result in this chat. The text form is for precision, for example /system components design port 8091. Needs DSH_UPDATER_TOKEN; without it the card explains what is missing.',
-    examples: ['/system components', '/system components design enable', '/system components design port 8091'],
+      'No argument posts a card with one row per component (Enable/Disable and Port). The updater starts or stops the stack on the host and restarts the runtime so the tools follow; it reports the result in this chat. The text form is for precision, for example /components design port 8091. Needs DSH_UPDATER_TOKEN; without it the card explains what is missing.',
+    examples: ['/components', '/components design enable', '/components design port 8091'],
     surfaces: ['control'],
     group: 'system',
   },
@@ -376,10 +371,10 @@ export const COMMANDS: CommandDoc[] = [
   {
     path: 'status',
     usage: '/status [session]',
-    summary: 'runtime state; on the dashboard, one session\'s state',
+    summary: 'the dashboard\'s workspace state, or one session\'s state',
     details:
-      'In the bot chat it reports the model route, counts, poller, timezone and supervisor. On the dashboard it summarises the workspace (session count, model route, poller, timezone); `/status <session>` adds that session\'s id, topic, model and agent state. `/sessions` lists the workspace\'s sessions.',
-    surfaces: ['control', 'dashboard'],
+      'Summarises the workspace (session count, model route, poller, timezone); `/status <session>` adds that session\'s id, topic, model and agent state. `/sessions` lists the workspace\'s sessions. In the bot chat use `/system status`.',
+    surfaces: ['dashboard'],
     group: 'runtime',
   },
   {
@@ -440,7 +435,7 @@ export const COMMANDS: CommandDoc[] = [
     usage: '/dashboard',
     summary: 'make this empty topic the command surface',
     details:
-      'Only a topic with no session can claim the role, which is how a hand-made empty topic becomes the dashboard instead of General. In the bot chat the same command posts a control card with buttons for status, the web link, update, restart, plugins and components.',
+      'Only a topic with no session can claim the role, which is how a hand-made empty topic becomes the dashboard instead of General.',
     surfaces: ['dashboard'],
     group: 'sessions',
   },
@@ -606,7 +601,7 @@ export function indexText(surface: Surface): string {
     `**commands · ${surface === 'control' ? 'bot chat' : surface === 'dashboard' ? 'workspace dashboard' : 'session topic'}**`,
     `_${SURFACE_NOTE[surface]}_`,
     '',
-    '`/help <command>` or `<command> --help` for details · `/man` for the full manual',
+    '`/help <command>` or `<command> --help` for details',
   ]
   for (const group of [...groups.keys()].sort((a, b) => groupRank(a) - groupRank(b))) {
     lines.push('', `**${group}**`)
@@ -625,7 +620,7 @@ export function indexText(surface: Surface): string {
   return lines.join('\n')
 }
 
-/** `/man`: the same registry with details and examples. */
+/** The manual: the same registry with details and examples. */
 export function manualText(surface: Surface, only?: string): string {
   const docs = docsFor(surface)
   if (only !== undefined) return renderDocList(docs.filter((doc) => doc.path.startsWith(only)), surface)

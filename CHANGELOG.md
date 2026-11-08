@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.14.0
+
+- **`/menu` is the front door.** `/menu` (and `/start` in the bot chat) posts a
+  control card with Status, Workspaces, Web link, Help, Update setup, Restart,
+  Plugins and Components. The buttons run the same handlers as the typed
+  commands; deployment buttons stay admin-only.
+- **One command per action.** `/plugin` is now `/plugins` with subcommands
+  (`/plugins add`, `info`, `remove`, `enable`, `disable`, `confirm`, `cancel`,
+  `approve`); `/system components` is now `/components`; `/status` in the bot
+  chat is `/system status`. The alias table (`/start`/`/?`/`/man`,
+  `/plugin list|install|rm|del`, `/list`, `/workspace rm`) is gone.
+- **`/man` removed.** `/help` and `<command> --help` remain; `/help <command>`
+  shows the same detail.
+- **`/dashboard` keeps its topic role** (claim an empty topic); the control card
+  is `/menu`.
+- The help registry, README, COMMANDS.md and the tests follow the new surface.
+
 ## 0.13.1
 
 - **`/system status` probes the advertised address.** The setup binds the LAN

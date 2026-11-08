@@ -133,7 +133,7 @@ export const Config = Schema.object({
 export interface ConnectorConfig {
   botToken: string
   allowedUserIds: number[]
-  /** The one account that may run update/restart/rollback/plugin commands. */
+  /** The one account that may run update/restart/rollback/plugins commands. */
   adminUserId?: number
   workspaceRoot?: string
   provider?: string
@@ -1565,7 +1565,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const detail = await response.text().catch(() => '')
       return `updater refused (${String(response.status)})${detail.length > 0 ? `: ${detail.slice(0, 200)}` : ''}`
     }
-    return `⏳ ${name}: ${action}${port === undefined ? '' : ` ${String(port)}`} accepted — the updater reports when it is done. Send \`/system components\` for the card again.`
+    return `⏳ ${name}: ${action}${port === undefined ? '' : ` ${String(port)}`} accepted — the updater reports when it is done. Send \`/components\` for the card again.`
   }
 
   const showComponents = async (message: TgMessage): Promise<void> => {
@@ -1588,7 +1588,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (args.length === 0) return showComponents(message)
     const [name, action, value] = args
     if (name === undefined || action === undefined) {
-      return reply(message, 'usage: `/system components [<component> <enable|disable|port> [<port>]]`')
+      return reply(message, 'usage: `/components [<component> <enable|disable|port> [<port>]]`')
     }
     if (action === 'enable' || action === 'disable') {
       return reply(message, await postComponent(name, action))
@@ -1596,11 +1596,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (action === 'port') {
       const port = Number(value)
       if (!Number.isInteger(port) || port < 1024 || port > 65535) {
-        return reply(message, 'usage: `/system components <component> port <1024-65535>`')
+        return reply(message, 'usage: `/components <component> port <1024-65535>`')
       }
       return reply(message, await postComponent(name, 'configure', port))
     }
-    return reply(message, 'usage: `/system components [<component> <enable|disable|port> [<port>]]`')
+    return reply(message, 'usage: `/components [<component> <enable|disable|port> [<port>]]`')
   }
 
   /**
@@ -1695,12 +1695,17 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const command = {
       new: '/new',
       sync: '/sync',
-      status: '/status',
+      // A group's dashboard has the workspace status; the bot chat has the
+      // deployment status.
+      status: card.chat.type === 'private' ? '/system status' : '/status',
       sessions: '/sessions',
       web: '/web',
+      help: '/help',
+      workspaces: '/workspaces',
+      menu: '/menu',
       update: '/system update setup',
       plugins: '/plugins',
-      components: '/system components',
+      components: '/components',
     }[action]
     if (command === undefined) {
       await client.answerCallbackQuery(query.id, 'unknown action').catch(() => undefined)
@@ -1735,7 +1740,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         '',
         current === undefined ? 'current: not set' : `current: \`${String(current)}\``,
         '',
-        'pick one, use Back, or send `/system components ' + name + ' port <n>` for another.',
+        'pick one, use Back, or send `/components ' + name + ' port <n>` for another.',
       ].join('\n')), {
         parseMode: 'HTML',
         replyMarkup: {
@@ -1857,7 +1862,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await persist()
       return reply(message, 'this chat is now the control chat — notices and update reports come here.')
     }
-    if (sub === 'components') return manageComponents(message, tail)
+    if (sub === 'components') return reply(message, '`/system components` is now `/components` — for example `/components design enable` or `/components design port 8091`.')
     if (sub === 'cancel') {
       // The card's Cancel button was the only way out of a pending update; a card
       // deleted from the chat left the bot refusing every message.
@@ -2577,11 +2582,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     '**plugins** — the bundles of this profile',
     '',
     '`/plugins` — list them',
-    '`/plugin info <name>` — details',
-    '`/plugin add <spec>` — inspect, then confirm',
-    '`/plugin enable <name>` · `/plugin disable <name>`',
-    '`/plugin remove <name>` — uninstall (confirm)',
-    '`/plugin confirm` · `/plugin cancel` · `/plugin approve`',
+    '`/plugins info <name>` — details',
+    '`/plugins add <spec>` — inspect, then confirm',
+    '`/plugins enable <name>` · `/plugins disable <name>`',
+    '`/plugins remove <name>` — uninstall (confirm)',
+    '`/plugins confirm` · `/plugins cancel` · `/plugins approve`',
   ].join('\n')
 
   const pluginManager = (): PluginManagerService | undefined =>
@@ -2628,7 +2633,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return reply(message, describeBundle(bundle))
   }
 
-  const pluginFooter = (): string => 'press **Confirm** below, or send `/plugin confirm` · `/plugin cancel` to drop it.'
+  const pluginFooter = (): string => 'press **Confirm** below, or send `/plugins confirm` · `/plugins cancel` to drop it.'
 
   /** The plugin preview uses the same card component as every other action. */
   const confirmPlugin = (message: TgMessage, text: string, label: string): Promise<void> =>
@@ -2815,7 +2820,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const beginPluginInstall = async (message: TgMessage, spec: string): Promise<void> => {
     const manager = pluginManager()
     if (manager === undefined) return noPluginManager(message)
-    if (spec.length === 0) return reply(message, 'usage: `/plugin add <name|github:owner/repo|path|tarball>`')
+    if (spec.length === 0) return reply(message, 'usage: `/plugins add <name|github:owner/repo|path|tarball>`')
     void client.setTyping(message.chat.id)
     let inspection: Inspection
     try {
@@ -2910,7 +2915,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         await finishPluginChange(message, result, 'installed', liveTrial)
 
         // pnpm 11 blocks dependency scripts until someone names them; keep the
-        // request alive so `/plugin approve` can retry this exact spec
+        // request alive so `/plugins approve` can retry this exact spec
         if (
           result.application === 'failed' &&
           action.approvedBuilds === undefined &&
@@ -2928,7 +2933,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
               'these dependencies want to run install scripts:',
               result.pendingBuilds.map((name) => `· \`${name}\``).join('\n'),
               '',
-              'they run with the host user\'s permissions. `/plugin approve` allows exactly these and retries; `/plugin cancel` drops it.',
+              'they run with the host user\'s permissions. `/plugins approve` allows exactly these and retries; `/plugins cancel` drops it.',
             ].join('\n'),
           )
         }
@@ -2997,18 +3002,18 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       case 'list':
         return pluginList(message)
       case 'info':
-        return argument.length === 0 ? reply(message, 'usage: `/plugin info <name>`') : pluginInfo(message, argument)
+        return argument.length === 0 ? reply(message, 'usage: `/plugins info <name>`') : pluginInfo(message, argument)
       case 'add':
       case 'install':
         return beginPluginInstall(message, argument)
       case 'remove':
       case 'rm':
       case 'del':
-        return argument.length === 0 ? reply(message, 'usage: `/plugin remove <name>`') : beginPluginRemove(message, argument)
+        return argument.length === 0 ? reply(message, 'usage: `/plugins remove <name>`') : beginPluginRemove(message, argument)
       case 'enable':
-        return argument.length === 0 ? reply(message, 'usage: `/plugin enable <name>`') : beginPluginBundle(message, argument, true)
+        return argument.length === 0 ? reply(message, 'usage: `/plugins enable <name>`') : beginPluginBundle(message, argument, true)
       case 'disable':
-        return argument.length === 0 ? reply(message, 'usage: `/plugin disable <name>`') : beginPluginBundle(message, argument, false)
+        return argument.length === 0 ? reply(message, 'usage: `/plugins disable <name>`') : beginPluginBundle(message, argument, false)
       case 'confirm':
         return runPendingPlugin(message)
       case 'cancel':
@@ -3020,7 +3025,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           pendingPlugin.action.kind !== 'install' ||
           pendingPlugin.action.approvedBuilds === undefined
         ) {
-          return reply(message, 'no blocked build scripts are waiting — start with `/plugin add <spec>`.')
+          return reply(message, 'no blocked build scripts are waiting — start with `/plugins add <spec>`.')
         }
         return runPendingPlugin(message)
       case '':
@@ -3898,7 +3903,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const dashboardKeyboard = (surface: 'control' | 'group'): TgInlineKeyboard => ({
     inline_keyboard: surface === 'control'
       ? [
-          [{ text: 'Status', callback_data: 'dash:status' }, { text: 'Web link', callback_data: 'dash:web' }],
+          [{ text: 'Status', callback_data: 'dash:status' }, { text: 'Workspaces', callback_data: 'dash:workspaces' }],
+          [{ text: 'Web link', callback_data: 'dash:web' }, { text: 'Help', callback_data: 'dash:help' }],
           [{ text: 'Update setup', callback_data: 'dash:update' }, { text: 'Restart', callback_data: 'dash:restart' }],
           [{ text: 'Plugins', callback_data: 'dash:plugins' }, { text: 'Components', callback_data: 'dash:components' }],
         ]
@@ -3924,9 +3930,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   }
 
   const controlCardText = (): string => [
-    '**dashboard**',
-    '`/status` deployment state · `/web` signed browser link',
-    '`/system update setup` · `/system restart` · `/plugins` · `/system components`',
+    '**menu**',
+    '`/system status` deployment state · `/web` signed browser link',
+    '`/plugins` bundles · `/components` design stack · `/help` command manual',
   ].join('\n')
 
   // --- control plane (private chat) ---------------------------------------
@@ -3939,9 +3945,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     surface: Surface,
   ): Promise<void> => {
     const target = stripHelpFlag(args).join(' ').trim()
-    if (command === '/man') {
-      return reply(message, target.length === 0 ? manualText(surface) : (lookupText(target, surface) ?? unknownHelp(target)))
-    }
     return reply(message, target.length === 0 ? indexText(surface) : (lookupText(target, surface) ?? unknownHelp(target)))
   }
 
@@ -3958,7 +3961,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const [command, ...rest] = text.trim().split(/\s+/)
     const argument = rest.join(' ').trim()
 
-    if (command === '/start' || command === '/help' || command === '/man') {
+    if (command === '/start' || command === '/menu') {
+      return postDashboardCard(message.chat.id, 0, 'control', controlCardText())
+    }
+    if (command === '/help') {
       return showHelp(message, command, rest, 'control')
     }
     if (hasHelpFlag(rest)) {
@@ -4081,8 +4087,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, 'usage: `/workspace new|link|remove …`')
     }
 
-    if (command === '/plugins') return pluginList(message)
-    if (command === '/plugin') return handlePlugin(message, rest)
+    if (command === '/plugins') {
+      return rest.length === 0 ? pluginList(message) : handlePlugin(message, rest)
+    }
+    if (command === '/plugin') {
+      return reply(message, '`/plugin` is now `/plugins` — for example `/plugins add <spec>` or `/plugins info <name>`.')
+    }
+    if (command === '/components') return manageComponents(message, rest)
     if (command === '/system') return handleSystem(message, rest)
     if (command === '/firewall') return handleFirewall(message, rest)
     if (command === '/timezone') return setTimeZone(message, argument)
@@ -4090,19 +4101,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (command === '/schedules') return reply(message, '`/schedules` is planned — not implemented yet.')
 
     if (command === '/status') {
-      const bound = Object.keys(bindings.workspaces).length
-      const live = [...runtimes.values()].filter((runtime) => runtime.agent !== undefined).length
-      return reply(
-        message,
-        [
-          `model route: \`${config.provider ?? 'default'}/${config.model ?? 'default'}\``,
-          `workspaces: ${bound}`,
-          `sessions live: ${live}`,
-          `poller: ${stopped ? 'stopped' : 'running'}`,
-          `timezone: \`${timeZone()}\``,
-          await supervisorLine(),
-        ].join('\n'),
-      )
+      return reply(message, '`/status` moved: use `/system status` for the deployment, or `/menu` for the card.')
     }
 
     return reply(message, `unknown command \`${command ?? ''}\` — /help`)
@@ -4267,7 +4266,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const [command, ...rest] = (message.text ?? '').trim().split(/\s+/)
     const argument = rest.join(' ').trim()
 
-    if (command === '/help' || command === '/start' || command === '/man') {
+    if (command === '/help' || command === '/start') {
       return showHelp(message, command, rest, 'dashboard')
     }
     if (hasHelpFlag(rest)) {
@@ -4315,16 +4314,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return postDashboardCard(message.chat.id, thread, 'group', dashboardText(workspaceId, workspace))
     }
 
-    if (command === '/archived' || (command === '/list' && rest[0] === 'archived')) {
+    if (command === '/archived') {
       const archived = (registryOf(ctx)?.archivedSessionIds ?? []).map(String)
       if (archived.length === 0) return reply(message, 'nothing archived')
       const shown = sessionsOfChat(bindings, message.chat.id).map(([, session]) => session.sessionId)
       const rows = archived.map((id) => `\`${id}\`${shown.includes(id) ? ' (has topic)' : ''}`)
       return reply(message, `**archived sessions**\n${rows.join('\n')}\n\n\`/unarchive <id>\` restores one and gives it a topic`)
-    }
-
-    if (command === '/list') {
-      return reply(message, '`/archived` lists archived sessions')
     }
 
     if (command === '/unarchive') {
@@ -5404,7 +5399,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     const name = parsed.name
 
-    if (name === 'help' || name === 'man' || name === 'start') {
+    if (name === 'help' || name === 'start') {
       await stageSlashMedia(message, threadId, media, groupItems)
       const words = text.trim().split(/\s+/)
       await showHelp(message, `/${name}`, words.slice(1), 'session')

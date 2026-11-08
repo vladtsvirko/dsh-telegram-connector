@@ -19,7 +19,7 @@ group "landing-page"             another workspace
 ```
 
 The full command reference is [`docs/COMMANDS.md`](docs/COMMANDS.md) — the bot's
-`/man` prints the same text, and every command accepts `--help`. The reasoning
+`/help <command>` prints the same text, and every command accepts `--help`. The reasoning
 behind the mapping is in [`docs/DESIGN.md`](docs/DESIGN.md); supported DSH
 versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
@@ -73,17 +73,17 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   code block or a bullet list on the way out (see above).
 - **Commands live in one place.** A dashboard topic holds `/new`, `/sync`,
   `/close`, `/rename`, `/model` and friends; session topics accept plain text.
-- **Plugins from the chat.** `/plugins` lists the profile's bundles, `/plugin add`
+- **Plugins from the chat.** `/plugins` lists the profile's bundles, `/plugins add`
   inspects a spec before anything runs and asks for a confirmation, and
   `enable`/`disable`/`remove` work without opening a terminal.
 - **Channel-aware prompts.** A Telegram prompt reaches the agent with a
   `[via Telegram]` marker, so the answer can use chat steps instead of host
   commands. Web UI prompts are unmarked; the marker is in the session, not in
   the Telegram message.
-- **Dashboard card.** `/dashboard` posts the common actions as inline buttons:
-  new session, sync, status and sessions in a group; status, web link, update,
-  restart, plugins and components in the bot chat. Deployment buttons are
-  admin-only, exactly like the typed commands.
+- **Menu card.** `/menu` (and `/start` in the bot chat) posts the common actions
+  as inline buttons: status, workspaces, web link, help, update, restart, plugins
+  and components. Deployment buttons are admin-only, exactly like the typed
+  commands. `/dashboard` in a group still claims an empty topic as the dashboard.
 - **Host-free after install.** The runtime runs under a
   supervisor: every plugin confirmation opens a rollback window (live under HMR,
   or around a restart), and `/system update connector` resolves and installs the
@@ -246,9 +246,9 @@ allowlisted user; `provider`/`model` → the profile default; `workspaceRoot` �
 
 ## Commands
 
-The bot is self-documenting: `/help` lists the commands for the current chat,
-`/man` prints the full manual, and `<command> --help` explains one command
-(including subcommands: `/plugin add --help`). The same text is in
+The bot is self-documenting: `/help` lists the commands for the current chat
+and `<command> --help` explains one command
+(including subcommands: `/plugins add --help`). The same text is in
 [`docs/COMMANDS.md`](docs/COMMANDS.md). A `<session>` argument accepts a full
 session id, an id prefix, or the topic title.
 
@@ -261,12 +261,12 @@ session id, an id prefix, or the topic title.
 | `/workspace link <name>` | print the group link again |
 | `/workspace remove <name>` | preview the topics, confirm, then unregister from DSH and delete the group's session topics (files and sessions are untouched) |
 | `/plugins` | list the profile's bundles: enabled, disabled, available |
-| `/plugin info <name>` | version, source, rows, overrides and any error |
-| `/plugin add <spec>` | inspect a package, then install it after **Confirm** (or `/plugin confirm`) |
-| `/plugin enable <name>` · `/plugin disable <name>` | select or deselect a bundle (confirmed like the rest) |
-| `/plugin remove <name>` | uninstall a bundle (asks for confirmation) |
-| `/plugin confirm` · `/plugin cancel` | finish or drop a pending install/removal (the card has the same buttons) |
-| `/plugin approve` | allow the install scripts pnpm blocked, and retry |
+| `/plugins info <name>` | version, source, rows, overrides and any error |
+| `/plugins add <spec>` | inspect a package, then install it after **Confirm** (or `/plugins confirm`) |
+| `/plugins enable <name>` · `/plugins disable <name>` | select or deselect a bundle (confirmed like the rest) |
+| `/plugins remove <name>` | uninstall a bundle (asks for confirmation) |
+| `/plugins confirm` · `/plugins cancel` | finish or drop a pending install/removal (the card has the same buttons) |
+| `/plugins approve` | allow the install scripts pnpm blocked, and retry |
 | `/system restart` | restart into a trial: the new state is live, with a rollback window |
 | `/system restart now` | restart without a trial; the current state becomes the rollback point |
 | `/system update connector [to <version>] [now]` | move the connector to its newest compatible version, in a trial |
@@ -276,16 +276,16 @@ session id, an id prefix, or the topic title.
 | `/system confirm` | commit the running trial (or press **Commit**) |
 | `/system rollback` | restore the last committed state and restart |
 | `/system cancel` | abandon a pending update and unblock the bot; after acceptance it stops the updater job |
-| `/system components` | optional components (e.g. the design stack): a card with Enable/Disable/Port buttons |
+| `/components` | optional components (e.g. the design stack): a card with Enable/Disable/Port buttons |
 | `/system status` | versions, supervisor, open trial, web/key/registry probes |
 | `/system takechat` | make this chat the control chat (notices and update reports follow it) |
 | `/firewall` | native only: whether ufw lets the web UI through, and the `/firewall allow <port>` fix |
 | `/web` | a signed link into the web UI for the same sessions |
 | `/timezone [zone]` | IANA zone used to read times you type (default `$DSH_TIMEZONE` or UTC) |
 | `/reactions …` | read/streaming/staged reactions: show, set, `on`/`off`, `reset`, `allowed` |
-| `/status` | model route, counts, poller, timezone, supervisor and probe lines |
 | `/system status` | connector, runtime and updater state |
-| `/help` · `/man` | index, or the full manual |
+| `/menu` · `/start` | the control card with buttons for the common actions |
+| `/help [command]` | the command index, or one command |
 
 Plugin commands run in the private chat because they change the whole profile,
 not one workspace. `/schedules` is still a stub.
@@ -317,7 +317,7 @@ not one workspace. `/schedules` is still a stub.
 | `/run <command> [args]` | run a host command even when a connector name wins |
 | `/skill <name> [args]` | load a skill even when a host command owns the name |
 | `//text` | send a prompt that literally starts with `/` |
-| `/help` · `/man` | the session command manual |
+| `/help` | the session command manual |
 
 Management lives in the dashboard: `/new`, `/sessions`, `/status`, `/dashboard`,
 `/sync`, `/archived`, `/unarchive`, `/rename`, `/model`, `/close`,
@@ -490,7 +490,7 @@ session it has open.
 | nothing happens after adding the plugin | token is empty — the connector logs a warning and stays idle |
 | group title never follows a rename | bot lacks *Change Info* in that group |
 | `this runtime exposes no plugin manager` | the profile is not base-backed, or `@deepseek-ai/dsh-plugin-manager` is not mounted |
-| `/plugin add` says *already installed* | updates are a removal plus an install; use the host CLI, or remove first |
+| `/plugins add` says *already installed* | updates are a removal plus an install; use the host CLI, or remove first |
 | a plugin change says *restart required* | this runtime has no HMR — `/system restart`, then `/system confirm` if it works |
 | `/system restart` says *not running under the supervisor* | the runtime was started directly (no container), so restart it from the host |
 
@@ -504,8 +504,8 @@ session it has open.
 - The bot token comes from the environment; `cordis.patch.yml` never carries it.
 - The bot is an admin of its groups and can delete topics. `/dangerous cleanup`
   requires an explicit `confirm`; `/forget` never deletes anything.
-- **Plugins execute host code.** `/plugin add` inspects first and installs only
-  after **Confirm** (or `/plugin confirm`); blocked install scripts need `/plugin approve`, which
+- **Plugins execute host code.** `/plugins add` inspects first and installs only
+  after **Confirm** (or `/plugins confirm`); blocked install scripts need `/plugins approve`, which
   names exactly the packages allowed. The connector refuses to remove or disable
   itself, since that would cut the line mid-command.
 - `bindings.json` contains chat ids and session ids, not message contents.
@@ -520,7 +520,7 @@ npm run typecheck
 ```
 
 `src/index.ts` is the plugin (routing, commands, streaming); `help.ts` is the
-command registry behind `/help`, `/man` and the Telegram command menu;
+command registry behind `/help` and the Telegram command menu;
 `telegram.ts` is the typed Bot API client; `render.ts` normalises rich Markdown
 and splits; `outbox.ts` owns the per-group queue and publishers; `bindings.ts`
 persists the mapping; `sessions.ts` owns the topic key model; `bridge.ts` is the

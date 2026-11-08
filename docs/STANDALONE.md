@@ -64,10 +64,10 @@ feature silently disappears.
 | Feature | Setup | Standalone |
 |---|---|---|
 | Sessions, topics, workspace dashboard, media, reactions | yes | yes |
-| `/plugins`, `/plugin add|remove|enable|disable` | yes, DSH plugin manager | yes, if the profile is base-backed with `pluginManager`; otherwise the commands explain that it is absent |
+| `/plugins`, `/plugins add|remove|enable|disable` | yes, DSH plugin manager | yes, if the profile is base-backed with `pluginManager`; otherwise the commands explain that it is absent |
 | `/system update penpot`, `/system update plugin <name>` | yes, wrapped in a supervisor trial | yes through the plugin manager; without a supervisor there is no automatic rollback |
 | `/system update connector` | yes: newest compatible npm version, installed by the supervisor | no: update from the host with the two `dsh plugin` commands below |
-| `/system update setup`, `/system components`, `/firewall` | yes, through the updater service | no: the updater is not present, and the commands say so |
+| `/system update setup`, `/components`, `/firewall` | yes, through the updater service | no: the updater is not present, and the commands say so |
 | `/system restart`, `/system rollback` | supervisor trial | restart the runtime yourself; no trial |
 | `/system status` | versions, supervisor, registry, data directory | the same lines, with absent components marked |
 

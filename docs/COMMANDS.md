@@ -1,7 +1,7 @@
 # Commands
 
 The bot has three surfaces. Each has its own command set, and each answers
-`/help`, `/man` and `<command> --help` from the same registry the bot uses.
+`/help` and `<command> --help` from the same registry the bot uses.
 
 ```
 private chat with the bot        control plane   workspaces, plugins, restarts, updates
@@ -13,20 +13,18 @@ group "web-app"                  workspace
 Conventions:
 
 - `<required>`, `[optional]`, `<a|b>` means choose one.
-- Every command accepts `--help`; `/help <command>` and `/man [command]` show the
-  same text. The one exception is `/commands`, which lists the live host catalog
-  instead of its own help.
-- Aliases: `/start` = `/help`, `/?` = `/help`, `/plugin list` = `/plugins`,
-  `/plugin install` = `/plugin add`, `/plugin rm` = `/plugin del` =
-  `/plugin remove`, `/workspace rm` = `/workspace remove`. `/plugin` with no
-  subcommand lists the bundles, like `/plugins`.
+- Every command accepts `--help`; `/help <command>` shows the same text. The one
+  exception is `/commands`, which lists the live host catalog instead of its own
+  help.
+- `/start` and `/menu` post the control card in the bot chat. In a group,
+  `/start` is the `startgroup` deep link that binds the workspace.
 - Admin-only (the `adminUserId` account, or the control-chat owner when unset):
   `/workspace new|link|remove`, every `/system` subcommand except `status`,
-  `/plugin add|remove|enable|disable|confirm|cancel|approve`, `/bind`,
-  `/system takechat`, `/firewall allow`, `/unbind`, `/dashboard`,
+  `/components`, `/plugins add|remove|enable|disable|confirm|cancel|approve`,
+  `/bind`, `/system takechat`, `/firewall allow`, `/unbind`, `/dashboard`,
   `/dangerous cleanup`. The inline buttons that do the same things — trial
-  Commit/Roll back, the component card, the update card's **Cancel**, Take over, the
-  deployment buttons on the dashboard card — are admin-only too.
+  Commit/Roll back, the component card, the update card's **Cancel**, Take over,
+  the deployment buttons on the menu card — are admin-only too.
 - A `<session>` argument accepts the full session id, an id prefix, or the topic title.
 - You can only use a command on the surface it belongs to; elsewhere the bot
   tells you where it lives.
@@ -56,17 +54,17 @@ dashboard.
 | Command | What it does |
 |---|---|
 | `/plugins` | bundles of this profile: enabled, disabled, available |
-| `/plugin info <name>` | version, source, rows, overrides, errors |
-| `/plugin add <spec>` | inspect a package, then install it after confirmation |
-| `/plugin remove <name>` | uninstall a bundle after confirmation |
-| `/plugin enable <name>` | select a bundle after confirmation |
-| `/plugin disable <name>` | deselect a bundle, keeping the package installed |
-| `/plugin confirm` | run the pending action |
-| `/plugin cancel` | drop the pending action |
-| `/plugin approve` | allow the install scripts pnpm blocked, then retry |
+| `/plugins info <name>` | version, source, rows, overrides, errors |
+| `/plugins add <spec>` | inspect a package, then install it after confirmation |
+| `/plugins remove <name>` | uninstall a bundle after confirmation |
+| `/plugins enable <name>` | select a bundle after confirmation |
+| `/plugins disable <name>` | deselect a bundle, keeping the package installed |
+| `/plugins confirm` | run the pending action |
+| `/plugins cancel` | drop the pending action |
+| `/plugins approve` | allow the install scripts pnpm blocked, then retry |
 
 A spec is a registry name (`pkg`, `pkg@1.2`), `github:owner/repo`, an absolute
-path, or a tarball URL. `/plugin add` never mutates before you press **Confirm** (or send `/plugin confirm`);
+path, or a tarball URL. `/plugins add` never mutates before you press **Confirm** (or send `/plugins confirm`);
 the pending action expires after ten minutes and is bound to its author.
 
 Every confirmed plugin action opens a **trial** first: under HMR the change is
@@ -74,6 +72,13 @@ applied live with a rollback window, otherwise the runtime restarts into it.
 Commit with `/system confirm`, revert with `/system rollback`, or let the window expire. A
 failed install/removal closes the trial without touching the profile. The
 connector refuses to disable or remove itself.
+
+### Menu
+
+| Command | What it does |
+|---|---|
+| `/menu` | post the control card: Status · Workspaces · Web link · Help · Update setup · Restart · Plugins · Components |
+| `/start` | the welcome card in the bot chat; the `startgroup` deep link in a group |
 
 ### System
 
@@ -88,11 +93,9 @@ connector refuses to disable or remove itself.
 | `/system update setup [--i-know-versions-are-incompatible]` | show a card with the target, DSH change, recent commit subjects and running sessions, then drain and update through the updater service; a cross-line jump gets a second **Cross anyway** confirmation |
 | `/system confirm` | commit the open trial (also the **Commit** button) |
 | `/system rollback` | restore the last committed state and restart (also **Roll back**) |
-| `/system components [<component> <enable\|disable\|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form. The Port button offers three presets (8090/8091/8092); use the text form for anything else |
+| `/components [<component> <enable\|disable\|port> [<port>]]` | optional components: a card with Enable/Disable/Port buttons, or the text form. The Port button offers three presets (8090/8091/8092); use the text form for anything else |
 | `/system cancel` | abandon a pending update and unblock the bot (same as the card's **Cancel**); after acceptance it stops the running updater job |
 | `/system takechat` | make this private chat the control chat; notices, update reports and failure cards move here |
-| `/status` | model route, workspace/session counts, poller, timezone, supervisor |
-| `/dashboard` | post the control card: status, web link, update, restart, plugins, components |
 | `/firewall` | whether ufw lets the web UI through, and the exact `/firewall allow <port>` to fix it |
 | `/firewall allow <port>` | admin only; asks the updater to allow that served port from the LAN |
 | `/web` | a signed link into the web UI for the same sessions (bot chat only) |
@@ -175,7 +178,7 @@ button runs the same command you could type, so permissions are identical:
 | Card | Buttons |
 |---|---|
 | group dashboard (`/dashboard`) | New session · Sync · Status · Sessions |
-| bot chat (`/dashboard`) | Status · Web link · Update setup · Restart · Plugins · Components |
+| bot chat (`/menu`) | Status · Workspaces · Web link · Help · Update setup · Restart · Plugins · Components |
 
 The **flow cards** are confirmation prompts: trial Commit/Roll back, the update
 card's **Cancel** (while draining), component Enable/Disable/Port, and Take over (confirmed; restarts dsh) for a
@@ -186,7 +189,7 @@ remove`, `/unbind`, `/dangerous cleanup`, plugin add/remove/enable/disable and
 the dashboard **Restart** button. Each press answers with a toast
 (`deleting…` / `cancelled`), and the card is edited to the result. The typed
 fallback remains: `/workspace remove <name> confirm`, `/unbind confirm`,
-`/dangerous cleanup confirm` and `/plugin confirm`.
+`/dangerous cleanup confirm` and `/plugins confirm`.
 
 ## Icons and marks
 
@@ -262,7 +265,7 @@ topic is always one session, and a topic is never re-assigned.
 | `/run <command> [args]` | run a host command even when a connector command owns the name |
 | `/skill <name> [args]` | load a skill even when a host command owns the name |
 | `//text` | send a prompt that literally starts with `/` |
-| `/help`, `/man` | the session command manual |
+| `/help`, `/help` | the session command manual |
 
 Host commands (for example `/compact`, `/goal` or a command from a newly
 installed plugin) run against the session without creating a model message.
@@ -293,8 +296,8 @@ A topic created by hand becomes a session on its first message.
 # adopt what the web UI already has
 /sync                                     (General)
 # install a plugin safely
-/plugin add github:owner/repo             (bot chat)
-/plugin confirm                           → trial or live window
+/plugins add github:owner/repo             (bot chat)
+/plugins confirm                           → trial or live window
 /system confirm                          (or the Commit button)
 # ship a new connector
 /system update connector                   → newest compatible version → trial → /system confirm
