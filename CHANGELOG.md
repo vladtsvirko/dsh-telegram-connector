@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.1
+
+- **Component actions no longer restart the runtime.** The setup's
+  `components enable/disable` starts or stops the stack only; the Penpot tools
+  load (or disappear) on the next `dsh.service` start. The `/components` card
+  and its help now say so.
+
 ## 0.14.0
 
 - **`/menu` is the front door.** `/menu` (and `/start` in the bot chat) posts a

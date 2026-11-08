@@ -1542,7 +1542,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const port = component.port === undefined ? '' : ` · port ${String(component.port)}`
       lines.push(`• ${component.label} — ${state}${port}`)
     }
-    lines.push('', 'enable/disable starts or stops the stack; the runtime restarts so the tools follow.')
+    lines.push('', 'enable/disable starts or stops the stack; the Penpot tools load on the next runtime start.')
     return lines.join('\n')
   }
 

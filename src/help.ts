@@ -240,7 +240,7 @@ export const COMMANDS: CommandDoc[] = [
     admin: '`status`',
     summary: 'runtime lifecycle: status, restarts, connector and setup updates, optional components',
     details:
-      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and every `update` default to a trial, `now` skips it. `update connector` moves the connector to its newest compatible version; `update penpot` (or `update plugin <name>`) does the same for another bundle through the plugin manager; `update setup` posts a confirmation card, then drains agents and moves the setup checkout through the updater service. Plugin versions are independent of the setup tag. `confirm` and `rollback` close the profile trial; rollback does not move the checkout or the DSH install. `components` lists optional components with Enable/Disable/Port buttons; the updater applies them and restarts the runtime.',
+      'One namespace for profile-global operations. `status` shows versions and the supervisor; `restart` and every `update` default to a trial, `now` skips it. `update connector` moves the connector to its newest compatible version; `update penpot` (or `update plugin <name>`) does the same for another bundle through the plugin manager; `update setup` posts a confirmation card, then drains agents and moves the setup checkout through the updater service. Plugin versions are independent of the setup tag. `confirm` and `rollback` close the profile trial; rollback does not move the checkout or the DSH install. `components` lists optional components with Enable/Disable/Port buttons; the updater applies them, and the tools load on the next runtime start.',
     examples: ['/system status', '/system restart now', '/system update connector'],
     surfaces: ['control'],
     group: 'system',
@@ -272,7 +272,7 @@ export const COMMANDS: CommandDoc[] = [
     usage: '/components [<component> <enable|disable|port> [<port>]]',
     summary: 'optional components: list, enable, disable, change the port',
     details:
-      'No argument posts a card with one row per component (Enable/Disable and Port). The updater starts or stops the stack on the host and restarts the runtime so the tools follow; it reports the result in this chat. The text form is for precision, for example /components design port 8091. Needs DSH_UPDATER_TOKEN; without it the card explains what is missing.',
+      'No argument posts a card with one row per component (Enable/Disable and Port). The updater starts or stops the stack on the host and reports; the Penpot tools load on the next runtime start. The text form is for precision, for example /components design port 8091. Needs DSH_UPDATER_TOKEN; without it the card explains what is missing.',
     examples: ['/components', '/components design enable', '/components design port 8091'],
     surfaces: ['control'],
     group: 'system',
