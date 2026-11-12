@@ -316,7 +316,9 @@ and directories.
   Commit/Roll back, component Enable/Disable/Port, the update card's **Cancel** and Take
   over all check `adminUserId`. The allowlist only decides who may talk to the
   agent; a button that changes the deployment is an admin action.
-- The bot token comes from the environment, never from `cordis.patch.yml`.
+- The bot token comes from the profile's Plugins config (the environment is the
+  fallback), never from `cordis.patch.yml`. The same applies to the allowlist
+  and admin id.
 - The bot is a group admin and can delete topics: `/dangerous cleanup` requires
   an explicit `confirm`, and `/forget` never deletes anything.
 - Plugin mutations are the highest-risk surface: a bundle's code and install

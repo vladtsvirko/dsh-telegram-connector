@@ -17,7 +17,7 @@ The same package runs in any DSH profile.
 
 ```sh
 # Published package: the tarball already contains lib/, so no build script.
-dsh plugin --profile web add dsh-telegram-connector@0.13.0
+dsh plugin --profile web add dsh-telegram-connector@0.15.2
 ```
 
 From the source repository instead:
@@ -27,11 +27,16 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.13.0
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.15.2
 ```
 
-The bundle patch mounts the `dsh-telegram-connector` row and reads deployment
-values from the environment:
+Open **Plugins** → **dsh-telegram-connector** → **Configure** and fill in the
+bot token, allowed user ids and optional admin id. **Save** stores them in the
+profile's user layer; a saved token starts polling without a runtime restart,
+and the ids are read on every check. No environment file is required.
+
+The bundle patch still reads deployment values from the environment as the
+fallback:
 
 ```sh
 export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'

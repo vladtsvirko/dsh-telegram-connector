@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.15.2
+
+- **The Plugins-page configuration page now actually appears and saves.** The
+  three editable fields (`botToken`, `allowedUserIds`, `adminUserId`) are
+  `.volatile()`, so DSH projects the row's settings namespace and passes the
+  `form` object to `plugins.row.config`; without that the Configure page opened
+  with no form. The client bundle now declares the real
+  `@deepseek-ai/dsh-client-ui-plugin-manager` inject, runs every React hook
+  before the loading/unavailable returns, and uses the current
+  `--dsw-alias-*` theme tokens.
+- **Live parameters.** A saved bot token updates the running `TelegramClient`
+  and starts polling if the connector was idle; allowed ids and the admin id
+  are read from the volatile config on every check. The connector now loads
+  with an empty token so the Configure page is reachable, and warns instead of
+  returning early.
+- Tests cover the volatile config shape, the live token path and a rendered
+  ready snapshot.
+
 ## 0.15.1
 
 - Release-check fix: the `0.15.0` tag was cut without its COMPATIBILITY row and

@@ -36,7 +36,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import { apply, type ConnectorConfig } from '../src/index.js'
+import { apply, Config, type ConnectorConfig, type ConnectorConfigInput } from '../src/index.js'
 import type { Bindings } from '../src/bindings.js'
 import type { TgMessage, TgUpdate } from '../src/telegram.js'
 
@@ -602,7 +602,7 @@ const ENV_KEYS = [
  * stubbed or replaced.
  */
 export async function boot(
-  configOverrides: Partial<ConnectorConfig> = {},
+  configOverrides: Partial<ConnectorConfigInput> = {},
   options: BootOptions = {},
 ): Promise<Harness> {
   const dir = options.dir ?? await mkdtemp(join(tmpdir(), 'dsh-telegram-harness-'))
@@ -643,7 +643,9 @@ export async function boot(
     sessions,
   )
 
-  const config: ConnectorConfig = {
+  // Config() resolves the volatile fields exactly as the Loader does, so the
+  // tests exercise the same `config.botToken.get()` path as production.
+  const config: ConnectorConfig = Config({
     botToken: BOT_TOKEN,
     allowedUserIds: [USER_ID],
     workspaceRoot,
@@ -655,7 +657,7 @@ export async function boot(
     // about them can turn them back on through `configOverrides`.
     reactionsEnabled: false,
     ...configOverrides,
-  }
+  })
 
   try {
     apply(ctx as unknown as Context, config)

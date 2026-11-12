@@ -293,9 +293,18 @@ const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000
 
 export class TelegramClient {
   constructor(
-    private readonly token: string,
+    private token: string,
     private readonly options: TelegramClientOptions = {},
   ) {}
+
+  /**
+   * The Plugins page can replace the bot token in place: DSH commits volatile
+   * config into the running plugin without reloading it. Every call builds its
+   * URL from this field, so the next poll uses the new token.
+   */
+  setToken(token: string): void {
+    this.token = token
+  }
 
   /**
    * One Bot API call.

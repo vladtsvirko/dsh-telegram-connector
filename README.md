@@ -154,7 +154,7 @@ install without the setup.
 The connector is published to npm as an exact version:
 
 ```sh
-dsh plugin --profile web add dsh-telegram-connector@0.15.1
+dsh plugin --profile web add dsh-telegram-connector@0.15.2
 ```
 
 The registry tarball already contains the built `lib/`, so there is no
@@ -168,7 +168,8 @@ On DSH `0.2.1-rc.5` or newer, open **Plugins** → **dsh-telegram-connector** an
 press **Configure** on the `dsh-telegram-connector` row. The page has three
 fields — **bot token**, **allowed user ids** and **admin user id** — and
 **Save** writes the row's config into the profile's user layer. No `.env` edit
-or restart is needed; the connector recomposes and starts polling.
+or restart is needed; the connector reconnects with a saved token and starts
+polling, and allowed/admin ids are read on each check.
 
 That is the standalone path: the setup is not required, and the connector does
 not assume the setup's supervisor or updater. Commands that need them
@@ -184,7 +185,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.15.1
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.15.2
 ```
 
 That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the

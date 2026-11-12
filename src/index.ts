@@ -11,7 +11,7 @@
  * @module dsh-telegram-connector
  */
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Volatile } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -109,10 +109,30 @@ import {
 export const name = 'dsh-telegram-connector'
 export const inject = ['agents', 'sessions']
 
-export const Config = Schema.object({
-  botToken: Schema.string().default(''),
-  allowedUserIds: Schema.array(Schema.number()).default([]),
-  adminUserId: Schema.number(),
+export interface ConnectorConfigInput {
+  botToken?: string
+  allowedUserIds?: number[]
+  adminUserId?: number
+  workspaceRoot?: string
+  provider?: string
+  model?: string
+  editIntervalMs?: number
+  pollTimeoutSeconds?: number
+  requestTimeoutSeconds?: number
+  downloadTimeoutSeconds?: number
+  reconcileIntervalSeconds?: number
+  processMode?: 'off' | 'summary' | 'live'
+  agentPreset?: string
+  reactionsEnabled?: boolean
+  readReaction?: string
+  streamingReaction?: string
+  stagedReaction?: string
+}
+
+export const Config: Schema<ConnectorConfigInput, ConnectorConfig> = Schema.object({
+  botToken: Schema.string().default('').volatile(),
+  allowedUserIds: Schema.array(Schema.number()).default([]).volatile(),
+  adminUserId: Schema.number().volatile(),
   workspaceRoot: Schema.string().default(''),
   provider: Schema.string(),
   model: Schema.string(),
@@ -131,10 +151,10 @@ export const Config = Schema.object({
 })
 
 export interface ConnectorConfig {
-  botToken: string
-  allowedUserIds: number[]
+  botToken: Volatile<string>
+  allowedUserIds: Volatile<number[]>
   /** The one account that may run update/restart/rollback/plugins commands. */
-  adminUserId?: number
+  adminUserId: Volatile<number | undefined>
   workspaceRoot?: string
   provider?: string
   model?: string
@@ -380,9 +400,14 @@ function truncate(text: string, limit: number): string {
 }
 
 export function apply(ctx: Context, config: ConnectorConfig): void {
-  if (config.botToken.length === 0) {
-    ctx.logger.warn('dsh-telegram-connector: botToken is empty; the connector will not start')
-    return
+  // The three editable fields are volatile: the Plugins page writes them and
+  // this row reads them through get(). Everything else stays ordinary config.
+  const botToken = (): string => config.botToken.get()
+  const allowedUserIds = (): readonly number[] => config.allowedUserIds.get()
+  const adminUserId = (): number | undefined => config.adminUserId.get()
+
+  if (botToken().trim().length === 0) {
+    ctx.logger.warn('dsh-telegram-connector: botToken is empty; configure it on the Plugins page')
   }
 
   const agentPresetService = (): AgentPresetService | undefined => {
@@ -393,7 +418,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const requestTimeoutMs = Math.max(5, config.requestTimeoutSeconds ?? 60) * 1000
   const pollTimeoutMs = Math.max(5, config.pollTimeoutSeconds ?? 25) * 1000 + 30_000
   const downloadTimeoutMs = Math.max(10, config.downloadTimeoutSeconds ?? 120) * 1000
-  const client = new TelegramClient(config.botToken, { requestTimeoutMs, pollTimeoutMs, downloadTimeoutMs })
+  const client = new TelegramClient(botToken(), { requestTimeoutMs, pollTimeoutMs, downloadTimeoutMs })
   const agents = ctx.agents
 
   // Publisher bots are send-only; the main bot stays the only poller. Tokens come
@@ -401,7 +426,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const publisherTokens = (process.env.DSH_TELEGRAM_PUBLISHER_TOKENS ?? '')
     .split(/[,\s]+/)
     .map((token) => token.trim())
-    .filter((token) => token.length > 0 && token !== config.botToken)
+    .filter((token) => token.length > 0 && token !== botToken())
   const botHandles: BotHandle[] = [
     { label: 'main', client, main: true },
     ...publisherTokens.map((token, index) => ({
@@ -438,6 +463,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   let bindings: Bindings = { version: 2, workspaces: {}, sessions: {} }
   let offset = 0
   let stopped = false
+  /** True after start() finished its one-time setup. */
+  let started = false
+  /** True while pollLoop owns getUpdates; a token saved later starts it once. */
+  let polling = false
   let lastErrorAt = 0
   let reconcileTimer: NodeJS.Timeout | undefined
   let reconciling = false
@@ -453,7 +482,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const updaterToken = process.env.DSH_UPDATER_TOKEN ?? ''
   const updaterUrl = (process.env.DSH_UPDATER_URL ?? 'http://updater:8787').replace(/\/+$/, '')
 
-  if (config.allowedUserIds.length === 0) {
+  if (allowedUserIds().length === 0) {
     logger.warn('dsh-telegram-connector: allowedUserIds is empty; every message will be refused')
   }
 
@@ -461,7 +490,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   let lastAgentError: string | undefined
 
   const isAllowed = (userId: number | undefined): boolean =>
-    userId !== undefined && config.allowedUserIds.includes(userId)
+    userId !== undefined && allowedUserIds().includes(userId)
 
   /**
    * Who may run profile-global commands (update, restart, rollback, plugins).
@@ -472,7 +501,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    */
   const isAdmin = (userId: number | undefined): boolean => {
     if (userId === undefined) return false
-    if (config.adminUserId !== undefined) return userId === config.adminUserId
+    if (adminUserId() !== undefined) return userId === adminUserId()
     // No admin configured (an upgraded deployment, or one set up by hand): the
     // owner of the control chat is the admin, so an upgrade cannot lock anyone
     // out. In a private chat the chat id *is* the user id.
@@ -487,9 +516,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const requireAdmin = (message: TgMessage): boolean => {
     const sender = message.from?.id
     if (isAdmin(sender)) return true
-    const who = config.adminUserId === undefined
+    const who = adminUserId() === undefined
       ? 'the owner of this chat (`DSH_ADMIN_USER_ID` is not set)'
-      : `admin ${String(config.adminUserId)}`
+      : `admin ${String(adminUserId())}`
     void reply(message, `only ${who} can do that — it changes the deployment for everyone.`)
     return false
   }
@@ -1973,11 +2002,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   }
 
   /** Who may run profile-global commands, and how that was decided. */
-  const adminLine = (): string => config.adminUserId === undefined
+  const adminLine = (): string => adminUserId() === undefined
     ? bindings.controlChatId === undefined
       ? 'admin: any allowed user until the bot chat is used (set `DSH_ADMIN_USER_ID` to name one)'
       : 'admin: the owner of this chat (set `DSH_ADMIN_USER_ID` to name one explicitly)'
-    : `admin: ${String(config.adminUserId)}`
+    : `admin: ${String(adminUserId())}`
 
   /** The provider key this deployment is supposed to have. */
   const providerKeyNames = (): string[] => {
@@ -6053,6 +6082,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
+  const ensurePolling = (): void => {
+    if (!started || polling || stopped || botToken().trim().length === 0) return
+    polling = true
+    void pollLoop().finally(() => {
+      polling = false
+    })
+  }
+
   const start = async (): Promise<void> => {
     // A file that could not be read is set aside by the loader; say so in the
     // chat, once, instead of letting the bot answer "not attached" forever.
@@ -6140,7 +6177,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         )
       })
       .catch((error: unknown) => stderr(`registry repair failed: ${String(error)}`))
-    void pollLoop()
+    started = true
+    if (botToken().trim().length === 0) {
+      stderr('not configured: set the bot token on the Plugins page; polling starts when it is saved')
+    } else {
+      ensurePolling()
+    }
     void announceTrial()
     void flushBridgeTurns().catch((error: unknown) => stderr(`bridge flush failed: ${String(error)}`))
     void replayBridgeInputs().catch((error: unknown) => stderr(`bridge replay failed: ${String(error)}`))
@@ -6525,6 +6567,21 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
 
+  })
+
+  // A volatile-only config commit updates the running fiber in place; it does
+  // not reload this plugin. Follow the values that affect the long-lived bot:
+  // a new token changes the client and starts polling if it was idle.
+  ctx.on('loader/volatile-update' as any, (paths: string[][]) => {
+    const touched = (field: string): boolean => paths.some((path) => path[path.length - 1] === field)
+    if (touched('botToken')) {
+      const next = botToken().trim()
+      client.setToken(next)
+      stderr(next.length > 0 ? 'bot token updated; polling with the new token' : 'bot token cleared; polling will fail until one is set')
+      ensurePolling()
+    }
+    if (touched('allowedUserIds')) stderr(`allowed users updated (${String(allowedUserIds().length)})`)
+    if (touched('adminUserId')) stderr(`admin updated (${adminUserId() === undefined ? 'first allowed user' : String(adminUserId())})`)
   })
 
   ctx.effect(() => {
