@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.15.0
+
+- **The connector has a configuration page.** On DSH `0.2.1-rc.5` or newer, the
+  Plugins page shows **Configure** on the `dsh-telegram-connector` row: bot
+  token, allowed user ids and admin user id, saved through the page's own form.
+  No `.env` edit or restart is needed; the connector recomposes and starts.
+- **Standalone is a first-class mode.** The setup is optional: the connector
+  does not assume the setup supervisor or updater. The setup-specific commands
+  report the missing sidecar instead of failing; workspaces, sessions, topics,
+  plugins and model calls work on any DSH runtime.
+- The browser half is plain JavaScript in the client-module format, copied to
+  `lib/client.js` by the build; the host half is unchanged.
+
 ## 0.14.1
 
 - **Component actions no longer restart the runtime.** The setup's

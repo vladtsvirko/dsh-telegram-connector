@@ -1,6 +1,6 @@
 {
   "name": "dsh-telegram-connector",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "Telegram control plane for DeepSeek Harness \u2014 one group per workspace, one forum topic per session.",
   "type": "module",
   "main": "lib/index.js",
@@ -26,7 +26,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-client.mjs",
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
@@ -37,6 +37,12 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
     }
   },
   "peerDependencies": {
@@ -67,5 +73,13 @@
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
   }
 }

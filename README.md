@@ -141,11 +141,11 @@ Telegram:
 ```sh
 git clone https://github.com/vladtsvirko/dsh-tg-docker-setup
 cd dsh-tg-docker-setup
-./install.sh            # asks for mode, port, bind address, provider, key,
+./setup.sh              # asks for port, bind address, provider, key,
                         # bot token, allowed ids, admin id, git author
 ```
 
-`./install.sh --check` prints the whole plan and changes nothing. The setup
+`./setup.sh --check` prints the whole plan and changes nothing. The setup
 pins a recommended connector tag in its `plugins.json`; the connector is
 versioned on its own and can move to a newer compatible version from the bot without
 a setup release. See [`docs/STANDALONE.md`](docs/STANDALONE.md) for the same
@@ -154,14 +154,28 @@ install without the setup.
 The connector is published to npm as an exact version:
 
 ```sh
-dsh plugin --profile web add dsh-telegram-connector@0.13.1
-export DSH_TELEGRAM_BOT_TOKEN='123456:ABC…'
+dsh plugin --profile web add dsh-telegram-connector@0.15.0
 ```
 
 The registry tarball already contains the built `lib/`, so there is no
 `prepare` build and no `allowBuilds` entry. Restart the runtime after adding
 the plugin. The setup's `plugins.json` uses the same spec and keeps the GitHub
 tag as a fallback when the registry is unreachable.
+
+### Configure in the UI
+
+On DSH `0.2.1-rc.5` or newer, open **Plugins** → **dsh-telegram-connector** and
+press **Configure** on the `dsh-telegram-connector` row. The page has three
+fields — **bot token**, **allowed user ids** and **admin user id** — and
+**Save** writes the row's config into the profile's user layer. No `.env` edit
+or restart is needed; the connector recomposes and starts polling.
+
+That is the standalone path: the setup is not required, and the connector does
+not assume the setup's supervisor or updater. Commands that need them
+(`/system update setup`, `/components`, `/firewall allow`, restart/rollback)
+report that the sidecar is unavailable instead of failing. Everything else —
+workspaces, sessions, topics, plugins and model calls — works on any DSH
+runtime.
 
 Installing from the source repository is still possible:
 
@@ -170,7 +184,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.13.1
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.15.0
 ```
 
 That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the
@@ -179,6 +193,9 @@ That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the
 The package is a plugin bundle: `cordis.patch.yml` mounts one row.
 
 ## Configuration
+
+The row config from the UI is the first source. The environment is the
+fallback (the setup writes it; a standalone profile can export it instead):
 
 Environment:
 
