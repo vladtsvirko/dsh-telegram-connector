@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.15.1 | `0.2.1-rc.5` | needs UAT | config page (Plugins → Configure) for bot token, allowed ids and admin id; standalone without the setup updater |
 | 0.14.1 | `0.2.1-rc.5` | needs UAT | component actions no longer restart the runtime; the tools load on the next start |
 | 0.14.0 | `0.2.1-rc.5` | needs UAT | one command surface: `/menu` card, `/plugins` subcommands, `/components`; aliases and `/man` removed |
 | 0.13.1 | `0.2.1-rc.5` | needs UAT | `/system status` probes the advertised web address, so a LAN-only bind no longer reports loopback as unreachable |

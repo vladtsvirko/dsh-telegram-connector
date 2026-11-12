@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.1
+
+- Release-check fix: the `0.15.0` tag was cut without its COMPATIBILITY row and
+  was never published; this is the published release of the configuration page
+  described below.
+
 ## 0.15.0
 
 - **The connector has a configuration page.** On DSH `0.2.1-rc.5` or newer, the
