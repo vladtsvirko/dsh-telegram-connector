@@ -19,11 +19,30 @@ afterEach(() => {
 })
 
 describe('telegram client', () => {
-  it('subscribes to button presses as well as messages', async () => {
+  it('subscribes to button presses, messages and widget requests', async () => {
     stubTelegram([])
     await new TelegramClient('tok').getUpdates(7, 25)
-    expect(calls[0]?.body.allowed_updates).toEqual(['message', 'callback_query'])
+    expect(calls[0]?.body.allowed_updates).toEqual(['message', 'callback_query', 'widget_query'])
     expect(calls[0]?.body.offset).toBe(7)
+  })
+
+  it('sends a widget with a caption and query permission', async () => {
+    stubTelegram({ message_id: 5 })
+    await new TelegramClient('tok').sendWidget(11, '<b>hi</b>', { caption: 'panel', allowQueries: true })
+    expect(calls[0]?.url).toContain('/bottok/sendWidget')
+    expect(calls[0]?.body).toEqual({
+      chat_id: 11,
+      html: '<b>hi</b>',
+      caption: 'panel',
+      allow_queries: true,
+    })
+  })
+
+  it('answers a widget query without changing the widget', async () => {
+    stubTelegram(true)
+    await new TelegramClient('tok').answerWidgetQuery('wq1', '{"t":"s"}')
+    expect(calls[0]?.url).toContain('/bottok/answerWidgetQuery')
+    expect(calls[0]?.body).toEqual({ widget_query_id: 'wq1', data: '{"t":"s"}' })
   })
 
   it('answers a callback query with an optional toast', async () => {

@@ -50,6 +50,16 @@ export const COMMANDS: CommandDoc[] = [
     group: 'start',
   },
   {
+    path: 'panel',
+    usage: '/panel',
+    summary: 'a live panel card: workspaces, sessions, and their state',
+    details:
+      'The card is a Telegram widget: it redraws in place without extra messages and refreshes itself while it is on screen. Tap a workspace to open its group; send `/panel` again for a fresh snapshot. Widgets currently work only in the private chat with the bot.',
+    examples: ['/panel'],
+    surfaces: ['control'],
+    group: 'start',
+  },
+  {
     path: 'menu',
     usage: '/menu',
     summary: 'the control card: buttons for the common actions',

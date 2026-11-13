@@ -17,7 +17,7 @@ The same package runs in any DSH profile.
 
 ```sh
 # Published package: the tarball already contains lib/, so no build script.
-dsh plugin --profile web add dsh-telegram-connector@0.15.2
+dsh plugin --profile web add dsh-telegram-connector@0.16.0
 ```
 
 From the source repository instead:
@@ -27,7 +27,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.15.2
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.16.0
 ```
 
 Open **Plugins** → **dsh-telegram-connector** → **Configure** and fill in the

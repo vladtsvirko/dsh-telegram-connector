@@ -21,8 +21,9 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 
-import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgInlineKeyboard, type TgMessage } from './telegram.js'
+import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgInlineKeyboard, type TgMessage, type TgWidgetQuery } from './telegram.js'
 import { splitForHtml, splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
+import { PANEL_MAX_WORKSPACES, panelCaption, panelRefresh, renderPanelHtml, workspaceLink, type PanelState } from './panel.js'
 import { installTelegramPrompt, registerTelegramSkill } from './telegram-prompt.js'
 import {
   attachmentPlaceholder,
@@ -1724,6 +1725,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const command = {
       new: '/new',
       sync: '/sync',
+      panel: '/panel',
       // A group's dashboard has the workspace status; the bot chat has the
       // deployment status.
       status: card.chat.type === 'private' ? '/system status' : '/status',
@@ -3932,6 +3934,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const dashboardKeyboard = (surface: 'control' | 'group'): TgInlineKeyboard => ({
     inline_keyboard: surface === 'control'
       ? [
+          [{ text: 'Live panel', callback_data: 'dash:panel' }],
           [{ text: 'Status', callback_data: 'dash:status' }, { text: 'Workspaces', callback_data: 'dash:workspaces' }],
           [{ text: 'Web link', callback_data: 'dash:web' }, { text: 'Help', callback_data: 'dash:help' }],
           [{ text: 'Update setup', callback_data: 'dash:update' }, { text: 'Restart', callback_data: 'dash:restart' }],
@@ -3956,6 +3959,99 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }).catch((error: unknown) => {
       logger.warn(`dsh-telegram-connector: cannot post the dashboard card: ${String(error)}`)
     })
+  }
+
+  /** A snapshot for the live panel: what the bot chat shows, counted once. */
+  const panelState = (): PanelState => {
+    const entries = Object.entries(bindings.workspaces)
+      .sort((left, right) => left[1].title.localeCompare(right[1].title, undefined, { sensitivity: 'base' }))
+    const count = (workspace: { chatId: number }): { sessions: number; live: number } => {
+      if (workspace.chatId === 0) return { sessions: 0, live: 0 }
+      const sessions = sessionsOfChat(bindings, workspace.chatId)
+      const live = sessions.filter(([threadId]) => runtimes.get(runtimeKey(workspace.chatId, threadId))?.agent !== undefined).length
+      return { sessions: sessions.length, live }
+    }
+    const workspaces = entries.slice(0, PANEL_MAX_WORKSPACES).map(([workspaceId, workspace]) => {
+      const totals = count(workspace)
+      return {
+        id: workspaceId.slice(0, 8),
+        title: workspace.title,
+        sessions: totals.sessions,
+        live: totals.live,
+        url: workspaceLink(workspace.chatId),
+      }
+    })
+    let sessions = 0
+    let live = 0
+    for (const [, workspace] of entries) {
+      const totals = count(workspace)
+      sessions += totals.sessions
+      live += totals.live
+    }
+    return {
+      version: connectorVersion(),
+      runtime: runtimeVersion(),
+      uptimeSeconds: process.uptime(),
+      polling: !stopped,
+      workspaces,
+      totalWorkspaces: entries.length,
+      sessions,
+      live,
+      lastError: lastAgentError,
+      updatePending: bindings.update !== undefined,
+      at: Math.floor(Date.now() / 1000),
+    }
+  }
+
+  /**
+   * Post the live panel into the control chat.
+   *
+   * A widget is a new message kind: an old client or a server that has not
+   * enabled widgets yet refuses it. The fallback is the text card, so `/panel`
+   * never leaves the chat without an answer.
+   */
+  const postPanel = async (chatId: number): Promise<void> => {
+    const state = panelState()
+    try {
+      await botPool.takeMain(chatId)
+      await client.sendWidget(chatId, renderPanelHtml(state), {
+        caption: panelCaption(state),
+        allowQueries: true,
+      })
+    } catch (error) {
+      logger.warn(`dsh-telegram-connector: cannot post the live panel: ${String(error)}`)
+      await client.sendMessage(chatId, 'the live panel needs a Telegram client that can show widgets — the menu card is below.').catch(() => undefined)
+      await postDashboardCard(chatId, 0, 'control', controlCardText())
+    }
+  }
+
+  /**
+   * Answer a request from the panel. A widget may ask for a fresh snapshot in
+   * the background once every five seconds, and the answer must fit 1024 bytes;
+   * `panelRefresh` drops rows rather than fail.
+   */
+  const handleWidgetQuery = async (query: TgWidgetQuery): Promise<void> => {
+    const answer = async (data: string): Promise<void> => {
+      await client.answerWidgetQuery(query.id, data).catch((error: unknown) => {
+        // Telegram refuses a query older than 15 seconds; the widget has already
+        // shown its timeout, so this is not worth a warning on every refresh.
+        if (error instanceof TelegramApiError && /too old/i.test(error.description)) return
+        logger.warn(`dsh-telegram-connector: cannot answer a widget query: ${String(error)}`)
+      })
+    }
+    if (!isAllowed(query.from?.id)) {
+      await answer(JSON.stringify({ t: 'e', m: 'not authorized' }))
+      return
+    }
+    if (bindings.update !== undefined) {
+      await answer(JSON.stringify({ t: 'e', m: 'system update pending' }))
+      return
+    }
+    if ((query.data ?? '') === 'status') {
+      await answer(panelRefresh(panelState()))
+      return
+    }
+    await answer(JSON.stringify({ t: 'e', m: 'unknown request' }))
   }
 
   const controlCardText = (): string => [
@@ -4002,6 +4098,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     if (command === '/web') return showWebLink(message)
     if (command === '/dashboard') return postDashboardCard(message.chat.id, 0, 'control', controlCardText())
+    if (command === '/panel') return postPanel(message.chat.id)
 
     if (command === '/workspaces') {
       const entries = Object.entries(bindings.workspaces)
@@ -5797,6 +5894,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         const updates = await client.getUpdates(offset, pollTimeoutSeconds)
         for (const update of updates) {
           if (update.update_id >= offset) offset = update.update_id + 1
+          if (update.widget_query !== undefined) {
+            await handleWidgetQuery(update.widget_query)
+            continue
+          }
           const message = update.message
           if (message === undefined) {
             const query = update.callback_query

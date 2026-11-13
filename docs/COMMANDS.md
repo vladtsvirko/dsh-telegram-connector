@@ -77,8 +77,9 @@ connector refuses to disable or remove itself.
 
 | Command | What it does |
 |---|---|
-| `/menu` | post the control card: Status · Workspaces · Web link · Help · Update setup · Restart · Plugins · Components |
+| `/menu` | post the control card: Live panel · Status · Workspaces · Web link · Help · Update setup · Restart · Plugins · Components |
 | `/start` | the welcome card in the bot chat; the `startgroup` deep link in a group |
+| `/panel` | post the live panel widget: version, uptime, polling, workspaces with live counts, and a Refresh button; each row opens its group |
 
 ### System
 

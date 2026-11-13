@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.16.0
+
+- **A live control panel in the bot chat.** `/panel` posts an HTML widget
+  (Bot API 10.4, November 2026): version, uptime, polling state, every workspace
+  with its session and live counts, and the last agent error. While it is on
+  screen the widget refreshes itself from the bot every 20 seconds — an answer,
+  not a message edit — and each workspace row opens its group. Telegram
+  currently allows widgets only in the private chat with the bot, which is where
+  the control plane already lives; a client or server without widget support
+  gets the text menu card instead.
+- **`widget_query` updates.** The poll loop names `widget_query` in
+  `allowed_updates` and answers within the 15-second window, at most 1024 bytes;
+  an unauthorized viewer gets an error and no state.
+- The control card gains a **Live panel** button; `/help` and the private
+  command menu list `/panel`.
+
 ## 0.15.2
 
 - **The Plugins-page configuration page now actually appears and saves.** The

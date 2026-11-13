@@ -95,6 +95,7 @@ interface FakeTelegram {
   sent: TgCall[]
   edited: TgCall[]
   answered: TgCall[]
+  widgetAnswered: TgCall[]
   updates: TgUpdate[]
   restore: () => void
 }
@@ -128,6 +129,7 @@ function installFakeTelegram(
   const sent: TgCall[] = []
   const edited: TgCall[] = []
   const answered: TgCall[] = []
+  const widgetAnswered: TgCall[] = []
   const updates = [...initialUpdates]
   let nextMessageId = 1000
   let nextThreadId = 500
@@ -183,6 +185,18 @@ function installFakeTelegram(
       case 'answerCallbackQuery':
         answered.push(call)
         return json(true)
+      case 'sendWidget': {
+        call.messageId = nextMessageId++
+        return json({
+          message_id: call.messageId,
+          chat: { id: params.chat_id, type: 'private' },
+          date: Math.floor(Date.now() / 1000),
+          widget: { html: params.html, width: params.width, height: params.height },
+        })
+      }
+      case 'answerWidgetQuery':
+        widgetAnswered.push(call)
+        return json(true)
       case 'createForumTopic':
         return json({ message_thread_id: nextThreadId++, name: params.name })
       case 'getChat':
@@ -215,6 +229,7 @@ function installFakeTelegram(
     sent,
     edited,
     answered,
+    widgetAnswered,
     updates,
     restore: () => {
       globalThis.fetch = originalFetch
@@ -687,6 +702,7 @@ export async function boot(
     sent: telegram.sent,
     edited: telegram.edited,
     answered: telegram.answered,
+    widgetAnswered: telegram.widgetAnswered,
     agents,
     sessions,
     registry,

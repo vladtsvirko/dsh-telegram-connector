@@ -195,10 +195,40 @@ export interface TgCallbackQuery {
   chat_instance?: string
 }
 
+/**
+ * A query from an HTML widget sent with `sendWidget` (Bot API 10.4, November
+ * 2026). `data` is 1-64 bytes chosen by the widget; the bot answers within 15
+ * seconds with `answerWidgetQuery`.
+ */
+export interface TgWidgetQuery {
+  id: string
+  from?: TgUser
+  chat?: TgChat
+  message_id?: number
+  inline_message_id?: string
+  chat_instance?: string
+  data?: string
+  /** Present only for a shared widget. */
+  widget_id?: string
+}
+
 export interface TgUpdate {
   update_id: number
   message?: TgMessage
   callback_query?: TgCallbackQuery
+  widget_query?: TgWidgetQuery
+}
+
+/** A widget message; the caption is what clients without widget support show. */
+export interface WidgetSendOptions {
+  caption?: string
+  /** The widget may ask the bot with `TelegramWidget.request`. */
+  allowQueries?: boolean
+  /** Logical pixels; omitted means automatic. Clamped by the app. */
+  width?: number
+  height?: number
+  threadId?: number
+  replyMarkup?: TgInlineKeyboard
 }
 
 export interface TgInlineButton {
@@ -374,9 +404,9 @@ export class TelegramClient {
       offset,
       timeout: timeoutSeconds,
       // Without this Telegram may hold other update kinds in the same queue and
-      // the offset would advance past messages we never saw. Button presses are
-      // updates too, so they have to be named explicitly.
-      allowed_updates: ['message', 'callback_query'],
+      // the offset would advance past messages we never saw. Button presses and
+      // widget requests are updates too, so they have to be named explicitly.
+      allowed_updates: ['message', 'callback_query', 'widget_query'],
     }, (this.options.pollTimeoutMs ?? secondsToMs(timeoutSeconds) + 30_000))
   }
 
@@ -428,6 +458,36 @@ export class TelegramClient {
       message_id: messageId,
       rich_message: { markdown },
       ...(options.replyMarkup === undefined ? {} : { reply_markup: options.replyMarkup }),
+    })
+  }
+
+  /**
+   * Send a message with an HTML widget (Bot API 10.4+). The widget is sandboxed
+   * QuickJS with no network; it can only ask the bot through
+   * `TelegramWidget.request`, which arrives as a `widget_query` update.
+   *
+   * In production widgets are private-chat only today (groups work on the test
+   * server), and the message is protected from forwarding. Callers must fall
+   * back to a plain message when Telegram refuses the widget.
+   */
+  sendWidget(chatId: number, html: string, options: WidgetSendOptions = {}): Promise<TgMessage> {
+    return this.call<TgMessage>('sendWidget', {
+      chat_id: chatId,
+      html,
+      ...(options.caption === undefined ? {} : { caption: options.caption }),
+      ...(options.allowQueries === true ? { allow_queries: true } : {}),
+      ...(options.width === undefined ? {} : { width: options.width }),
+      ...(options.height === undefined ? {} : { height: options.height }),
+      ...(options.threadId === undefined ? {} : { message_thread_id: options.threadId }),
+      ...(options.replyMarkup === undefined ? {} : { reply_markup: options.replyMarkup }),
+    })
+  }
+
+  /** Answer a widget's request; `data` is delivered only to that widget. */
+  answerWidgetQuery(id: string, data?: string): Promise<boolean> {
+    return this.call<boolean>('answerWidgetQuery', {
+      widget_query_id: id,
+      ...(data === undefined ? {} : { data }),
     })
   }
 

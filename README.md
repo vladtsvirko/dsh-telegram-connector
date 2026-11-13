@@ -154,7 +154,7 @@ install without the setup.
 The connector is published to npm as an exact version:
 
 ```sh
-dsh plugin --profile web add dsh-telegram-connector@0.15.2
+dsh plugin --profile web add dsh-telegram-connector@0.16.0
 ```
 
 The registry tarball already contains the built `lib/`, so there is no
@@ -185,7 +185,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.15.2
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.16.0
 ```
 
 That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the
@@ -299,6 +299,7 @@ session id, an id prefix, or the topic title.
 | `/system takechat` | make this chat the control chat (notices and update reports follow it) |
 | `/firewall` | native only: whether ufw lets the web UI through, and the `/firewall allow <port>` fix |
 | `/web` | a signed link into the web UI for the same sessions |
+| `/panel` | a live widget panel: version, uptime, polling, workspaces with live counts, a Refresh button and group links (private chat only) |
 | `/timezone [zone]` | IANA zone used to read times you type (default `$DSH_TIMEZONE` or UTC) |
 | `/reactions …` | read/streaming/staged reactions: show, set, `on`/`off`, `reset`, `allowed` |
 | `/system status` | connector, runtime and updater state |
