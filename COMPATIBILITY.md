@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.17.0 | `0.2.1-rc.5` | needs UAT | `/start` opens a tabbed control-center widget (Status/Spaces/System); components toggle in-widget, destructive actions keep their chat confirmations and trials |
 | 0.16.0 | `0.2.1-rc.5` | needs UAT | `/panel`: a live control-panel widget (Bot API 10.4) with background refresh through `widget_query`; widgets are private-chat only in production, and the text card is the fallback |
 | 0.15.2 | `0.2.1-rc.5` | needs UAT | config page fixed: volatile fields expose the form, correct client inject, hooks run before loading returns, DSH theme tokens; saving a token starts polling without a reload |
 | 0.15.1 | `0.2.1-rc.5` | previous | config page attempt; the form stayed hidden because the fields were not volatile and the client inject named a package that does not exist |

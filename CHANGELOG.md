@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.17.0
+
+- **The private chat is now a widget control center.** `/start`, `/menu` and
+  `/panel` post one tabbed card — **Status** (live counters, uptime, the last
+  agent error), **Spaces** (workspaces, session counts, tap to open the group)
+  and **System** (web link, components, plugins, restart, update, help). Views
+  redraw in place through `widget_query` answers, so a refresh or a tab switch
+  posts no new message.
+- **Safety is unchanged where it matters.** Restart confirms inside the card and
+  then uses the supervisor trial; update, plugin management and help hand off to
+  their existing confirmation cards, so no action bypasses a rollback window.
+  Components can be enabled and disabled from the widget.
+- The text menu card remains the fallback for a client or server without widget
+  support, and every typed command still works.
+
 ## 0.16.0
 
 - **A live control panel in the bot chat.** `/panel` posts an HTML widget

@@ -16,7 +16,7 @@ Conventions:
 - Every command accepts `--help`; `/help <command>` shows the same text. The one
   exception is `/commands`, which lists the live host catalog instead of its own
   help.
-- `/start` and `/menu` post the control card in the bot chat. In a group,
+- `/start` and `/menu` post the control center widget in the bot chat. In a group,
   `/start` is the `startgroup` deep link that binds the workspace.
 - Admin-only (the `adminUserId` account, or the control-chat owner when unset):
   `/workspace new|link|remove`, every `/system` subcommand except `status`,
@@ -24,7 +24,7 @@ Conventions:
   `/bind`, `/system takechat`, `/firewall allow`, `/unbind`, `/dashboard`,
   `/dangerous cleanup`. The inline buttons that do the same things — trial
   Commit/Roll back, the component card, the update card's **Cancel**, Take over,
-  the deployment buttons on the menu card — are admin-only too.
+  the deployment actions in the control center — are admin-only too.
 - A `<session>` argument accepts the full session id, an id prefix, or the topic title.
 - You can only use a command on the surface it belongs to; elsewhere the bot
   tells you where it lives.
@@ -77,9 +77,9 @@ connector refuses to disable or remove itself.
 
 | Command | What it does |
 |---|---|
-| `/menu` | post the control card: Live panel · Status · Workspaces · Web link · Help · Update setup · Restart · Plugins · Components |
-| `/start` | the welcome card in the bot chat; the `startgroup` deep link in a group |
-| `/panel` | post the live panel widget: version, uptime, polling, workspaces with live counts, and a Refresh button; each row opens its group |
+| `/menu` · `/start` | post the control center widget: Status, Spaces and System in one card |
+| `/start` | the control center in the bot chat; the `startgroup` deep link in a group |
+| `/panel` | post the control center widget: live status, workspace links, component switches and system actions |
 
 ### System
 

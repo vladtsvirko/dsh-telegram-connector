@@ -23,7 +23,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 
 import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgInlineKeyboard, type TgMessage, type TgWidgetQuery } from './telegram.js'
 import { splitForHtml, splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
-import { PANEL_MAX_WORKSPACES, panelCaption, panelRefresh, renderPanelHtml, workspaceLink, type PanelState } from './panel.js'
+import { PANEL_MAX_WORKSPACES, panelCaption, panelComponents, panelError, panelOk, panelPlugins, panelSpaces, panelStatus, renderPanelHtml, workspaceLink, type PanelPlugin, type PanelState } from './panel.js'
 import { installTelegramPrompt, registerTelegramSkill } from './telegram-prompt.js'
 import {
   attachmentPlaceholder,
@@ -1989,18 +1989,28 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   }
 
   /** `/web`: the second surface, reachable from the device the user actually has. */
-  const showWebLink = async (message: TgMessage): Promise<void> => {
+  /** `/web` and the panel's Web row: a signed link, sent as its own message. */
+  const sendWebLink = async (chatId: number): Promise<boolean> => {
     const link = webLink()
-    if (link.root.length === 0) return reply(message, `no web UI: ${link.reason ?? 'unknown'}`)
-    if (link.signed === undefined) {
-      return reply(message, `web UI: ${link.root}\n\nopen it from a browser that can reach this host.`)
+    if (link.root.length === 0) {
+      await sendTo(chatId, 0, `no web UI: ${link.reason ?? 'unknown'}`)
+      return false
     }
-    return reply(message, [
+    if (link.signed === undefined) {
+      await sendTo(chatId, 0, `web UI: ${link.root}\n\nopen it from a browser that can reach this host.`)
+      return false
+    }
+    await sendTo(chatId, 0, [
       '**web UI** — this link signs you in, so treat it like a password.',
       link.signed,
       '',
       'The topics there are the same sessions as here: driving one in the browser hands the session over, and `/system restart now` returns it to Telegram.',
     ].join('\n'))
+    return true
+  }
+
+  const showWebLink = async (message: TgMessage): Promise<void> => {
+    await sendWebLink(message.chat.id)
   }
 
   /** Who may run profile-global commands, and how that was decided. */
@@ -4028,7 +4038,28 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   /**
    * Answer a request from the panel. A widget may ask for a fresh snapshot in
    * the background once every five seconds, and the answer must fit 1024 bytes;
-   * `panelRefresh` drops rows rather than fail.
+   * `panelSpaces` drops rows rather than fail.
+   */
+  /** A synthetic control-chat message so widget rows reuse the command handlers. */
+  const widgetMessage = (query: TgWidgetQuery): TgMessage | undefined => {
+    const chat = query.chat
+    if (chat === undefined) return undefined
+    return {
+      message_id: query.message_id ?? 0,
+      chat,
+      from: query.from,
+      is_topic_message: false,
+    }
+  }
+
+  /**
+   * Answer a request from the control center.
+   *
+   * Every answer is a compact JSON object (`k` is the kind) capped at 1024
+   * bytes. Irreversible actions are not performed here without their existing
+   * confirmation: restart is safe because the supervisor announces the trial,
+   * while update and plugin management delegate to the chat cards that carry
+   * the confirmation and the rollback window.
    */
   const handleWidgetQuery = async (query: TgWidgetQuery): Promise<void> => {
     const answer = async (data: string): Promise<void> => {
@@ -4040,18 +4071,98 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       })
     }
     if (!isAllowed(query.from?.id)) {
-      await answer(JSON.stringify({ t: 'e', m: 'not authorized' }))
+      await answer(panelError('not authorized'))
       return
     }
     if (bindings.update !== undefined) {
-      await answer(JSON.stringify({ t: 'e', m: 'system update pending' }))
+      await answer(panelError('system update pending'))
       return
     }
-    if ((query.data ?? '') === 'status') {
-      await answer(panelRefresh(panelState()))
+    const data = query.data ?? ''
+
+    if (data === 's') return answer(panelStatus(panelState()))
+    if (data === 'w') return answer(panelSpaces(panelState()))
+
+    if (data === 'c') {
+      try {
+        return answer(panelComponents(await fetchComponents()))
+      } catch (error) {
+        logger.warn(`dsh-telegram-connector: components unavailable in the panel: ${String(error)}`)
+        return answer(panelError('the updater did not answer'))
+      }
+    }
+
+    if (data === 'l') {
+      const bundles = await pluginBundles()
+      if (bundles === undefined) return answer(panelError('this runtime has no plugin manager'))
+      const plugins: PanelPlugin[] = bundles
+        .filter((bundle) => bundle.installed !== false)
+        .map((bundle) => ({ name: bundle.name, version: bundle.version, enabled: bundle.enabled }))
+      return answer(panelPlugins(plugins))
+    }
+
+    if (data === 'a:web') {
+      const chatId = query.chat?.id ?? bindings.controlChatId
+      if (chatId === undefined) return answer(panelError('no chat to send the link to'))
+      const sent = await sendWebLink(chatId)
+      return answer(sent ? panelOk('link sent below') : panelOk('no signed link — see the message below'))
+    }
+
+    if (data === 'a:rst') {
+      if (!isAdmin(query.from?.id)) return answer(panelError('only the admin can restart'))
+      if (supervisor === undefined) return answer(panelError('this runtime has no supervisor'))
+      // Answer before the runtime goes away; the supervisor announces the trial
+      // in the control chat on the way back up.
+      await answer(panelOk('restarting — the bot reconnects in a moment'))
+      try {
+        await flushOffset()
+        await supervisor.restart(true)
+      } catch (error) {
+        logger.warn(`dsh-telegram-connector: widget restart failed: ${String(error)}`)
+      }
       return
     }
-    await answer(JSON.stringify({ t: 'e', m: 'unknown request' }))
+
+    // Rows that need a typed argument or a rollback window hand off to the
+    // chat command that already owns the confirmation.
+    const delegated: Record<string, string> = {
+      'a:upd': '/system update setup',
+      'a:plugins': '/plugins',
+      'a:help': '/help',
+    }
+    const command = delegated[data]
+    if (command !== undefined) {
+      if (data === 'a:upd' && !isAdmin(query.from?.id)) {
+        return answer(panelError('only the admin can update setup'))
+      }
+      const message = widgetMessage(query)
+      if (message === undefined) return answer(panelError('no chat'))
+      void handleControl({ ...message, text: command }, command).catch((error: unknown) => {
+        logger.warn(`dsh-telegram-connector: widget ${command} failed: ${String(error)}`)
+      })
+      return answer(panelOk(data === 'a:upd' ? 'confirmation sent below' : 'sent below'))
+    }
+
+    if (data.startsWith('a:c:')) {
+      if (!isAdmin(query.from?.id)) return answer(panelError('only the admin can change components'))
+      const [, , name, action] = data.split(':')
+      if (name === undefined || action === undefined) return answer(panelError('unknown component'))
+      const run = action === 'on' ? 'enable' : action === 'off' ? 'disable' : action.startsWith('p') ? 'configure' : undefined
+      if (run === undefined) return answer(panelError('unknown component action'))
+      const port = action.startsWith('p') ? Number(action.slice(1)) : undefined
+      if (port !== undefined && (!Number.isInteger(port) || port < 1024 || port > 65535)) {
+        return answer(panelError('bad port'))
+      }
+      const result = await postComponent(name, run, port)
+      if (!result.startsWith('⏳')) return answer(panelError(result))
+      try {
+        return answer(panelComponents(await fetchComponents()))
+      } catch {
+        return answer(panelOk('accepted — tap Refresh'))
+      }
+    }
+
+    return answer(panelError('unknown request'))
   }
 
   const controlCardText = (): string => [
@@ -4087,7 +4198,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const argument = rest.join(' ').trim()
 
     if (command === '/start' || command === '/menu') {
-      return postDashboardCard(message.chat.id, 0, 'control', controlCardText())
+      return postPanel(message.chat.id)
     }
     if (command === '/help') {
       return showHelp(message, command, rest, 'control')
@@ -4097,7 +4208,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (command === '/web') return showWebLink(message)
-    if (command === '/dashboard') return postDashboardCard(message.chat.id, 0, 'control', controlCardText())
+    if (command === '/dashboard') return postPanel(message.chat.id)
     if (command === '/panel') return postPanel(message.chat.id)
 
     if (command === '/workspaces') {

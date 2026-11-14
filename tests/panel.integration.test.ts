@@ -45,7 +45,19 @@ describe('the live panel', () => {
     expect(call.params.allow_queries).toBe(true)
   }, 20_000)
 
-  it('answers a background status request with a bounded snapshot', async () => {
+  it('opens the control center from /start', async () => {
+    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
+    active.push(harness)
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    const call = await harness.waitFor(
+      () => harness.calls.find((entry) => entry.method === 'sendWidget'),
+      'the control center',
+      6000,
+    )
+    expect(String(call.params.html)).toContain('data-tab="system"')
+  }, 20_000)
+
+  it('answers a status request with a bounded snapshot', async () => {
     const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
     active.push(harness)
     harness.pushUpdate({
@@ -53,20 +65,19 @@ describe('the live panel', () => {
       widget_query: {
         id: 'wq-1',
         from: { id: USER_ID, is_bot: false, first_name: 'Admin' },
-        data: 'status',
+        data: 's',
       },
     })
     const answer = await harness.waitFor(() => harness.widgetAnswered[0], 'the widget answer', 6000)
     expect(answer.params.widget_query_id).toBe('wq-1')
     const payload = JSON.parse(String(answer.params.data)) as {
-      t: string
+      k: string
       ws: number
       se: number
-      w: { i: string; t: string }[]
     }
-    expect(payload.t).toBe('s')
+    expect(payload.k).toBe('s')
     expect(payload.ws).toBe(1)
-    expect(payload.w[0]?.i).toBe(WORKSPACE_ID.slice(0, 8))
+    expect(payload.se).toBe(1)
     expect(Buffer.byteLength(String(answer.params.data), 'utf8')).toBeLessThanOrEqual(1024)
   }, 20_000)
 
@@ -78,11 +89,26 @@ describe('the live panel', () => {
       widget_query: {
         id: 'wq-2',
         from: { id: 777, is_bot: false, first_name: 'Stranger' },
-        data: 'status',
+        data: 's',
       },
     })
     const answer = await harness.waitFor(() => harness.widgetAnswered[0], 'the refusal', 6000)
-    expect(JSON.parse(String(answer.params.data))).toEqual({ t: 'e', m: 'not authorized' })
+    expect(JSON.parse(String(answer.params.data))).toEqual({ k: 'err', m: 'not authorized' })
+  }, 20_000)
+
+  it('refuses a restart from a non-admin', async () => {
+    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID, 777] })
+    active.push(harness)
+    harness.pushUpdate({
+      update_id: 9003,
+      widget_query: {
+        id: 'wq-3',
+        from: { id: 777, is_bot: false, first_name: 'Colleague' },
+        data: 'a:rst',
+      },
+    })
+    const answer = await harness.waitFor(() => harness.widgetAnswered[0], 'the refusal', 6000)
+    expect(JSON.parse(String(answer.params.data))).toEqual({ k: 'err', m: 'only the admin can restart' })
   }, 20_000)
 
   it('falls back to the text menu when the client cannot show widgets', async () => {

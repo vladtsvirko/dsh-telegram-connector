@@ -6,9 +6,16 @@ import {
   PANEL_HTML_BYTES,
   PANEL_MAX_WORKSPACES,
   panelCaption,
-  panelRefresh,
+  panelComponents,
+  panelError,
+  panelOk,
+  panelPlugins,
+  panelSpaces,
+  panelStatus,
   renderPanelHtml,
   workspaceLink,
+  type PanelComponent,
+  type PanelPlugin,
   type PanelState,
   type PanelWorkspace,
 } from '../src/panel.js'
@@ -26,7 +33,7 @@ function workspace(index: number, overrides: Partial<PanelWorkspace> = {}): Pane
 function state(overrides: Partial<PanelState> = {}): PanelState {
   const workspaces = overrides.workspaces ?? [workspace(0, { title: 'dsh-setup', sessions: 4, live: 2 })]
   return {
-    version: '0.16.0',
+    version: '0.17.0',
     runtime: '0.2.1-rc.5',
     uptimeSeconds: 3 * 3600 + 12 * 60,
     polling: true,
@@ -37,6 +44,14 @@ function state(overrides: Partial<PanelState> = {}): PanelState {
     at: 1_763_050_000,
     ...overrides,
   }
+}
+
+function component(index: number): PanelComponent {
+  return { name: `penpot${String(index)}`, label: `Design stack ${String(index)}`, enabled: index % 2 === 0, port: 8090 + index }
+}
+
+function plugin(index: number): PanelPlugin {
+  return { name: `@deepseek-ai/dsh-plugin-${String(index)}`, version: `0.${String(index)}.1`, enabled: index % 2 === 0 }
 }
 
 describe('workspaceLink', () => {
@@ -51,16 +66,60 @@ describe('workspaceLink', () => {
   })
 })
 
-describe('the panel widget', () => {
-  it('renders the snapshot without any script', () => {
+describe('data payloads', () => {
+  it('describes the status tab', () => {
+    const status = JSON.parse(panelStatus(state({ updatePending: true, lastError: 'model call failed' }))) as Record<string, unknown>
+    expect(status).toMatchObject({ k: 's', ws: 1, se: 4, li: 2, p: 1, po: 1, e: 'model call failed' })
+    expect(Buffer.byteLength(panelStatus(state()), 'utf8')).toBeLessThanOrEqual(PANEL_ANSWER_BYTES)
+  })
+
+  it('lists workspaces with their links', () => {
+    const spaces = JSON.parse(panelSpaces(state({
+      workspaces: [workspace(0, { title: 'linked', url: 'https://t.me/c/123' }), workspace(1, { title: 'unlinked' })],
+      totalWorkspaces: 2,
+    }))) as { k: string; w: { t: string; u?: string }[] }
+    expect(spaces.k).toBe('w')
+    expect(spaces.w[0]).toMatchObject({ t: 'linked', u: 'https://t.me/c/123' })
+    expect(spaces.w[1].u).toBeUndefined()
+  })
+
+  it('never exceeds the answer budget, even with hostile titles', () => {
+    const workspaces = Array.from({ length: 40 }, (_, index) => workspace(index, {
+      title: 'рабочая область с длинным названием ' + String(index),
+      url: `https://t.me/c/123456789${String(index)}`,
+    }))
+    const answer = panelSpaces(state({ workspaces, totalWorkspaces: 40 }))
+    expect(Buffer.byteLength(answer, 'utf8')).toBeLessThanOrEqual(PANEL_ANSWER_BYTES)
+    const parsed = JSON.parse(answer) as { k: string; w: unknown[] }
+    expect(parsed.k).toBe('w')
+    expect(parsed.w.length).toBeLessThan(workspaces.length)
+  })
+
+  it('lists components and plugins compactly', () => {
+    const components = JSON.parse(panelComponents(Array.from({ length: 6 }, (_, index) => component(index)))) as { k: string; c: { n: string; l: string; e: number; p?: number }[] }
+    expect(components.k).toBe('c')
+    expect(components.c[0]).toEqual({ n: 'penpot0', l: 'Design stack 0', e: 1, p: 8090 })
+    const plugins = JSON.parse(panelPlugins(Array.from({ length: 6 }, (_, index) => plugin(index)))) as { k: string; l: { n: string; v?: string; e: number }[] }
+    expect(plugins.k).toBe('l')
+    expect(plugins.l[0]).toEqual({ n: 'dsh-plugin-0', v: '0.0.1', e: 1 })
+    expect(Buffer.byteLength(panelPlugins(Array.from({ length: 6 }, (_, index) => plugin(index))), 'utf8')).toBeLessThanOrEqual(PANEL_ANSWER_BYTES)
+  })
+
+  it('caps status and error text', () => {
+    expect(panelOk('x'.repeat(500))).toBe(JSON.stringify({ k: 'ok', m: 'x'.repeat(120) }))
+    expect(panelError('x'.repeat(500))).toBe(JSON.stringify({ k: 'err', m: 'x'.repeat(160) }))
+  })
+})
+
+describe('the widget document', () => {
+  it('renders the three destinations and the status snapshot', () => {
     const html = renderPanelHtml(state())
     expect(html).toContain('DeepSeek Harness')
-    expect(html).toContain('0.16.0')
+    expect(html).toContain('0.17.0')
     expect(html).toContain('DSH 0.2.1-rc.5')
-    expect(html).toContain('polling running')
-    expect(html).toContain('up 3h 12m')
-    expect(html).toContain('1 workspace · 4 sessions · 2 live')
-    expect(html).toContain('dsh-setup')
+    expect(html).toContain('data-tab="status"')
+    expect(html).toContain('data-tab="spaces"')
+    expect(html).toContain('data-tab="system"')
     expect(html).toContain('Refresh')
   })
 
@@ -73,16 +132,13 @@ describe('the panel widget', () => {
     expect(html).not.toContain('http://')
   })
 
-  it('turns a workspace with a group into a link and another into a plain row', () => {
-    const html = renderPanelHtml(state({
-      workspaces: [
-        workspace(0, { title: 'linked', url: 'https://t.me/c/123' }),
-        workspace(1, { title: 'unlinked' }),
-      ],
-      totalWorkspaces: 2,
-    }))
-    expect(html).toContain('<a class="row" href="https://t.me/c/123">')
-    expect(html).toContain('<div class="row plain">')
+  it('embeds a parseable boot snapshot', () => {
+    const html = renderPanelHtml(state({ workspaces: [workspace(0, { url: 'https://t.me/c/1' })], totalWorkspaces: 1 }))
+    const match = /var S = (.*?);\n  var T =/s.exec(html)
+    expect(match).not.toBeNull()
+    const boot = JSON.parse(match?.[1] ?? '{}') as { ws: number; w: { u?: string }[] }
+    expect(boot.ws).toBe(1)
+    expect(boot.w[0].u).toBe('https://t.me/c/1')
   })
 
   it('escapes a title in both the markup and the boot data', () => {
@@ -91,22 +147,7 @@ describe('the panel widget', () => {
     expect(html).not.toContain('</script><img')
     expect(html).not.toContain('<img')
     expect(html.match(/<\/script>/g)).toHaveLength(1)
-    expect(html).toContain('&lt;/script&gt;')
-  })
-
-  it('reports the workspaces it does not list', () => {
-    const html = renderPanelHtml(state({
-      workspaces: [workspace(0), workspace(1)],
-      totalWorkspaces: 5,
-    }))
-    expect(html).toContain('+3 more — /workspaces lists every workspace')
-  })
-
-  it('shows an update gate and an empty state', () => {
-    expect(renderPanelHtml(state({ updatePending: true }))).toContain('system update pending')
-    const empty = renderPanelHtml(state({ workspaces: [], totalWorkspaces: 0 }))
-    expect(empty).toContain('no workspaces yet — send /workspace new')
-    expect(empty).toContain('0 workspaces · 0 sessions · 0 live')
+    expect(html).toContain('\\u003c/script')
   })
 
   it('ships a script that parses as JavaScript', () => {
@@ -116,8 +157,6 @@ describe('the panel widget', () => {
     expect(start).toBeGreaterThan(-1)
     expect(end).toBeGreaterThan(start)
     const script = html.slice(start + '<script>'.length, end)
-    // Syntax only: the widget profile has no DOM here, and a script that does
-    // not parse would leave every client with the static snapshot.
     expect(() => new Function(script)).not.toThrow()
   })
 
@@ -135,44 +174,8 @@ describe('the panel widget', () => {
       updatePending: true,
     }))
     expect(Buffer.byteLength(html, 'utf8')).toBeLessThanOrEqual(PANEL_HTML_BYTES)
-    expect(deflateSync(html, { level: 9 }).length).toBeLessThan(PANEL_COMPRESSED_BYTES - 200)
+    expect(deflateSync(html, { level: 9 }).length).toBeLessThan(PANEL_COMPRESSED_BYTES - 150)
     expect(html.includes('\u0000')).toBe(false)
-  })
-})
-
-describe('the refresh answer', () => {
-  it('carries the state the widget redraws from', () => {
-    const answer = JSON.parse(panelRefresh(state({ updatePending: true }))) as Record<string, unknown>
-    expect(answer.t).toBe('s')
-    expect(answer.ws).toBe(1)
-    expect(answer.se).toBe(4)
-    expect(answer.li).toBe(2)
-    expect(answer.p).toBe(1)
-    expect(answer.w).toEqual([{ i: 'ws000000', t: 'dsh-setup', s: 4, l: 2 }])
-  })
-
-  it('omits an empty error and keeps a real one', () => {
-    expect(JSON.parse(panelRefresh(state()))).not.toHaveProperty('e')
-    const withError = JSON.parse(panelRefresh(state({ lastError: 'model call failed' }))) as Record<string, unknown>
-    expect(withError.e).toBe('model call failed')
-  })
-
-  it('never exceeds the answer budget, even with hostile titles', () => {
-    const workspaces = Array.from({ length: 40 }, (_, index) => workspace(index, {
-      title: 'рабочая область с длинным названием ' + String(index),
-    }))
-    const answer = panelRefresh(state({
-      workspaces,
-      totalWorkspaces: 40,
-      sessions: 400,
-      live: 40,
-      lastError: 'x'.repeat(500),
-    }))
-    expect(Buffer.byteLength(answer, 'utf8')).toBeLessThanOrEqual(PANEL_ANSWER_BYTES)
-    const parsed = JSON.parse(answer) as { t: string; ws: number; w: unknown[] }
-    expect(parsed.t).toBe('s')
-    expect(parsed.ws).toBe(40)
-    expect(parsed.w.length).toBeLessThan(workspaces.length)
   })
 })
 

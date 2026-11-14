@@ -44,7 +44,7 @@ export const COMMANDS: CommandDoc[] = [
     usage: '/help [command]',
     summary: 'list the commands available in this chat',
     details:
-      'With a command name it shows that command. `<command> --help` does the same. `/start` and `/menu` post the control card.',
+      'With a command name it shows that command. `<command> --help` does the same. `/start` and `/menu` post the control center widget.',
     examples: ['/help', '/help plugins add', '/system restart --help'],
     surfaces: ['control', 'dashboard', 'session'],
     group: 'start',
@@ -52,19 +52,19 @@ export const COMMANDS: CommandDoc[] = [
   {
     path: 'panel',
     usage: '/panel',
-    summary: 'a live panel card: workspaces, sessions, and their state',
+    summary: 'the control center: status, workspaces and system actions',
     details:
-      'The card is a Telegram widget: it redraws in place without extra messages and refreshes itself while it is on screen. Tap a workspace to open its group; send `/panel` again for a fresh snapshot. Widgets currently work only in the private chat with the bot.',
-    examples: ['/panel'],
+      'One Telegram widget with three tabs. **Status** shows live counters, uptime and the last error; **Spaces** lists workspaces and opens their groups; **System** holds the web link, components, plugins, restart, update and help. Views redraw in place through widget requests, so a refresh posts no new message. Restart confirms inside the card; update and plugin management hand off to their confirmation cards so nothing skips a rollback window. Widgets currently work only in the private chat with the bot; `/start` and `/menu` post the same card, and old clients get the text menu.',
+    examples: ['/panel', '/start'],
     surfaces: ['control'],
     group: 'start',
   },
   {
     path: 'menu',
     usage: '/menu',
-    summary: 'the control card: buttons for the common actions',
+    summary: 'the control center widget',
     details:
-      'Status, workspaces, plugins, components, the web link, help, update and restart — the same actions as the typed commands, as buttons. `/start` posts it in the bot chat too.',
+      'Status, workspaces, components, plugins, the web link, help, update and restart — the same actions as the typed commands, as one card. `/start` posts it too.',
     surfaces: ['control'],
     group: 'start',
   },
