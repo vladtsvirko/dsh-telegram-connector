@@ -16,7 +16,7 @@ Conventions:
 - Every command accepts `--help`; `/help <command>` shows the same text. The one
   exception is `/commands`, which lists the live host catalog instead of its own
   help.
-- `/start` and `/menu` post the control center widget in the bot chat. In a group,
+- `/start` and `/menu` open the card app in the bot chat. In a group,
   `/start` is the `startgroup` deep link that binds the workspace.
 - Admin-only (the `adminUserId` account, or the control-chat owner when unset):
   `/workspace new|link|remove`, every `/system` subcommand except `status`,
@@ -77,9 +77,9 @@ connector refuses to disable or remove itself.
 
 | Command | What it does |
 |---|---|
-| `/menu` · `/start` | post the control center widget: Status, Spaces and System in one card |
-| `/start` | the control center in the bot chat; the `startgroup` deep link in a group |
-| `/panel` | post the control center widget: live status, workspace links, component switches and system actions |
+| `/start` · `/menu` | open the card app: Home → Sessions, System, Web UI, More |
+| `/start` (group) | the `startgroup` deep link that binds the workspace |
+| `/panel` | the legacy tabbed panel: plugin and component switches, restart, update, help |
 
 ### System
 
@@ -173,7 +173,7 @@ button runs the same command you could type, so permissions are identical:
 | Card | Buttons |
 |---|---|
 | group dashboard (`/dashboard`) | New session · Sync · Status · Sessions |
-| bot chat (`/menu`) | Status · Workspaces · Web link · Help · Update setup · Restart · Plugins · Components |
+| bot chat (`/start`) | Home · Sessions · System · Web UI · More (the legacy `/panel` keeps Update, Plugins, Components) |
 
 The **flow cards** are confirmation prompts: trial Commit/Roll back, the update
 card's **Cancel** (while draining), component Enable/Disable/Port, and Take over (confirmed; restarts dsh) for a

@@ -52,9 +52,9 @@ export const COMMANDS: CommandDoc[] = [
   {
     path: 'panel',
     usage: '/panel',
-    summary: 'the control center: status, workspaces and system actions',
+    summary: 'the legacy menu card (update, plugins, components)',
     details:
-      'One Telegram widget with three tabs. **Status** shows live counters and the last error; **Spaces** lists workspaces and opens their groups; **System** holds the web link, components, plugins, restart, update and help. Views redraw in place through widget requests, so a refresh or a plugin switch posts no new message. Restart and plugin changes confirm inside the card with a trial; update and help hand off to their cards so nothing skips a rollback step. Widgets currently work only in the private chat with the bot; `/start` and `/menu` post the same card and replace the previous one, and old clients get the text menu.',
+      'The previous control center, kept while Update, Plugins and Components move into the new cards. `/start` opens the card app: Home → Sessions/System, one screen at a time; `/panel` still has the tabbed panel with plugin and component switches, restart, update and help.',
     examples: ['/panel', '/start'],
     surfaces: ['control'],
     group: 'start',
@@ -62,7 +62,7 @@ export const COMMANDS: CommandDoc[] = [
   {
     path: 'menu',
     usage: '/menu',
-    summary: 'the control center widget',
+    summary: 'the card app home screen',
     details:
       'Status, workspaces, components, plugins, the web link, help, update and restart — the same actions as the typed commands, as one card. `/start` posts it too.',
     surfaces: ['control'],
@@ -71,7 +71,7 @@ export const COMMANDS: CommandDoc[] = [
   {
     path: 'start',
     usage: '/start',
-    summary: 'open the control center',
+    summary: 'open the card app home screen',
     details:
       'In the bot chat it posts the control center widget, replacing the previous one. In a group it is the `startgroup` deep link that binds the workspace.',
     surfaces: ['control', 'dashboard', 'session'],

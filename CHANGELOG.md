@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.19.0
+
+- **The private chat is now a card app.** `/start` opens a Home card with the
+  live counters and four jobs: Sessions, System, Web UI and More. Tapping one
+  deletes the current card and sends the next, so the chat holds exactly one
+  screen — the navigation model the Telegram commerce bots use.
+- **Sessions browser.** Home → Sessions lists workspaces; a workspace lists its
+  topics with live state and model; a session card shows the topic link, the
+  runtime's model catalog as chips, and Forget with an inline confirmation.
+  Applying a model persists it and reopens the refreshed card. Topic links open
+  the group topic directly.
+- **System card.** Version/DSH, uptime, polling, web/key/registry probes,
+  supervisor and any pending setup update, with Restart behind an inline
+  confirmation and its trial.
+- **Web UI and links stay in the card.** The signed link is delivered to the
+  widget and offered as Open/Copy; it is never written into the card HTML.
+- The previous control center remains reachable as `/panel` during the
+  transition (Update, Plugins and Components move into cards next); typed
+  commands keep working. Text-entry flows (new workspace/session name, plugin
+  spec) stay in chat because widgets have no keyboard.
+
 ## 0.18.2
 
 - **A slow Telegram call can no longer hold the trial Commit.** The Commit

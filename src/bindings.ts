@@ -63,10 +63,12 @@ export interface UpdateBinding {
   messageId?: number
 }
 
-/** The control-center widget that is currently current; a new one replaces it. */
+/** The card or legacy panel currently shown in the bot chat; a new one replaces it. */
 export interface PanelMessageBinding {
   chatId: number
   messageId: number
+  /** Card target (`home`, `system`, `sessions`, `workspace:<id>`, …), when it is a card. */
+  screen?: string
 }
 
 /** The trial message that owns the Commit / Roll back buttons, so a later boot can retire it. */
@@ -129,8 +131,10 @@ function isUpdate(value: unknown): value is UpdateBinding {
 
 function isPanelMessage(value: unknown): value is PanelMessageBinding {
   if (value === null || typeof value !== 'object') return false
-  const candidate = value as { chatId?: unknown; messageId?: unknown }
-  return typeof candidate.chatId === 'number' && typeof candidate.messageId === 'number'
+  const candidate = value as { chatId?: unknown; messageId?: unknown; screen?: unknown }
+  return typeof candidate.chatId === 'number'
+    && typeof candidate.messageId === 'number'
+    && (candidate.screen === undefined || typeof candidate.screen === 'string')
 }
 
 function isTrialMessage(value: unknown): value is TrialMessageBinding {

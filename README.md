@@ -80,10 +80,15 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   `[via Telegram]` marker, so the answer can use chat steps instead of host
   commands. Web UI prompts are unmarked; the marker is in the session, not in
   the Telegram message.
-- **Menu card.** `/menu` (and `/start` in the bot chat) posts the common actions
-  as inline buttons: status, workspaces, web link, help, update, restart, plugins
-  and components. Deployment buttons are admin-only, exactly like the typed
-  commands. `/dashboard` in a group still claims an empty topic as the dashboard.
+- **Card app.** `/start` (and `/menu`) opens a Home card with live counters and
+  four jobs: Sessions, System, Web UI and More. A tap deletes the current card
+  and sends the next, so the chat holds one screen at a time. Sessions browses
+  workspaces and topics, opens a topic directly, and edits a session's model
+  from the runtime's catalog; System shows the probes and restarts behind an
+  inline confirmation. `/panel` keeps the previous tabbed panel (update,
+  plugins, components) until those move into cards. Deployment actions are
+  admin-only, exactly like the typed commands. `/dashboard` in a group still
+  claims an empty topic as the dashboard.
 - **Host-free after install.** The runtime runs under a
   supervisor: every plugin confirmation opens a rollback window (live under HMR,
   or around a restart), and `/system update connector` resolves and installs the
@@ -153,7 +158,7 @@ install without the setup.
 The connector is published to npm as an exact version:
 
 ```sh
-dsh plugin --profile web add dsh-telegram-connector@0.18.2
+dsh plugin --profile web add dsh-telegram-connector@0.19.0
 ```
 
 The registry tarball already contains the built `lib/`, so there is no
@@ -184,7 +189,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.18.2
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.19.0
 ```
 
 That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the
@@ -302,7 +307,7 @@ session id, an id prefix, or the topic title.
 | `/timezone [zone]` | IANA zone used to read times you type (default `$DSH_TIMEZONE` or UTC) |
 | `/reactions …` | read/streaming/staged reactions: show, set, `on`/`off`, `reset`, `allowed` |
 | `/system status` | connector, runtime and updater state |
-| `/menu` · `/start` | the control center widget: Status, Spaces and System in one card |
+| `/start` · `/menu` | the card app: Home with Sessions, System, Web UI and the legacy panel |
 | `/help [command]` | the command index, or one command |
 
 Plugin commands run in the private chat because they change the whole profile,

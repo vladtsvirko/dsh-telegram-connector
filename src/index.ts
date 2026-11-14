@@ -24,6 +24,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgInlineKeyboard, type TgMessage, type TgWidgetQuery } from './telegram.js'
 import { splitForHtml, splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
 import { PANEL_MAX_WORKSPACES, panelCaption, panelComponents, panelError, panelOk, panelPlugins, panelSpaces, panelStatus, panelWeb, renderPanelHtml, workspaceLink, type PanelPlugin, type PanelState, type PanelTrial } from './panel.js'
+import { renderCard, type CardLine, type CardView } from './cards.js'
 import { installTelegramPrompt, registerTelegramSkill } from './telegram-prompt.js'
 import {
   attachmentPlaceholder,
@@ -4049,6 +4050,228 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
+  /** `3h 12m`, for the card headers. */
+  const upText = (seconds: number): string => {
+    const minutes = Math.floor(Math.max(0, seconds) / 60)
+    const hours = Math.floor(minutes / 60)
+    return hours > 0 ? `${String(hours)}h ${String(minutes % 60)}m` : `${String(minutes)}m`
+  }
+
+  /** The public link to one topic, when the group is a supergroup. */
+  const topicLink = (chatId: number, threadId: number): string | undefined => {
+    const base = workspaceLink(chatId)
+    if (base === undefined) return undefined
+    return threadId === 0 ? base : `${base}/${String(threadId)}`
+  }
+
+  const modelRouteOf = (bound: { model?: { provider?: string; model?: string } }): string => {
+    const provider = bound.model?.provider ?? config.provider
+    const model = bound.model?.model ?? config.model
+    return provider === undefined || model === undefined ? 'default' : `${provider}/${model}`
+  }
+
+  const sortedWorkspaces = (): Array<[string, WorkspaceBinding]> => Object.entries(bindings.workspaces)
+    .sort((left, right) => left[1].title.localeCompare(right[1].title, undefined, { sensitivity: 'base' }))
+
+  const sortedSessions = (workspaceId: string): Array<[number, SessionBinding]> => {
+    const workspace = bindings.workspaces[workspaceId]
+    if (workspace === undefined || workspace.chatId === 0) return []
+    return sessionsOfChat(bindings, workspace.chatId)
+      .sort((left, right) => (left[1].title ?? '').localeCompare(right[1].title ?? ''))
+  }
+
+  /** The session the current card is about, from its server-side target. */
+  const sessionContext = (): { workspaceId: string; sessionId: string } | undefined => {
+    const screen = bindings.panelMessage?.screen
+    if (screen === undefined) return undefined
+    const [kind, workspaceId, sessionId] = screen.split(':')
+    if (kind !== 'session' || workspaceId === undefined || sessionId === undefined) return undefined
+    return { workspaceId, sessionId }
+  }
+
+  const homeCard = (): CardView => {
+    const state = panelState()
+    const workspaces = state.totalWorkspaces
+    const sessions = state.sessions
+    return {
+      screen: 'home',
+      title: 'Control',
+      version: connectorVersion(),
+      hero: {
+        big: `${String(workspaces)} workspace${workspaces === 1 ? '' : 's'} · ${String(sessions)} session${sessions === 1 ? '' : 's'}`,
+        meta: `${String(state.live)} live · polling ${state.polling ? 'running' : 'stopped'} · up ${upText(state.uptimeSeconds)}`,
+      },
+      tiles: [
+        { title: 'Sessions', meta: 'workspaces & topics', go: 'sessions' },
+        { title: 'System', meta: 'health & restart', go: 'system' },
+        { title: 'Web UI', meta: 'open or copy link', act: 'web' },
+        { title: 'More', meta: 'update, plugins, components', go: 'panel' },
+      ],
+      caption: `control · ${String(workspaces)} workspaces · ${String(state.live)} live`,
+    }
+  }
+
+  const systemCard = async (): Promise<CardView> => {
+    const state = panelState()
+    const probes = await statusProbes()
+    const supervisor = await supervisorStatus()
+    const lines: CardLine[] = [
+      { k: 'version', v: `${connectorVersion()}${runtimeVersion() === undefined ? '' : ` · DSH ${String(runtimeVersion())}`}` },
+      { k: 'uptime', v: upText(state.uptimeSeconds) },
+      { k: 'polling', v: state.polling ? 'running' : 'stopped' },
+      { k: 'workspaces', v: `${String(state.totalWorkspaces)} · ${String(state.sessions)} sessions · ${String(state.live)} live` },
+    ]
+    for (const probe of probes) {
+      const at = probe.indexOf(': ')
+      if (at < 0) lines.push({ k: probe, v: '' })
+      else lines.push({ k: probe.slice(0, at), v: probe.slice(at + 2) })
+    }
+    lines.push({
+      k: 'supervisor',
+      v: supervisor === undefined ? 'unavailable' : supervisor.trial === null ? `${supervisor.child} · no trial` : 'trial open',
+    })
+    if (bindings.update !== undefined) {
+      lines.push({ k: 'update', v: `${bindings.update.phase} → ${bindings.update.target}` })
+    }
+    return {
+      screen: 'system',
+      title: 'System',
+      version: connectorVersion(),
+      back: 'home',
+      lines,
+      actions: [{ label: 'Restart', act: 'restart', tone: 'bad' }],
+      caption: `control · system · ${connectorVersion()}`,
+    }
+  }
+
+  const sessionsCard = (): CardView => {
+    const entries = sortedWorkspaces()
+    const rows = entries.map(([, workspace], index) => {
+      const sessions = workspace.chatId === 0 ? [] : sessionsOfChat(bindings, workspace.chatId)
+      const live = sessions.filter(([threadId]) => runtimes.get(runtimeKey(workspace.chatId, threadId))?.agent !== undefined).length
+      return {
+        title: workspace.title,
+        meta: workspace.chatId === 0 ? 'no group' : `${String(sessions.length)} sessions · ${String(live)} live`,
+        go: `workspace:${String(index)}`,
+      }
+    })
+    return {
+      screen: 'sessions',
+      title: 'Sessions',
+      version: connectorVersion(),
+      back: 'home',
+      rows,
+      ...(rows.length === 0 ? { note: 'No workspaces yet — /workspace new <title>.' } : {}),
+      caption: `control · ${String(rows.length)} workspace${rows.length === 1 ? '' : 's'}`,
+    }
+  }
+
+  const workspaceCard = (workspaceId: string): CardView | undefined => {
+    const workspace = bindings.workspaces[workspaceId]
+    if (workspace === undefined) return undefined
+    const sessions = sortedSessions(workspaceId)
+    const rows = sessions
+      .map(([threadId, bound], index) => {
+        const live = runtimes.get(runtimeKey(workspace.chatId, threadId))?.agent !== undefined
+        return {
+          title: bound.title ?? `topic ${String(threadId)}`,
+          meta: `${live ? 'live' : 'idle'} · ${modelRouteOf(bound)}`,
+          go: `session:${String(index)}`,
+        }
+      })
+    const link = workspace.chatId === 0 ? undefined : workspaceLink(workspace.chatId)
+    return {
+      screen: 'workspace',
+      title: workspace.title,
+      version: connectorVersion(),
+      back: 'sessions',
+      rows,
+      ...(rows.length === 0 ? { note: 'No sessions yet — create one in the group with /new.' } : {}),
+      ...(link === undefined ? {} : { actions: [{ label: 'Open group', href: link }] }),
+      caption: `control · ${workspace.title}`,
+    }
+  }
+
+  const sessionCard = async (workspaceId: string, sessionId: string): Promise<CardView | undefined> => {
+    const workspace = bindings.workspaces[workspaceId]
+    if (workspace === undefined || workspace.chatId === 0) return undefined
+    const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === sessionId)
+    if (found === undefined) return undefined
+    const [threadId, bound] = found
+    const live = runtimes.get(runtimeKey(workspace.chatId, threadId))?.agent !== undefined
+    const current = modelRouteOf(bound)
+    const catalog = await modelCatalog()
+    const chips = catalog.slice(0, 8).map((entry) => ({
+      label: entry.name.length > 0 ? entry.name : entry.model,
+      value: `${entry.provider}/${entry.model}`,
+      on: `${entry.provider}/${entry.model}` === current,
+    }))
+    const topic = topicLink(workspace.chatId, threadId)
+    return {
+      screen: 'session',
+      title: bound.title ?? `topic ${String(threadId)}`,
+      version: connectorVersion(),
+      back: 'workspace',
+      lines: [
+        { k: 'workspace', v: workspace.title },
+        { k: 'session', v: sessionId.slice(-8) },
+        { k: 'model', v: current },
+        { k: 'status', v: live ? 'live' : 'idle' },
+        { k: 'topic', v: threadId === 0 ? 'General' : `#${String(threadId)}` },
+      ],
+      ...(chips.length === 0
+        ? { note: 'no model catalog — use /model' }
+        : { chips: { label: 'model', items: chips, apply: 'model' } }),
+      actions: [
+        ...(topic === undefined ? [] : [{ label: 'Open topic', href: topic }]),
+        { label: 'Forget', act: 'forget', tone: 'bad' as const },
+      ],
+      caption: `control · ${workspace.title}`,
+    }
+  }
+
+  const cardView = async (target: string): Promise<CardView | undefined> => {
+    if (target === 'home') return homeCard()
+    if (target === 'system') return systemCard()
+    if (target === 'sessions') return sessionsCard()
+    if (target.startsWith('workspace:')) return workspaceCard(target.slice('workspace:'.length))
+    if (target.startsWith('session:')) {
+      const [, workspaceId, sessionId] = target.split(':')
+      if (workspaceId !== undefined && sessionId !== undefined) return sessionCard(workspaceId, sessionId)
+    }
+    return undefined
+  }
+
+  /**
+   * Post one card and delete the previous one. A widget is fixed HTML, so
+   * navigation is delete + send: the chat always holds one current screen.
+   */
+  const postCard = async (chatId: number, target: string): Promise<boolean> => {
+    const view = await cardView(target)
+    if (view === undefined) return false
+    try {
+      await botPool.takeMain(chatId)
+      const previous = bindings.panelMessage
+      if (previous !== undefined && previous.chatId === chatId) {
+        bindings.panelMessage = undefined
+        await persist()
+        await deleteMessage(previous.chatId, previous.messageId).catch(() => undefined)
+      }
+      const sent = await client.sendWidget(chatId, renderCard(view), {
+        caption: view.caption,
+        allowQueries: true,
+      })
+      bindings.panelMessage = { chatId, messageId: sent.message_id, screen: target }
+      await persist()
+      return true
+    } catch (error) {
+      logger.warn(`dsh-telegram-connector: cannot post the ${target} card: ${String(error)}`)
+      await client.sendMessage(chatId, 'the card needs a Telegram client that supports widgets — the menu card is below.').catch(() => undefined)
+      await postDashboardCard(chatId, 0, 'control', controlCardText())
+      return false
+    }
+  }
+
   /**
    * Answer a request from the panel. A widget may ask for a fresh snapshot in
    * the background once every five seconds, and the answer must fit 1024 bytes;
@@ -4094,6 +4317,121 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     const data = query.data ?? ''
     if (data.startsWith('a:')) logger.info(`dsh-telegram-connector: widget action ${data}`)
+
+    if (data.startsWith('n:')) {
+      const target = data.slice(2)
+      const chatId = query.chat?.id ?? bindings.controlChatId
+      if (chatId === undefined) return answer(panelError('no chat'))
+      await answer(panelOk('opening…'))
+      const post = async (screen: string): Promise<void> => {
+        if (!await postCard(chatId, screen)) logger.warn(`dsh-telegram-connector: no card for ${screen}`)
+      }
+      if (target === 'panel') {
+        await postPanel(chatId)
+        return
+      }
+      if (target === 'home' || target === 'system' || target === 'sessions') {
+        await post(target)
+        return
+      }
+      if (target === 'workspace') {
+        const screen = bindings.panelMessage?.screen
+        if (screen?.startsWith('session:')) {
+          const [, workspaceId] = screen.split(':')
+          if (workspaceId !== undefined) {
+            await post(`workspace:${workspaceId}`)
+            return
+          }
+        }
+        await post(screen?.startsWith('workspace:') ? screen : 'sessions')
+        return
+      }
+      if (target === 'session') {
+        const context = sessionContext()
+        await post(context === undefined ? 'sessions' : `session:${context.workspaceId}:${context.sessionId}`)
+        return
+      }
+      if (target.startsWith('workspace:')) {
+        const entry = sortedWorkspaces()[Number(target.slice('workspace:'.length))]
+        await post(entry === undefined ? 'sessions' : `workspace:${entry[0]}`)
+        return
+      }
+      if (target.startsWith('session:')) {
+        const screen = bindings.panelMessage?.screen
+        const workspaceId = screen?.startsWith('workspace:') ? screen.slice('workspace:'.length) : undefined
+        const found = workspaceId === undefined ? undefined : sortedSessions(workspaceId)[Number(target.slice('session:'.length))]
+        await post(found === undefined || workspaceId === undefined ? 'sessions' : `session:${workspaceId}:${found[1].sessionId}`)
+        return
+      }
+      await post('home')
+      return
+    }
+
+    if (data === 'a:restart') {
+      if (!isAdmin(query.from?.id)) return answer(panelError('only the admin can restart'))
+      if (supervisor === undefined) return answer(panelError('this runtime has no supervisor'))
+      return answer(JSON.stringify({
+        k: 'q',
+        m: 'Restart dsh? Every running turn stops; a trial opens.',
+        a: 'restart!',
+        l: 'Restart',
+      }))
+    }
+
+    if (data === 'a:restart!') {
+      if (!isAdmin(query.from?.id)) return answer(panelError('only the admin can restart'))
+      if (supervisor === undefined) return answer(panelError('this runtime has no supervisor'))
+      await answer(panelOk('restarting — the bot reconnects in a moment'))
+      try {
+        await flushOffset()
+        await supervisor.restart(true)
+      } catch (error) {
+        logger.warn(`dsh-telegram-connector: card restart failed: ${String(error)}`)
+      }
+      return
+    }
+
+    if (data.startsWith('a:model:')) {
+      if (!isAdmin(query.from?.id)) return answer(panelError('only the admin can change models'))
+      const route = data.slice('a:model:'.length)
+      const [provider, model] = route.split('/')
+      if (provider === undefined || model === undefined) return answer(panelError('bad model route'))
+      const context = sessionContext()
+      if (context === undefined) return answer(panelError('open a session card first'))
+      const workspace = bindings.workspaces[context.workspaceId]
+      if (workspace === undefined || workspace.chatId === 0) return answer(panelError('no such workspace'))
+      const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === context.sessionId)
+      if (found === undefined) return answer(panelError('no such session'))
+      const catalog = await modelCatalog()
+      if (catalog.length > 0 && !catalog.some((entry) => entry.provider === provider && entry.model === model)) {
+        return answer(panelError('that model is not in the catalog'))
+      }
+      const [, bound] = found
+      bound.model = { provider, model }
+      await persist()
+      return answer(JSON.stringify({ k: 'n', t: 'session' }))
+    }
+
+    if (data === 'a:forget' || data === 'a:forget!') {
+      if (!isAdmin(query.from?.id)) return answer(panelError('only the admin can forget sessions'))
+      const context = sessionContext()
+      if (context === undefined) return answer(panelError('open a session card first'))
+      if (data === 'a:forget') {
+        return answer(JSON.stringify({
+          k: 'q',
+          m: 'Forget this session? The topic and the session stay.',
+          a: 'forget!',
+          l: 'Forget',
+        }))
+      }
+      const workspace = bindings.workspaces[context.workspaceId]
+      if (workspace === undefined || workspace.chatId === 0) return answer(panelError('no such workspace'))
+      const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === context.sessionId)
+      if (found === undefined) return answer(panelError('no such session'))
+      removeSession(bindings, workspace.chatId, found[0])
+      await persist()
+      return answer(JSON.stringify({ k: 'n', t: 'workspace' }))
+    }
 
     if (data === 's') return answer(panelStatus(panelState()))
     if (data === 'w') return answer(panelSpaces(panelState()))
@@ -4307,7 +4645,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const argument = rest.join(' ').trim()
 
     if (command === '/start' || command === '/menu') {
-      return postPanel(message.chat.id)
+      void postCard(message.chat.id, 'home')
+      return
     }
     if (command === '/help') {
       return showHelp(message, command, rest, 'control')
@@ -4317,7 +4656,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (command === '/web') return showWebLink(message)
-    if (command === '/dashboard') return postPanel(message.chat.id)
+    if (command === '/dashboard') {
+      void postCard(message.chat.id, 'home')
+      return
+    }
     if (command === '/panel') return postPanel(message.chat.id)
 
     if (command === '/workspaces') {

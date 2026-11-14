@@ -44,16 +44,19 @@ describe('the live panel', () => {
     expect(call.params.allow_queries).toBe(true)
   }, 20_000)
 
-  it('opens the control center from /start', async () => {
+  it('opens the card home from /start', async () => {
     const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
     active.push(harness)
     harness.pushUpdate(privateUpdate(harness, '/start'))
     const call = await harness.waitFor(
       () => harness.calls.find((entry) => entry.method === 'sendWidget'),
-      'the control center',
+      'the card home',
       6000,
     )
-    expect(String(call.params.html)).toContain('data-tab="system"')
+    const html = String(call.params.html)
+    expect(html).toContain('Sessions')
+    expect(html).toContain('System')
+    expect(html).not.toContain('data-tab')
   }, 20_000)
 
   it('answers a status request with a bounded snapshot', async () => {

@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.19.0 | `0.2.1-rc.5` | needs UAT | private-chat card app: Home ↔ Sessions/workspace/session/System cards replace in place; model chips, topic links, inline Forget/Restart; legacy `/panel` during the update/plugins transition |
 | 0.18.2 | `0.2.1-rc.5` | needs UAT | trial Commit is not gated by the callback toast or card edit; a stalled Telegram call cannot delay the supervisor commit |
 | 0.18.1 | `0.2.1-rc.5` | needs UAT | commit/switch actions survive the plugin-layer reload: retry on timeout, visible working state, an already-ended trial is success |
 | 0.18.0 | `0.2.1-rc.5` | needs UAT | control center updates in place: plugin switches with Commit / Roll back, web link Open/Copy, previous card replaced; `/schedules` stub removed |
