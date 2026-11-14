@@ -38,9 +38,8 @@ describe('the live panel', () => {
     )
     expect(call.params.chat_id).toBe(USER_ID)
     const html = String(call.params.html)
-    expect(html).toContain('Test Workspace')
-    expect(html).toContain('https://t.me/c/1234567890')
-    expect(html).toContain('Refresh')
+    expect(html).toContain('data-tab="spaces"')
+    expect(html).toContain('data-tab="system"')
     expect(String(call.params.caption)).toContain('workspace')
     expect(call.params.allow_queries).toBe(true)
   }, 20_000)
@@ -94,6 +93,40 @@ describe('the live panel', () => {
     })
     const answer = await harness.waitFor(() => harness.widgetAnswered[0], 'the refusal', 6000)
     expect(JSON.parse(String(answer.params.data))).toEqual({ k: 'err', m: 'not authorized' })
+  }, 20_000)
+
+  it('replaces the previous control center instead of stacking them', async () => {
+    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
+    active.push(harness)
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    const first = await harness.waitFor(
+      () => harness.calls.find((entry) => entry.method === 'sendWidget'),
+      'the first control center',
+      6000,
+    )
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    await harness.waitFor(
+      () => harness.calls.filter((entry) => entry.method === 'sendWidget').length >= 2,
+      'the second control center',
+      6000,
+    )
+    const deleted = harness.calls.find((entry) => entry.method === 'deleteMessage')
+    expect(deleted?.params.message_id).toBe(first.messageId)
+  }, 20_000)
+
+  it('refuses a plugin toggle from a non-admin', async () => {
+    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID, 777] })
+    active.push(harness)
+    harness.pushUpdate({
+      update_id: 9004,
+      widget_query: {
+        id: 'wq-4',
+        from: { id: 777, is_bot: false, first_name: 'Colleague' },
+        data: 'a:l:dsh-penpot-plugin:off',
+      },
+    })
+    const answer = await harness.waitFor(() => harness.widgetAnswered[0], 'the refusal', 6000)
+    expect(JSON.parse(String(answer.params.data))).toEqual({ k: 'err', m: 'only the admin can change plugins' })
   }, 20_000)
 
   it('refuses a restart from a non-admin', async () => {

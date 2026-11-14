@@ -71,6 +71,12 @@ export interface PanelPlugin {
   enabled: boolean
 }
 
+/** The open supervisor trial, if one is running. */
+export interface PanelTrial {
+  id: string
+  deadline: number | null
+}
+
 /**
  * The public t.me link for a workspace group.
  *
@@ -166,13 +172,24 @@ export function panelComponents(components: readonly PanelComponent[]): string {
   return JSON.stringify({ k: 'c', c: rows })
 }
 
-export function panelPlugins(plugins: readonly PanelPlugin[]): string {
+export function panelPlugins(plugins: readonly PanelPlugin[], trial?: PanelTrial): string {
   const rows = plugins.slice(0, 6).map((plugin) => ({
     n: clip(plugin.name.replace(/^@[^/]+\//, ''), 22),
     ...(plugin.version === undefined ? {} : { v: clip(plugin.version, 16) }),
     e: plugin.enabled ? 1 : 0,
   }))
-  return JSON.stringify({ k: 'l', l: rows })
+  return JSON.stringify({
+    k: 'l',
+    l: rows,
+    ...(trial === undefined
+      ? {}
+      : { tr: { i: trial.id, ...(trial.deadline === null ? {} : { dl: trial.deadline }) } }),
+  })
+}
+
+/** A web link for the widget to open on a later tap; never stored in the HTML. */
+export function panelWeb(url: string): string {
+  return JSON.stringify({ k: 'u', u: url })
 }
 
 export function panelOk(message: string): string {
@@ -187,17 +204,10 @@ export function panelError(message: string): string {
 // The widget document
 // ---------------------------------------------------------------------------
 
-const STYLE = `:root{color-scheme:light dark}body{margin:0;padding:10px 12px 0;font:16px/1.35 system-ui,-apple-system,sans-serif;color:var(--tg-theme-text-color)}.hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.ttl{font-size:17px;font-weight:600}.ver{font-size:12px;color:var(--tg-theme-hint-color);text-align:right}.st{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:13px;color:var(--tg-theme-hint-color)}.dot{width:8px;height:8px;border-radius:50%;background:var(--tg-theme-accent-text-color);flex:none}.dot.off{background:var(--tg-theme-destructive-text-color)}.tabs{display:flex;gap:3px;margin:10px 0 8px;padding:3px;border-radius:11px;background:var(--tg-theme-secondary-bg-color)}.tab{flex:1;min-height:38px;border:0;border-radius:9px;background:none;color:var(--tg-theme-text-color);font:inherit;font-size:14px}.tab.on{background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color);font-weight:600}.view{min-height:232px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}.tile{background:var(--tg-theme-secondary-bg-color);border-radius:12px;padding:8px 10px;min-height:58px;box-sizing:border-box}.tile b{display:block;font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}.tile span{font-size:12px;color:var(--tg-theme-hint-color)}.tile.warn b{color:var(--tg-theme-destructive-text-color)}.list{display:flex;flex-direction:column;gap:6px;margin-top:8px}.row{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 10px;border-radius:10px;background:var(--tg-theme-secondary-bg-color);color:inherit;font:inherit;text-decoration:none;border:0;box-sizing:border-box;width:100%;text-align:left}.row.plain{background:none;padding-left:2px}.grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.meta{font-size:12px;color:var(--tg-theme-hint-color);font-variant-numeric:tabular-nums;white-space:nowrap}.chev{color:var(--tg-theme-hint-color);font-size:18px;line-height:1}.chip{flex:none;font-size:11px;padding:2px 7px;border-radius:20px;background:var(--tg-theme-bg-color);color:var(--tg-theme-hint-color)}.chip.on{background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color)}.btn{flex:none;min-height:38px;padding:0 12px;border:0;border-radius:9px;background:var(--tg-theme-bg-color);color:var(--tg-theme-text-color);font:inherit;font-size:13px}.btn.pri{background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color)}.empty{font-size:13px;color:var(--tg-theme-hint-color);padding:10px 2px}.hint{font-size:12px;color:var(--tg-theme-hint-color);padding:4px 2px}.foot{display:flex;align-items:center;gap:8px;justify-content:space-between;margin:10px 0 8px;min-height:40px;font-size:12px;color:var(--tg-theme-hint-color)}`
+const STYLE = `:root{color-scheme:light dark}body{margin:0;padding:10px 12px 0;font:16px/1.35 system-ui,-apple-system,sans-serif;color:var(--tg-theme-text-color)}.hd{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.ttl{font-size:17px;font-weight:600}.ver{font-size:12px;color:var(--tg-theme-hint-color);text-align:right}.st{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:13px;color:var(--tg-theme-hint-color)}.dot{width:8px;height:8px;border-radius:50%;background:var(--tg-theme-accent-text-color);flex:none}.dot.off{background:var(--tg-theme-destructive-text-color)}.tabs{display:flex;gap:3px;margin:10px 0 8px;padding:3px;border-radius:11px;background:var(--tg-theme-secondary-bg-color)}.tab{flex:1;min-height:38px;border:0;border-radius:9px;background:none;color:var(--tg-theme-text-color);font:inherit;font-size:14px}.tab.on{background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color);font-weight:600}.view{min-height:232px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}.tile{background:var(--tg-theme-secondary-bg-color);border-radius:12px;padding:8px 10px;min-height:58px;box-sizing:border-box}.tile b{display:block;font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}.tile span{font-size:12px;color:var(--tg-theme-hint-color)}.tile.warn b{color:var(--tg-theme-destructive-text-color)}.list{display:flex;flex-direction:column;gap:6px;margin-top:8px}.row{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 10px;border-radius:10px;background:var(--tg-theme-secondary-bg-color);color:inherit;font:inherit;text-decoration:none;border:0;box-sizing:border-box;width:100%;text-align:left}.row.plain{background:none;padding-left:2px}.grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.meta{font-size:12px;color:var(--tg-theme-hint-color);font-variant-numeric:tabular-nums;white-space:nowrap}.chev{color:var(--tg-theme-hint-color);font-size:18px;line-height:1}.btn{flex:none;min-height:38px;padding:0 12px;border:0;border-radius:9px;background:var(--tg-theme-bg-color);color:var(--tg-theme-text-color);font:inherit;font-size:13px}.btn.pri{background:var(--tg-theme-button-color);color:var(--tg-theme-button-text-color)}.empty{font-size:13px;color:var(--tg-theme-hint-color);padding:10px 2px}.foot{display:flex;align-items:center;gap:8px;justify-content:space-between;margin:10px 0 8px;min-height:40px;font-size:12px;color:var(--tg-theme-hint-color)}`
 
 /** The boot snapshot: enough to draw the first screens with no request. */
 function boot(state: PanelState): string {
-  const spaces = state.workspaces.map((workspace) => ({
-    i: workspace.id,
-    t: clip(workspace.title),
-    s: workspace.sessions,
-    l: workspace.live,
-    ...(workspace.url === undefined ? {} : { u: workspace.url }),
-  }))
   const data = {
     v: state.version,
     ...(state.runtime === undefined ? {} : { d: state.runtime }),
@@ -211,7 +221,6 @@ function boot(state: PanelState): string {
     ...(state.lastError === undefined || state.lastError.trim().length === 0
       ? {}
       : { e: clip(state.lastError, 80) }),
-    w: spaces,
   }
   return JSON.stringify(data).replace(/</g, '\\u003c')
 }
@@ -242,6 +251,8 @@ export function renderPanelHtml(state: PanelState): string {
   var current = 'status';
   var busy = false;
   var pending = null;
+  var webUrl = null;
+  var trial = null;
 
   function el(tag, cls, text) {
     var node = document.createElement(tag);
@@ -257,11 +268,6 @@ export function renderPanelHtml(state: PanelState): string {
   function at(unix) {
     try { return new Date(unix * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
     catch (e) { return ''; }
-  }
-  function head() {
-    $('poll').textContent = S.po ? 'polling running' : 'polling stopped';
-    $('dot').className = 'dot' + (S.po ? '' : ' off');
-    $('up').textContent = 'up ' + up(S.up);
   }
   function footText(text, action, label) {
     clear(foot);
@@ -314,13 +320,6 @@ export function renderPanelHtml(state: PanelState): string {
     if (space.u) row.appendChild(el('span', 'chev', '›'));
     return row;
   }
-  function back(to) {
-    var row = el('button', 'row plain');
-    row.appendChild(el('span', 'chev', '‹'));
-    row.appendChild(el('span', 'grow', 'System'));
-    row.onclick = function () { show(to); };
-    return row;
-  }
   function tabsOn(name) {
     for (var i = 0; i < tabs.children.length; i++) {
       var tab = tabs.children[i];
@@ -336,13 +335,13 @@ export function renderPanelHtml(state: PanelState): string {
     grid.appendChild(tile('update', S.p ? 'pending' : 'clear', S.p));
     view.appendChild(grid);
     var list = el('div', 'list');
-    list.appendChild(line('polling', S.po ? 'running' : 'stopped'));
     list.appendChild(line('uptime', up(S.up)));
-    list.appendChild(line('version', S.v + (S.d ? ' · DSH ' + S.d : '')));
     list.appendChild(line('last error', S.e || 'none'));
     view.appendChild(list);
     tabsOn('status');
-    head();
+    $('poll').textContent = S.po ? 'polling running' : 'polling stopped';
+    $('dot').className = 'dot' + (S.po ? '' : ' off');
+    $('up').textContent = 'up ' + up(S.up);
     if (!quiet) {
       footText('snapshot ' + at(S.at), function () {
         ask('s', function (data) {
@@ -355,24 +354,43 @@ export function renderPanelHtml(state: PanelState): string {
   function spaces() {
     clear(view);
     var list = el('div', 'list');
-    if (!S.w.length) list.appendChild(el('div', 'empty', 'no workspaces yet'));
-    for (var i = 0; i < S.w.length; i++) list.appendChild(linkRow(S.w[i]));
     view.appendChild(list);
-    view.appendChild(el('div', 'hint', 'new: /workspace new <title>'));
     tabsOn('spaces');
-    footText(S.w.length + ' workspace' + (S.w.length === 1 ? '' : 's'), function () {
-      ask('w', function (data) {
-        if (data.k === 'w') { S.w = data.w; S.ws = data.ws; spaces(); footText('updated ' + at(data.at)); }
-        else footText(data.m || 'refresh failed');
-      });
-    }, 'Refresh');
+    footText('refreshing…');
+    ask('w', function (data) {
+      if (data.k !== 'w') { list.appendChild(el('div', 'empty', data.m || 'refresh failed')); footText(''); return; }
+      S.w = data.w;
+      S.ws = data.ws;
+      renderSpaces(list, data.w);
+      footText(data.ws + ' workspace' + (data.ws === 1 ? '' : 's'), function () { spaces(); }, 'Refresh');
+    });
+  }
+  function renderSpaces(list, items) {
+    clear(list);
+    if (!items.length) list.appendChild(el('div', 'empty', 'no workspaces yet'));
+    for (var i = 0; i < items.length; i++) list.appendChild(linkRow(items[i]));
   }
   function system() {
     clear(view);
     var list = el('div', 'list');
-    list.appendChild(action('Web UI', 'signed link', function () {
-      ask('a:web', function (data) { footText(data.m || 'link sent below'); });
-    }));
+    if (webUrl) {
+      var web = el('div', 'row');
+      web.appendChild(el('span', 'grow', 'Web UI'));
+      var open = el('button', 'btn', 'Open');
+      open.onclick = function () { try { T.openLink(webUrl); } catch (e) { footText('could not open the link'); } };
+      var copy = el('button', 'btn', 'Copy');
+      copy.onclick = function () { try { T.copyText(webUrl); footText('link copied'); } catch (e) { footText('could not copy the link'); } };
+      web.appendChild(open);
+      web.appendChild(copy);
+      list.appendChild(web);
+    } else {
+      list.appendChild(action('Web UI', 'sign in', function () {
+        ask('a:web', function (data) {
+          if (data.k === 'u') { webUrl = data.u; system(); footText('open or copy the link'); }
+          else footText(data.m || 'no signed link');
+        });
+      }));
+    }
     list.appendChild(action('Components', 'design stack', function () { show('components'); }));
     list.appendChild(action('Plugins', 'bundles', function () { show('plugins'); }));
     if (pending === 'restart') {
@@ -407,11 +425,9 @@ export function renderPanelHtml(state: PanelState): string {
   }
   function components() {
     clear(view);
-    view.appendChild(back('system'));
     var list = el('div', 'list');
     view.appendChild(list);
-    tabsOn(null);
-    list.appendChild(el('div', 'empty', 'loading…'));
+    tabsOn('system');
     ask('c', function (data) {
       if (data.k !== 'c') { clear(list); list.appendChild(el('div', 'empty', data.m || 'the updater did not answer')); footText(''); return; }
       renderComponents(list, data.c);
@@ -442,27 +458,52 @@ export function renderPanelHtml(state: PanelState): string {
   }
   function plugins() {
     clear(view);
-    view.appendChild(back('system'));
     var list = el('div', 'list');
     view.appendChild(list);
-    tabsOn(null);
-    list.appendChild(el('div', 'empty', 'loading…'));
+    tabsOn('system');
     ask('l', function (data) {
-      clear(list);
-      if (data.k !== 'l') { list.appendChild(el('div', 'empty', data.m || 'no plugin manager')); footText(''); return; }
-      if (!data.l.length) list.appendChild(el('div', 'empty', 'no bundles'));
-      for (var i = 0; i < data.l.length; i++) {
+      if (data.k !== 'l') { clear(list); list.appendChild(el('div', 'empty', data.m || 'no plugin manager')); footText(''); return; }
+      trial = data.tr || null;
+      renderPlugins(list, data.l);
+      footText(data.r ? 'restart to apply the change' : 'install or remove in chat');
+    });
+  }
+  function renderPlugins(list, items) {
+    clear(list);
+    if (trial) {
+      var banner = el('div', 'row');
+      banner.appendChild(el('span', 'grow', 'trial ' + (trial.dl ? 'until ' + at(trial.dl / 1000) : 'open')));
+      var commit = el('button', 'btn', 'Commit');
+      commit.onclick = function () { trialAction('a:tr:c', false); };
+      var rollback = el('button', 'btn', 'Roll back');
+      rollback.onclick = function () { trialAction('a:tr:r', true); };
+      banner.appendChild(commit);
+      banner.appendChild(rollback);
+      list.appendChild(banner);
+    }
+    for (var i = 0; i < items.length; i++) {
+      (function (item) {
         var row = el('div', 'row');
         var left = el('div', 'grow');
-        left.appendChild(el('div', '', data.l[i].n));
-        left.appendChild(el('div', 'meta', data.l[i].v || ''));
+        left.appendChild(el('div', '', item.n));
+        left.appendChild(el('div', 'meta', (item.v || '') + (item.e ? ' · on' : ' · off')));
         row.appendChild(left);
-        row.appendChild(el('span', 'chip' + (data.l[i].e ? ' on' : ''), data.l[i].e ? 'on' : 'off'));
+        var toggle = el('button', 'btn', item.e ? 'Turn off' : 'Turn on');
+        toggle.onclick = function () {
+          ask('a:l:' + item.n + ':' + (item.e ? 'off' : 'on'), function (data) {
+            if (data.k === 'l') { trial = data.tr || null; renderPlugins(list, data.l); footText((item.e ? 'disabled ' : 'enabled ') + item.n); }
+            else footText(data.m || 'the plugin manager refused');
+          });
+        };
+        row.appendChild(toggle);
         list.appendChild(row);
-      }
-      footText('install and remove in chat', function () {
-        ask('a:plugins', function (answer) { footText(answer.m || 'sent below'); });
-      }, 'Manage');
+      })(items[i]);
+    }
+  }
+  function trialAction(action, restarts) {
+    ask(action, function (data) {
+      footText(data.m || (restarts ? 'rolling back — the bot reconnects' : 'committed'));
+      if (data.k === 'ok' && !restarts) { trial = null; plugins(); }
     });
   }
   function show(name) {
@@ -478,16 +519,7 @@ export function renderPanelHtml(state: PanelState): string {
     while (node && node !== tabs && !node.getAttribute('data-tab')) node = node.parentNode;
     if (node && node !== tabs) show(node.getAttribute('data-tab'));
   };
-  if (T) {
-    try { T.ready(); } catch (e) {}
-    setInterval(function () {
-      if (!T.isActive || current !== 'status') return;
-      ask('s', function (data) {
-        if (data.k === 's') { Object.assign(S, data); if (current === 'status') status(true); }
-      });
-    }, 20000);
-  }
-  head();
+  if (T) { try { T.ready(); } catch (e) {} }
   status();
 })();
 </script>`

@@ -3,7 +3,7 @@
  *
  * The mapping follows DSH's own containment hierarchy:
  *
- *   private chat with the bot   the control plane (workspaces, plugins, schedules)
+ *   private chat with the bot   the control plane (workspaces, plugins, components)
  *   group                       one workspace
  *   topic inside that group     one session
  *   General topic               the workspace dashboard
@@ -23,7 +23,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 
 import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgInlineKeyboard, type TgMessage, type TgWidgetQuery } from './telegram.js'
 import { splitForHtml, splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
-import { PANEL_MAX_WORKSPACES, panelCaption, panelComponents, panelError, panelOk, panelPlugins, panelSpaces, panelStatus, renderPanelHtml, workspaceLink, type PanelPlugin, type PanelState } from './panel.js'
+import { PANEL_MAX_WORKSPACES, panelCaption, panelComponents, panelError, panelOk, panelPlugins, panelSpaces, panelStatus, panelWeb, renderPanelHtml, workspaceLink, type PanelPlugin, type PanelState, type PanelTrial } from './panel.js'
 import { installTelegramPrompt, registerTelegramSkill } from './telegram-prompt.js'
 import {
   attachmentPlaceholder,
@@ -2187,7 +2187,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         [
           `timezone: \`${timeZone()}\``,
           '',
-          'used to read times you type (schedules). Reminders and deadlines are rendered by Telegram in your own zone.',
+          'used to read times you type. Reminders and deadlines are rendered by Telegram in your own zone.',
           'change it with `/timezone Europe/Minsk`.',
         ].join('\n'),
       )
@@ -4024,10 +4024,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const state = panelState()
     try {
       await botPool.takeMain(chatId)
-      await client.sendWidget(chatId, renderPanelHtml(state), {
+      // A widget is fixed HTML: an old control center would keep its old views
+      // and commands forever. `/start` replaces the previous one instead.
+      const previous = bindings.panelMessage
+      if (previous !== undefined && previous.chatId === chatId) {
+        bindings.panelMessage = undefined
+        await persist()
+        await deleteMessage(previous.chatId, previous.messageId).catch(() => undefined)
+      }
+      const sent = await client.sendWidget(chatId, renderPanelHtml(state), {
         caption: panelCaption(state),
         allowQueries: true,
       })
+      bindings.panelMessage = { chatId, messageId: sent.message_id }
+      await persist()
     } catch (error) {
       logger.warn(`dsh-telegram-connector: cannot post the live panel: ${String(error)}`)
       await client.sendMessage(chatId, 'the live panel needs a Telegram client that can show widgets — the menu card is below.').catch(() => undefined)
@@ -4092,20 +4102,109 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
     }
 
-    if (data === 'l') {
+    const panelPluginsNow = async (): Promise<PanelPlugin[] | undefined> => {
       const bundles = await pluginBundles()
-      if (bundles === undefined) return answer(panelError('this runtime has no plugin manager'))
-      const plugins: PanelPlugin[] = bundles
+      if (bundles === undefined) return undefined
+      return bundles
         .filter((bundle) => bundle.installed !== false)
         .map((bundle) => ({ name: bundle.name, version: bundle.version, enabled: bundle.enabled }))
-      return answer(panelPlugins(plugins))
+    }
+
+    const openTrial = async (): Promise<PanelTrial | undefined> => {
+      if (supervisor === undefined) return undefined
+      try {
+        const status = await supervisor.status()
+        if (status.trial === null) return undefined
+        return { id: status.trial.id, deadline: status.trial.deadline }
+      } catch {
+        return undefined
+      }
+    }
+
+    if (data === 'l') {
+      const plugins = await panelPluginsNow()
+      if (plugins === undefined) return answer(panelError('this runtime has no plugin manager'))
+      return answer(panelPlugins(plugins, await openTrial()))
     }
 
     if (data === 'a:web') {
-      const chatId = query.chat?.id ?? bindings.controlChatId
-      if (chatId === undefined) return answer(panelError('no chat to send the link to'))
-      const sent = await sendWebLink(chatId)
-      return answer(sent ? panelOk('link sent below') : panelOk('no signed link — see the message below'))
+      const link = webLink()
+      if (link.signed === undefined) {
+        return answer(panelError(link.root.length === 0 ? 'no web UI' : 'no signed link — open it from the host'))
+      }
+      if (Buffer.byteLength(link.signed, 'utf8') > 1000) {
+        return answer(panelError('the signed link is too long for the panel — use /web'))
+      }
+      return answer(panelWeb(link.signed))
+    }
+
+    if (data.startsWith('a:l:')) {
+      if (!isAdmin(query.from?.id)) return answer(panelError('only the admin can change plugins'))
+      const manager = pluginManager()
+      if (manager === undefined) return answer(panelError('this runtime has no plugin manager'))
+      const [, , name, action] = data.split(':')
+      if (name === undefined || (action !== 'on' && action !== 'off')) {
+        return answer(panelError('unknown plugin action'))
+      }
+      const bundle = await findBundle(name)
+      if (bundle === undefined) return answer(panelError('no bundle matching that name'))
+      const enabled = action === 'on'
+      if (!enabled && bundle.name === SELF_BUNDLE) {
+        return answer(panelError('that bundle serves this chat — disable it from the host'))
+      }
+      if (bundle.enabled === enabled) {
+        const plugins = await panelPluginsNow()
+        return answer(panelPlugins(plugins ?? [], await openTrial()))
+      }
+      // A live reload that crashes the process must already be covered by a
+      // trial; without a trial the change is refused, exactly like /plugins.
+      let live: PanelTrial | undefined
+      if (supervisor !== undefined) {
+        try {
+          const opened = await supervisor.openTrial()
+          if (opened.trial === undefined) throw new Error('the supervisor returned no trial')
+          live = { id: opened.trial.id, deadline: opened.trial.deadline }
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error)
+          return answer(panelError(`cannot open a rollback window (${detail})`))
+        }
+      }
+      let result: ChangeResult
+      try {
+        result = await manager.setBundleEnabled(bundle.name, enabled)
+      } catch (error) {
+        if (live !== undefined) await supervisor?.abandonTrial().catch(() => undefined)
+        return answer(panelError(error instanceof Error ? error.message : String(error)))
+      }
+      if (live !== undefined && (result.application === 'applied' || result.application === 'overridden')) {
+        const plugins = await panelPluginsNow()
+        return answer(panelPlugins(plugins ?? [], live))
+      }
+      if (live !== undefined) await supervisor?.abandonTrial().catch(() => undefined)
+      const plugins = await panelPluginsNow()
+      if (result.application === 'restart-required') {
+        return answer(JSON.stringify({ k: 'l', l: plugins ?? [], r: 1 }))
+      }
+      return answer(panelError(describeChange(result, enabled ? 'enabled' : 'disabled')))
+    }
+
+    if (data === 'a:tr:c' || data === 'a:tr:r') {
+      if (!isAdmin(query.from?.id)) return answer(panelError('only the admin can settle a trial'))
+      if (supervisor === undefined) return answer(panelError('this runtime has no supervisor'))
+      if (data === 'a:tr:c') {
+        try {
+          await supervisor.commit()
+          return answer(panelOk('committed — this state is the rollback point'))
+        } catch (error) {
+          return answer(panelError(error instanceof Error ? error.message : String(error)))
+        }
+      }
+      // Rollback stops the runtime; answer before it goes away.
+      await answer(panelOk('rolling back — the bot reconnects'))
+      await supervisor.rollback('rollback from the control center').catch((error: unknown) => {
+        logger.warn(`dsh-telegram-connector: panel rollback failed: ${String(error)}`)
+      })
+      return
     }
 
     if (data === 'a:rst') {
@@ -4335,7 +4434,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (command === '/firewall') return handleFirewall(message, rest)
     if (command === '/timezone') return setTimeZone(message, argument)
     if (command === '/reactions') return handleReactions(message, rest)
-    if (command === '/schedules') return reply(message, '`/schedules` is planned — not implemented yet.')
 
     if (command === '/status') {
       return reply(message, '`/status` moved: use `/system status` for the deployment, or `/menu` for the card.')

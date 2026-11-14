@@ -113,8 +113,7 @@ shape is what matters here.
 
 - **Control chat** — `/workspaces`, `/workspace new|link|rm`, `/plugins`,
   `/plugins info|add|enable|disable|remove|confirm|cancel|approve`, `/status`,
-  `/system status`, `/timezone`, `/reactions`, `/web`, `/firewall`, `/system …`,
-  `/schedules` (stub).
+  `/system status`, `/timezone`, `/reactions`, `/web`, `/firewall`, `/system …`.
 - **Dashboard** — `/new`, `/sessions`, `/status`, `/dashboard`, `/sync`,
   `/archived`, `/unarchive`, `/rename`, `/model`, `/close`, `/reopen`,
   `/forget`, `/unbind`, `/dangerous cleanup`.

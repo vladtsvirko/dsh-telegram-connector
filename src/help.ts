@@ -54,7 +54,7 @@ export const COMMANDS: CommandDoc[] = [
     usage: '/panel',
     summary: 'the control center: status, workspaces and system actions',
     details:
-      'One Telegram widget with three tabs. **Status** shows live counters, uptime and the last error; **Spaces** lists workspaces and opens their groups; **System** holds the web link, components, plugins, restart, update and help. Views redraw in place through widget requests, so a refresh posts no new message. Restart confirms inside the card; update and plugin management hand off to their confirmation cards so nothing skips a rollback window. Widgets currently work only in the private chat with the bot; `/start` and `/menu` post the same card, and old clients get the text menu.',
+      'One Telegram widget with three tabs. **Status** shows live counters and the last error; **Spaces** lists workspaces and opens their groups; **System** holds the web link, components, plugins, restart, update and help. Views redraw in place through widget requests, so a refresh or a plugin switch posts no new message. Restart and plugin changes confirm inside the card with a trial; update and help hand off to their cards so nothing skips a rollback step. Widgets currently work only in the private chat with the bot; `/start` and `/menu` post the same card and replace the previous one, and old clients get the text menu.',
     examples: ['/panel', '/start'],
     surfaces: ['control'],
     group: 'start',
@@ -71,9 +71,9 @@ export const COMMANDS: CommandDoc[] = [
   {
     path: 'start',
     usage: '/start',
-    summary: 'welcome card with the main actions',
+    summary: 'open the control center',
     details:
-      'In the bot chat it posts the `/menu` card. In a group it is the `startgroup` deep link that binds the workspace.',
+      'In the bot chat it posts the control center widget, replacing the previous one. In a group it is the `startgroup` deep link that binds the workspace.',
     surfaces: ['control', 'dashboard', 'session'],
     group: 'start',
   },
@@ -246,7 +246,7 @@ export const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'system',
-    usage: '/system <status|restart|update|confirm|rollback|cancel|components|takechat>',
+    usage: '/system <status|restart|update|confirm|rollback|cancel|takechat>',
     admin: '`status`',
     summary: 'runtime lifecycle: status, restarts, connector and setup updates, optional components',
     details:
@@ -413,14 +413,6 @@ export const COMMANDS: CommandDoc[] = [
     ],
     surfaces: ['control'],
     group: 'runtime',
-  },
-  {
-    path: 'schedules',
-    usage: '/schedules',
-    summary: 'planned — not implemented yet',
-    details: 'The scheduled-job surface lands after the plugin surface.',
-    surfaces: ['control'],
-    group: 'time',
   },
 
   // --- dashboard -----------------------------------------------------------

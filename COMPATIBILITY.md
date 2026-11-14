@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.18.0 | `0.2.1-rc.5` | needs UAT | control center updates in place: plugin switches with Commit / Roll back, web link Open/Copy, previous card replaced; `/schedules` stub removed |
 | 0.17.0 | `0.2.1-rc.5` | needs UAT | `/start` opens a tabbed control-center widget (Status/Spaces/System); components toggle in-widget, destructive actions keep their chat confirmations and trials |
 | 0.16.0 | `0.2.1-rc.5` | needs UAT | `/panel`: a live control-panel widget (Bot API 10.4) with background refresh through `widget_query`; widgets are private-chat only in production, and the text card is the fallback |
 | 0.15.2 | `0.2.1-rc.5` | needs UAT | config page fixed: volatile fields expose the form, correct client inject, hooks run before loading returns, DSH theme tokens; saving a token starts polling without a reload |

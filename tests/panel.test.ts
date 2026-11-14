@@ -10,6 +10,7 @@ import {
   panelError,
   panelOk,
   panelPlugins,
+  panelWeb,
   panelSpaces,
   panelStatus,
   renderPanelHtml,
@@ -105,6 +106,13 @@ describe('data payloads', () => {
     expect(Buffer.byteLength(panelPlugins(Array.from({ length: 6 }, (_, index) => plugin(index))), 'utf8')).toBeLessThanOrEqual(PANEL_ANSWER_BYTES)
   })
 
+  it('carries the open trial and the web link', () => {
+    const plugins = JSON.parse(panelPlugins([plugin(0)], { id: 'trial-1', deadline: 1_763_100_000 })) as { tr: { i: string; dl: number } }
+    expect(plugins.tr).toEqual({ i: 'trial-1', dl: 1_763_100_000 })
+    expect(JSON.parse(panelPlugins([plugin(0)], { id: 'trial-2', deadline: null }))).not.toHaveProperty('tr.dl')
+    expect(JSON.parse(panelWeb('https://host/?token=abc'))).toEqual({ k: 'u', u: 'https://host/?token=abc' })
+  })
+
   it('caps status and error text', () => {
     expect(panelOk('x'.repeat(500))).toBe(JSON.stringify({ k: 'ok', m: 'x'.repeat(120) }))
     expect(panelError('x'.repeat(500))).toBe(JSON.stringify({ k: 'err', m: 'x'.repeat(160) }))
@@ -133,21 +141,22 @@ describe('the widget document', () => {
   })
 
   it('embeds a parseable boot snapshot', () => {
-    const html = renderPanelHtml(state({ workspaces: [workspace(0, { url: 'https://t.me/c/1' })], totalWorkspaces: 1 }))
+    const html = renderPanelHtml(state())
     const match = /var S = (.*?);\n  var T =/s.exec(html)
     expect(match).not.toBeNull()
-    const boot = JSON.parse(match?.[1] ?? '{}') as { ws: number; w: { u?: string }[] }
+    const boot = JSON.parse(match?.[1] ?? '{}') as { ws: number; se: number }
     expect(boot.ws).toBe(1)
-    expect(boot.w[0].u).toBe('https://t.me/c/1')
+    expect(boot.se).toBe(4)
   })
 
-  it('escapes a title in both the markup and the boot data', () => {
+  it('keeps titles out of the fixed document', () => {
     const hostile = '</script><img src=x onerror=alert(1)>'
     const html = renderPanelHtml(state({ workspaces: [workspace(0, { title: hostile })], totalWorkspaces: 1 }))
+    // Titles arrive in answers and are inserted with textContent; the widget
+    // document itself must never grow a second script.
     expect(html).not.toContain('</script><img')
-    expect(html).not.toContain('<img')
     expect(html.match(/<\/script>/g)).toHaveLength(1)
-    expect(html).toContain('\\u003c/script')
+    expect(JSON.parse(panelSpaces(state({ workspaces: [workspace(0, { title: hostile })] }))).w[0].t).toBe(hostile.slice(0, 27) + '…')
   })
 
   it('ships a script that parses as JavaScript', () => {

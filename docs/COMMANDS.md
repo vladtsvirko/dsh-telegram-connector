@@ -160,14 +160,8 @@ host-only recovery paths are in the setup repo's
 
 Display is client-side: trial deadlines and reminders are Telegram `<tg-time>`
 and render in **your** device's zone. Stored state and logs stay UTC. The stored
-zone is what input will use (schedules), because “tomorrow at 9:00” needs exactly
-one zone to become an instant.
-
-### Placeholder
-
-| Command | State |
-|---|---|
-| `/schedules` | planned — not implemented yet (kept as a roadmap signal) |
+zone is what typed input will use, because “tomorrow at 9:00” needs exactly one
+zone to become an instant.
 
 ---
 

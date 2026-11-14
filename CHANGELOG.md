@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.18.0
+
+- **The control center is now the only menu, and it updates in place.** `/start`
+  replaces the previous control center instead of stacking cards, so an old
+  widget can no longer keep showing old views or commands. The Spaces list is
+  fetched when the tab opens, which keeps the fixed document under Telegram's
+  4 KB compressed limit.
+- **Plugins are managed in the widget.** Each bundle row turns it on or off
+  through the plugin manager; when a live reload is applied the card shows the
+  open trial with **Commit** and **Roll back** in place of a chat card.
+- **The web link opens from the card.** The signed URL is delivered only to the
+  widget, which then offers **Open** and **Copy** on a tap — it never enters the
+  message HTML and no extra message is posted.
+- **Stale help removed.** `/schedules` (a stub) is gone, `/start` describes the
+  control center, and `/system components` no longer appears as a command.
+
 ## 0.17.0
 
 - **The private chat is now a widget control center.** `/start`, `/menu` and

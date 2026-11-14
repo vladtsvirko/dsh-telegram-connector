@@ -44,7 +44,6 @@ export const RESERVED_CONNECTOR_COMMANDS: ReadonlySet<string> = new Set([
   'restart',
   'rollback',
   'run',
-  'schedules',
   'sessions',
   'dashboard',
   'skill',

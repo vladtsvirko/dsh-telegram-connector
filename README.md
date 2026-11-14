@@ -113,7 +113,6 @@ bindings and the plugin surface, `tsc --noEmit` clean.
 | Sync: workspace ⇄ group, session ⇄ topic, topic close ⇄ session archive | done (an archive made in the web UI is not mirrored) |
 | `/sync` adoption + history replay | done |
 | Plugins surface (`src/plugins.ts`) | done — list, info, add with confirm, enable/disable, remove |
-| Automation surface | not implemented — `/schedules` is a stub |
 
 ## Requirements
 
@@ -154,7 +153,7 @@ install without the setup.
 The connector is published to npm as an exact version:
 
 ```sh
-dsh plugin --profile web add dsh-telegram-connector@0.17.0
+dsh plugin --profile web add dsh-telegram-connector@0.18.0
 ```
 
 The registry tarball already contains the built `lib/`, so there is no
@@ -185,7 +184,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.17.0
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.18.0
 ```
 
 That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the
@@ -307,7 +306,7 @@ session id, an id prefix, or the topic title.
 | `/help [command]` | the command index, or one command |
 
 Plugin commands run in the private chat because they change the whole profile,
-not one workspace. `/schedules` is still a stub.
+not one workspace.
 
 ### Dashboard (General, or the `/dashboard` topic)
 
@@ -448,7 +447,7 @@ session store — there is no export step and no second copy of a conversation.
   saturation to the owner.
 - **Time is yours.** Deadlines and reminders are sent as Telegram `<tg-time>`, so
   every client renders them in its own zone; logs and stored state stay UTC.
-  Times you type — schedules, later — are read in the bot's configured zone
+  Times you type — “tomorrow at 9:00” — are read in the bot's configured zone
   (`/timezone`, `$DSH_TIMEZONE`, default UTC).
 - **Self-update.** `/system update connector` resolves the newest npm version
   (or the repository tag for a git install), checks its declared DSH range, and asks the
