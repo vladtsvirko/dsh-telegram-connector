@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.18.2 | `0.2.1-rc.5` | needs UAT | trial Commit is not gated by the callback toast or card edit; a stalled Telegram call cannot delay the supervisor commit |
 | 0.18.1 | `0.2.1-rc.5` | needs UAT | commit/switch actions survive the plugin-layer reload: retry on timeout, visible working state, an already-ended trial is success |
 | 0.18.0 | `0.2.1-rc.5` | needs UAT | control center updates in place: plugin switches with Commit / Roll back, web link Open/Copy, previous card replaced; `/schedules` stub removed |
 | 0.17.0 | `0.2.1-rc.5` | needs UAT | `/start` opens a tabbed control-center widget (Status/Spaces/System); components toggle in-widget, destructive actions keep their chat confirmations and trials |

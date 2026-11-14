@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.18.2
+
+- **A slow Telegram call can no longer hold the trial Commit.** The Commit
+  handler awaited the callback toast and the card edit around the supervisor
+  call; on a lossy link one of them can stall for the client's 60 s timeout, so
+  the button looked hung while the trial ran out. Both are now fire-and-forget:
+  the commit happens immediately, and a stalled edit costs only a stale card
+  (pressing the button again retires it).
+
 ## 0.18.1
 
 - **Commit no longer looks stuck after a plugin change.** A bundle change makes

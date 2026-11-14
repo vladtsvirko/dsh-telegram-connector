@@ -2527,18 +2527,22 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (parsed.action === 'commit') {
-      await client.answerCallbackQuery(query.id, 'committing…').catch(() => undefined)
+      // The toast and the card edit are Telegram calls: on a lossy link one of
+      // them can stall for the client's whole 60 s timeout. The commit itself is
+      // local and must not wait for either, or the trial can roll back under a
+      // button that looks merely slow.
+      void client.answerCallbackQuery(query.id, 'committing…').catch(() => undefined)
       try {
         await supervisor.commit()
       } catch (error) {
-        await retireCallbackMessage(query, `commit failed: ${error instanceof Error ? error.message : String(error)}`)
+        void retireCallbackMessage(query, `commit failed: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
-      await retireCallbackMessage(query, 'committed — this state is the rollback point.')
+      void retireCallbackMessage(query, 'committed — this state is the rollback point.')
       return
     }
 
-    await client.answerCallbackQuery(query.id, 'rolling back…').catch(() => undefined)
+    void client.answerCallbackQuery(query.id, 'rolling back…').catch(() => undefined)
     // edit first: the supervisor stops the runtime as soon as rollback starts
     await retireCallbackMessage(query, 'rolling back to the last committed state…')
     try {
