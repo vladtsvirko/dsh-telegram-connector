@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.19.1 | `0.2.1-rc.5` | needs UAT | `INPUT_MEDIA_WIDGET_NOT_ALLOWED` from Telegram's 2026-11-13 widget shutdown falls back to the text menu quietly, with a ten-minute probe interval |
 | 0.19.0 | `0.2.1-rc.5` | needs UAT | private-chat card app: Home ↔ Sessions/workspace/session/System cards replace in place; model chips, topic links, inline Forget/Restart; legacy `/panel` during the update/plugins transition |
 | 0.18.2 | `0.2.1-rc.5` | needs UAT | trial Commit is not gated by the callback toast or card edit; a stalled Telegram call cannot delay the supervisor commit |
 | 0.18.1 | `0.2.1-rc.5` | needs UAT | commit/switch actions survive the plugin-layer reload: retry on timeout, visible working state, an already-ended trial is success |

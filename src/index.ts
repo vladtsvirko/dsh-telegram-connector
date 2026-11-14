@@ -4025,7 +4025,21 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * enabled widgets yet refuses it. The fallback is the text card, so `/panel`
    * never leaves the chat without an answer.
    */
+  /**
+   * Telegram temporarily disabled HTML widgets on 2026-11-13 after security
+   * reports. When a send is refused, do not keep retrying on every command and
+   * do not blame the client: use the text menu for a while, then probe again.
+   */
+  let widgetsBlockedUntil = 0
+  const widgetsBlocked = (): boolean => widgetsBlockedUntil > Date.now()
+  const isWidgetUnavailable = (error: unknown): boolean =>
+    error instanceof TelegramApiError && /widget.*not allowed|WIDGET_NOT_ALLOWED/i.test(error.description)
+
   const postPanel = async (chatId: number): Promise<void> => {
+    if (widgetsBlocked()) {
+      await postDashboardCard(chatId, 0, 'control', controlCardText())
+      return
+    }
     const state = panelState()
     try {
       await botPool.takeMain(chatId)
@@ -4044,6 +4058,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       bindings.panelMessage = { chatId, messageId: sent.message_id }
       await persist()
     } catch (error) {
+      if (isWidgetUnavailable(error)) {
+        widgetsBlockedUntil = Date.now() + 10 * 60_000
+        logger.warn('dsh-telegram-connector: widgets are disabled by Telegram; using the text menu')
+        await postDashboardCard(chatId, 0, 'control', controlCardText())
+        return
+      }
       logger.warn(`dsh-telegram-connector: cannot post the live panel: ${String(error)}`)
       await client.sendMessage(chatId, 'the live panel needs a Telegram client that can show widgets — the menu card is below.').catch(() => undefined)
       await postDashboardCard(chatId, 0, 'control', controlCardText())
@@ -4249,6 +4269,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const postCard = async (chatId: number, target: string): Promise<boolean> => {
     const view = await cardView(target)
     if (view === undefined) return false
+    if (widgetsBlocked()) {
+      await postDashboardCard(chatId, 0, 'control', controlCardText())
+      return false
+    }
     try {
       await botPool.takeMain(chatId)
       const previous = bindings.panelMessage
@@ -4265,6 +4289,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await persist()
       return true
     } catch (error) {
+      if (isWidgetUnavailable(error)) {
+        widgetsBlockedUntil = Date.now() + 10 * 60_000
+        logger.warn('dsh-telegram-connector: widgets are disabled by Telegram; using the text menu')
+        await postDashboardCard(chatId, 0, 'control', controlCardText())
+        return false
+      }
       logger.warn(`dsh-telegram-connector: cannot post the ${target} card: ${String(error)}`)
       await client.sendMessage(chatId, 'the card needs a Telegram client that supports widgets — the menu card is below.').catch(() => undefined)
       await postDashboardCard(chatId, 0, 'control', controlCardText())

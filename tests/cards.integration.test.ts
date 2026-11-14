@@ -82,6 +82,33 @@ describe('the card app', () => {
     expect(html).toContain('Forget')
   }, 20_000)
 
+  it('falls back to the text menu while Telegram has widgets disabled', async () => {
+    const harness = await boot(
+      { adminUserId: USER_ID, allowedUserIds: [USER_ID] },
+      { failSend: (call) => (call.method === 'sendWidget' ? 'Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED' : undefined) },
+    )
+    active.push(harness)
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    const menu = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('<b>menu</b>')),
+      'the text menu',
+      6000,
+    )
+    expect(callText(menu)).toContain('/system status')
+    expect(harness.calls.some((call) => call.method === 'sendWidget')).toBe(true)
+    expect(harness.sent.some((call) => callText(call).includes('needs a Telegram client'))).toBe(false)
+
+    // While the block is cached, /start must not try the API again.
+    const attempts = harness.calls.filter((call) => call.method === 'sendWidget').length
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    await harness.waitFor(
+      () => harness.sent.filter((call) => callText(call).includes('<b>menu</b>')).length >= 2,
+      'the second text menu',
+      6000,
+    )
+    expect(harness.calls.filter((call) => call.method === 'sendWidget').length).toBe(attempts)
+  }, 20_000)
+
   it('keeps the legacy panel reachable during the transition', async () => {
     const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
     active.push(harness)

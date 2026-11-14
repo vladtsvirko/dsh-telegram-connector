@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.19.1
+
+- **Telegram's widget shutdown is handled honestly.** On 2026-11-13 Telegram
+  temporarily disabled HTML widgets after security reports; every `sendWidget`
+  now returns `INPUT_MEDIA_WIDGET_NOT_ALLOWED`, even for `<b>hi</b>`. The
+  connector recognizes that response, logs it once, and posts the text menu —
+  without the misleading “your client needs widgets” line. It stops retrying
+  for ten minutes, then probes again, so the card app returns by itself when
+  Telegram restores widgets.
+- No behaviour change on a Telegram server where widgets work.
+
 ## 0.19.0
 
 - **The private chat is now a card app.** `/start` opens a Home card with the
