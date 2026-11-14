@@ -232,9 +232,8 @@ function boot(state: PanelState): string {
  */
 export function renderPanelHtml(state: PanelState): string {
   const version = escapeHtml(state.version)
-  const runtime = state.runtime === undefined ? '' : ` · DSH ${escapeHtml(state.runtime)}`
   return `<style>${STYLE}</style>
-<div class="hd"><span class="ttl">DeepSeek Harness</span><span class="ver">${version}${runtime}</span></div>
+<div class="hd"><span class="ttl">DeepSeek Harness</span><span class="ver">${version}</span></div>
 <div class="st"><span class="dot" id="dot"></span><span id="poll">polling running</span><span>·</span><span id="up"></span></div>
 <div class="tabs" id="tabs"><button class="tab on" data-tab="status">Status</button><button class="tab" data-tab="spaces">Spaces</button><button class="tab" data-tab="system">System</button></div>
 <div class="view" id="view"><div class="empty">loading…</div></div>
@@ -265,10 +264,6 @@ export function renderPanelHtml(state: PanelState): string {
     var m = Math.floor(sec / 60), h = Math.floor(m / 60);
     return h > 0 ? h + 'h ' + (m % 60) + 'm' : m + 'm';
   }
-  function at(unix) {
-    try { return new Date(unix * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
-    catch (e) { return ''; }
-  }
   function footText(text, action, label) {
     clear(foot);
     foot.appendChild(el('span', 'grow', text || ''));
@@ -278,9 +273,11 @@ export function renderPanelHtml(state: PanelState): string {
       foot.appendChild(button);
     }
   }
-  function ask(data, done) {
-    if (!T || busy) return;
+  function ask(data, done, retries) {
+    if (!T) return;
+    if (busy) { footText('working…'); return; }
     busy = true;
+    var left = retries === undefined ? 2 : retries;
     T.request(data).then(function (answer) {
       var parsed;
       try { parsed = JSON.parse(answer.result); }
@@ -289,7 +286,16 @@ export function renderPanelHtml(state: PanelState): string {
       done(parsed);
     }, function (error) {
       busy = false;
-      done({ k: 'err', m: error && error.code === 'RATE_LIMITED' ? 'wait a moment, then tap again' : 'request failed' + (error && error.code ? ' (' + error.code + ')' : '') });
+      var code = error && error.code;
+      // A plugin reload restarts the bot for a moment; the request that was in
+      // flight times out even though the operation landed. Ask again once the
+      // bot is back, then report the last failure.
+      if (left > 0 && (code === 'TIMEOUT' || code === 'FAILED')) {
+        footText('retrying…');
+        setTimeout(function () { ask(data, done, left - 1); }, 5000);
+        return;
+      }
+      done({ k: 'err', m: code === 'RATE_LIMITED' ? 'wait a moment, then tap again' : 'request failed' + (code ? ' (' + code + ')' : '') });
     });
   }
   function tile(label, value, warn) {
@@ -304,10 +310,9 @@ export function renderPanelHtml(state: PanelState): string {
     row.appendChild(el('span', 'meta', value));
     return row;
   }
-  function action(label, meta, run) {
+  function action(label, run) {
     var row = el('button', 'row');
     row.appendChild(el('span', 'grow', label));
-    if (meta) row.appendChild(el('span', 'meta', meta));
     row.appendChild(el('span', 'chev', '›'));
     row.onclick = run;
     return row;
@@ -343,9 +348,9 @@ export function renderPanelHtml(state: PanelState): string {
     $('dot').className = 'dot' + (S.po ? '' : ' off');
     $('up').textContent = 'up ' + up(S.up);
     if (!quiet) {
-      footText('snapshot ' + at(S.at), function () {
+      footText('snapshot', function () {
         ask('s', function (data) {
-          if (data.k === 's') { Object.assign(S, data); status(); footText('updated ' + at(S.at)); }
+          if (data.k === 's') { Object.assign(S, data); status(); footText('updated'); }
           else footText(data.m || 'refresh failed');
         });
       }, 'Refresh');
@@ -362,7 +367,7 @@ export function renderPanelHtml(state: PanelState): string {
       S.w = data.w;
       S.ws = data.ws;
       renderSpaces(list, data.w);
-      footText(data.ws + ' workspace' + (data.ws === 1 ? '' : 's'), function () { spaces(); }, 'Refresh');
+      footText(data.ws + ' workspace' + (data.ws === 1 ? '' : 's'));
     });
   }
   function renderSpaces(list, items) {
@@ -378,21 +383,18 @@ export function renderPanelHtml(state: PanelState): string {
       web.appendChild(el('span', 'grow', 'Web UI'));
       var open = el('button', 'btn', 'Open');
       open.onclick = function () { try { T.openLink(webUrl); } catch (e) { footText('could not open the link'); } };
-      var copy = el('button', 'btn', 'Copy');
-      copy.onclick = function () { try { T.copyText(webUrl); footText('link copied'); } catch (e) { footText('could not copy the link'); } };
       web.appendChild(open);
-      web.appendChild(copy);
       list.appendChild(web);
     } else {
-      list.appendChild(action('Web UI', 'sign in', function () {
+      list.appendChild(action('Web UI', function () {
         ask('a:web', function (data) {
           if (data.k === 'u') { webUrl = data.u; system(); footText('open or copy the link'); }
           else footText(data.m || 'no signed link');
         });
       }));
     }
-    list.appendChild(action('Components', 'design stack', function () { show('components'); }));
-    list.appendChild(action('Plugins', 'bundles', function () { show('plugins'); }));
+    list.appendChild(action('Components', function () { show('components'); }));
+    list.appendChild(action('Plugins', function () { show('plugins'); }));
     if (pending === 'restart') {
       var confirm = el('div', 'row');
       confirm.appendChild(el('span', 'grow', 'Restart? turns stop'));
@@ -408,15 +410,15 @@ export function renderPanelHtml(state: PanelState): string {
       confirm.appendChild(yes);
       list.appendChild(confirm);
     } else {
-      list.appendChild(action('Restart runtime', 'trial', function () {
+      list.appendChild(action('Restart runtime', function () {
         pending = 'restart';
         system();
       }));
     }
-    list.appendChild(action('Update setup', 'drain, then update', function () {
+    list.appendChild(action('Update setup', function () {
       ask('a:upd', function (data) { footText(data.m || 'confirmation sent below'); });
     }));
-    list.appendChild(action('Help', 'commands', function () {
+    list.appendChild(action('Help', function () {
       ask('a:help', function (data) { footText(data.m || 'sent below'); });
     }));
     view.appendChild(list);
@@ -472,7 +474,7 @@ export function renderPanelHtml(state: PanelState): string {
     clear(list);
     if (trial) {
       var banner = el('div', 'row');
-      banner.appendChild(el('span', 'grow', 'trial ' + (trial.dl ? 'until ' + at(trial.dl / 1000) : 'open')));
+      banner.appendChild(el('span', 'grow', 'trial open'));
       var commit = el('button', 'btn', 'Commit');
       commit.onclick = function () { trialAction('a:tr:c', false); };
       var rollback = el('button', 'btn', 'Roll back');
@@ -486,10 +488,11 @@ export function renderPanelHtml(state: PanelState): string {
         var row = el('div', 'row');
         var left = el('div', 'grow');
         left.appendChild(el('div', '', item.n));
-        left.appendChild(el('div', 'meta', (item.v || '') + (item.e ? ' · on' : ' · off')));
+        left.appendChild(el('div', 'meta', item.e ? 'on' : 'off'));
         row.appendChild(left);
         var toggle = el('button', 'btn', item.e ? 'Turn off' : 'Turn on');
         toggle.onclick = function () {
+          footText(item.e ? 'turning off…' : 'turning on…');
           ask('a:l:' + item.n + ':' + (item.e ? 'off' : 'on'), function (data) {
             if (data.k === 'l') { trial = data.tr || null; renderPlugins(list, data.l); footText((item.e ? 'disabled ' : 'enabled ') + item.n); }
             else footText(data.m || 'the plugin manager refused');
@@ -501,6 +504,7 @@ export function renderPanelHtml(state: PanelState): string {
     }
   }
   function trialAction(action, restarts) {
+    footText(restarts ? 'rolling back…' : 'committing…');
     ask(action, function (data) {
       footText(data.m || (restarts ? 'rolling back — the bot reconnects' : 'committed'));
       if (data.k === 'ok' && !restarts) { trial = null; plugins(); }

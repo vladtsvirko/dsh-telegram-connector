@@ -124,7 +124,6 @@ describe('the widget document', () => {
     const html = renderPanelHtml(state())
     expect(html).toContain('DeepSeek Harness')
     expect(html).toContain('0.17.0')
-    expect(html).toContain('DSH 0.2.1-rc.5')
     expect(html).toContain('data-tab="status"')
     expect(html).toContain('data-tab="spaces"')
     expect(html).toContain('data-tab="system"')

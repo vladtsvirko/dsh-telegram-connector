@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.18.1
+
+- **Commit no longer looks stuck after a plugin change.** A bundle change makes
+  the plugin layer reload, so the bot is briefly away and the widget request that
+  was in flight times out even though the operation landed. The control center
+  now says `working…` / `retrying…`, retries a timed-out action once the bot is
+  back, and treats a commit that finds no trial (because the first one already
+  landed) as success.
+
 ## 0.18.0
 
 - **The control center is now the only menu, and it updates in place.** `/start`

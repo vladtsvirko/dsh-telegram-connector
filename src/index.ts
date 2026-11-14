@@ -4089,6 +4089,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return
     }
     const data = query.data ?? ''
+    if (data.startsWith('a:')) logger.info(`dsh-telegram-connector: widget action ${data}`)
 
     if (data === 's') return answer(panelStatus(panelState()))
     if (data === 'w') return answer(panelSpaces(panelState()))
@@ -4196,7 +4197,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           await supervisor.commit()
           return answer(panelOk('committed — this state is the rollback point'))
         } catch (error) {
-          return answer(panelError(error instanceof Error ? error.message : String(error)))
+          const detail = error instanceof Error ? error.message : String(error)
+          // A retried commit after the first one landed finds no trial; that is
+          // success, not an error the user should see.
+          if (/no trial/i.test(detail)) return answer(panelOk('committed — the trial already ended'))
+          logger.warn(`dsh-telegram-connector: widget commit failed: ${detail}`)
+          return answer(panelError(detail))
         }
       }
       // Rollback stops the runtime; answer before it goes away.
