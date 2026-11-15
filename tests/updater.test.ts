@@ -59,7 +59,7 @@ function setup(options: { removeApplication?: string; installApplication?: strin
 }
 
 const waitFor = async (predicate: () => boolean, label: string): Promise<void> => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
     if (predicate()) return
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
@@ -88,13 +88,22 @@ describe('the stable updater', () => {
     expect(calls.some((call) => call.url.includes('/sendMessage') && String(call.body?.text ?? '').includes('updated'))).toBe(false)
   })
 
-  it('falls back to the supervisor update when HMR refuses the remove', async () => {
+  it('installs after a restart-required remove and restarts without a target ref', async () => {
     const { calls, managers, service } = setup({ removeApplication: 'restart-required' })
     expect(service.update({ name: 'other-plugin', spec: 'other-plugin@2.0.0', chatId: 42, label: 'other', announce: true })).toBe(true)
     await waitFor(() => calls.some((call) => call.url.endsWith('/update')), 'the supervisor update')
-    expect(managers.installed).toEqual([])
+    expect(managers.installed[0]?.spec).toBe('other-plugin@2.0.0')
     const fallback = calls.find((call) => call.url.endsWith('/update'))
-    expect(fallback?.body).toMatchObject({ trial: true, ref: 'other-plugin@2.0.0' })
+    // The target is not the connector: never pass it as the connector ref.
+    expect(fallback?.body).toEqual({ trial: true })
     expect(calls.some((call) => call.url.endsWith('/trial/abandon'))).toBe(true)
+  })
+
+  it('aborts a failed remove without restarting the runtime', async () => {
+    const { calls, managers, service } = setup({ removeApplication: 'failed' })
+    expect(service.update({ name: 'other-plugin', spec: 'other-plugin@2.0.0', chatId: 42, label: 'other', announce: true })).toBe(true)
+    await waitFor(() => calls.some((call) => call.url.endsWith('/trial/abandon')), 'the abandon')
+    expect(managers.installed).toEqual([])
+    expect(calls.some((call) => call.url.endsWith('/update'))).toBe(false)
   })
 })

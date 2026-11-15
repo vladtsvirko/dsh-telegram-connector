@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.21.2
+
+- **A failed plugin update no longer restarts into the wrong state.** The
+  restart fallback was passing the target plugin spec (for example Penpot
+  0.10.4) as the supervisor's connector ref, so the setup tried to install
+  Penpot as the Telegram connector, the connector did not boot, and the
+  supervisor rolled back after 120 s. The updater now distinguishes the
+  connector target from every other target: only the connector uses a `ref`;
+  other plugins restart the profile without one, and only after the package
+  change is on disk.
+- **Failed manager operations abort cleanly.** Remove/install are retried; a
+  failure leaves the runtime and the plugin untouched. A restart is only used
+  for `restart-required` package changes.
+- **Updater 0.2.1 upgrades at connector start**, outside update commands, with
+  the timer cancelled if the connector is replaced. A non-connector update is
+  refused while the installed updater is still the older build, with a clear
+  “restart once” message.
+- **Previous spec restore.** If an install fails after a successful remove, the
+  updater reinstalls the previous spec instead of leaving the plugin missing.
+
 ## 0.21.1
 
 - **Fixed a nested HMR transaction during plugin updates.** The updater was

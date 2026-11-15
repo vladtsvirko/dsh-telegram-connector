@@ -2425,6 +2425,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         chatId: message.chat.id,
         label: `the connector ${current} → ${release.version}`,
         announce: false,
+        previous: source,
       })) return
     }
     try {
@@ -2806,7 +2807,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   interface PluginUpdaterService {
     version?: string
-    update(request: { name: string; spec: string; chatId?: number; label?: string; announce?: boolean }): boolean
+    update(request: { name: string; spec: string; chatId?: number; label?: string; announce?: boolean; previous?: string }): boolean
     busy(): boolean
   }
 
@@ -2815,6 +2816,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * it once into the profile (a path outside node_modules and outside this
    * package) so updating the connector never unloads the updater.
    */
+  let updaterUpgrade: Promise<void> | undefined
+
   const ensurePluginUpdater = async (): Promise<PluginUpdaterService | undefined> => {
     const manager = pluginManager()
     if (manager === undefined) return undefined
@@ -2823,10 +2826,11 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       || (process.env.DSH_SUPERVISOR_TOKEN ?? '').trim().length === 0) return undefined
     const home = (process.env.DSH_HOME ?? '').trim()
     if (home.length === 0) return undefined
+    if (updaterUpgrade !== undefined) await updaterUpgrade.catch(() => undefined)
     const existing = serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
     // Never upgrade the updater inside an update command: that is a second
-    // HMR transaction while the first one may still be settling. An existing
-    // version is used as-is; the connector posts the card for an old updater.
+    // HMR transaction while the first one may still be settling. The boot
+    // upgrade below runs separately; an existing version is used as-is.
     if (existing !== undefined) return existing
     const source = join(dirname(fileURLToPath(import.meta.url)), '..', 'updater')
     const target = join(home, 'plugins', 'dsh-plugin-updater')
@@ -2849,6 +2853,56 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return undefined
     }
   }
+
+  /**
+   * Upgrade the installed updater outside any update command. This runs once
+   * shortly after activation, when no HMR transaction is in flight; if HMR
+   * refuses (a live connector reload used the single change), the old updater
+   * stays and the connector's card fallback covers it until the next start.
+   */
+  const upgradePluginUpdater = async (): Promise<void> => {
+    const manager = pluginManager()
+    if (manager === undefined) return
+    const home = (process.env.DSH_HOME ?? '').trim()
+    if (home.length === 0) return
+    const source = join(dirname(fileURLToPath(import.meta.url)), '..', 'updater')
+    const target = join(home, 'plugins', 'dsh-plugin-updater')
+    let bundled = ''
+    try {
+      bundled = (JSON.parse(await readFile(join(source, 'package.json'), 'utf8')) as { version?: string }).version ?? ''
+    } catch {
+      return
+    }
+    const existing = serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
+    if (existing === undefined || existing.version === bundled) return
+    await cp(source, target, { recursive: true, force: true })
+    const removed = await manager.removeBundle('dsh-plugin-updater')
+    if (removed.application === 'failed' || removed.application === 'cancelled') return
+    await manager.installBundle(target, { enabled: true, saveExact: true })
+  }
+
+  const scheduleUpdaterUpgrade = (): void => {
+    if (updaterUpgrade !== undefined) return
+    if ((process.env.DSH_SUPERVISOR_URL ?? '').trim().length === 0
+      || (process.env.DSH_SUPERVISOR_TOKEN ?? '').trim().length === 0) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const wait = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, 3000)
+    })
+    // A live connector replacement must not leave this timer behind to open an
+    // HMR transaction inside the replacement.
+    ctx.effect(() => () => {
+      if (timer !== undefined) clearTimeout(timer)
+    })
+    updaterUpgrade = wait.then(() => upgradePluginUpdater())
+    void updaterUpgrade.catch((error: unknown) => {
+      stderr(`plugin updater upgrade skipped: ${String(error)}`)
+    }).finally(() => {
+      updaterUpgrade = undefined
+    })
+  }
+  scheduleUpdaterUpgrade()
+
 
   const pluginBundles = async (): Promise<BundleInfo[] | undefined> => {
     const manager = pluginManager()
@@ -3045,12 +3099,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     if (!noTrial) {
       const updater = await ensurePluginUpdater()
+      if (updater !== undefined && bundle.name !== SELF_BUNDLE
+        && compareVersions(updater.version ?? '0.0.0', '0.2.1') < 0) {
+        return reply(
+          message,
+          'the plugin updater is still the older build — restart dsh once so it can finish upgrading, then retry this update.',
+        )
+      }
       if (updater !== undefined && updater.update({
         name: bundle.name,
         spec: release.spec,
         chatId: message.chat.id,
         label: `${bundle.name} ${current ?? ''} → ${release.version}`,
         announce: true,
+        previous: bundle.source,
       })) {
         // An older updater (0.1.x) cannot post the non-connector card. The
         // connector is still up for this target, so it announces the trial
@@ -3087,16 +3149,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         return reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
-    try {
-      await flushOffset()
-      await replyNow(
-        message,
-        `updating \`${bundle.name}\` ${current ?? ''} → ${release.version} — restarting dsh to apply it.`,
-      )
-      await supervisor.update(!noTrial, release.spec)
-    } catch (error) {
-      return reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    return reply(
+      message,
+      'the plugin updater is unavailable — update this plugin from the Web UI (Plugins) or the host.',
+    )
   }
 
   const beginPluginInstall = async (message: TgMessage, spec: string): Promise<void> => {
