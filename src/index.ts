@@ -5096,7 +5096,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       cardPrompt = undefined
       return false
     }
-    if (text.trim().startsWith('/')) {
+    // The SDK prompt asks for an absolute host path, so a leading slash must
+    // be accepted there; it still cancels the prompt for every other kind.
+    if (text.trim().startsWith('/') && prompt.kind !== 'devtool-sdk') {
       cardPrompt = undefined
       return false
     }
