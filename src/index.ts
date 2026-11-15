@@ -24,7 +24,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 
 import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgInlineKeyboard, type TgMessage, type TgWidgetQuery } from './telegram.js'
 import { splitForHtml, splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
-import { PANEL_MAX_WORKSPACES, panelCaption, panelComponents, panelError, panelOk, panelPlugins, panelSpaces, panelStatus, panelWeb, renderPanelHtml, workspaceLink, type PanelPlugin, type PanelState, type PanelTrial } from './panel.js'
+import { PANEL_MAX_WORKSPACES, panelCaption, panelComponents, panelDevtools, panelError, panelOk, panelPlugins, panelSpaces, panelStatus, panelWeb, renderPanelHtml, workspaceLink, type PanelDevtools, type PanelPlugin, type PanelState, type PanelTrial } from './panel.js'
 import { renderCard, renderRichCard, type CardLine, type CardView } from './cards.js'
 import { installTelegramPrompt, registerTelegramSkill } from './telegram-prompt.js'
 import {
@@ -67,7 +67,8 @@ import {
 import { SupervisorClient, deadlineText, parseTrialCallback, trialCallbackData, type SupervisorStatus } from './supervisor.js'
 import { compareVersions, parseUpdateArgs, resolveRelease } from './updates.js'
 import { COMMANDS, commandMenu, hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag, unknownHelp, type Surface } from './help.js'
-import { componentDetail, componentsList, controlHome, helpDoc, helpGroup, helpRoot, noticeScreen, pluginDetail, pluginsList, pluginUpdates, promptScreen, settings as settingsScreen, updatePreview, updates as updatesScreen, webScreen, type ComponentSummary, type HelpEntry, type HomeAlerts, type PluginSummary, type UpdateSlot, type UpdateSnapshot } from './control.js'
+import { componentDetail, componentsList, controlHome, devtoolAuthHelp, devtoolConfirm, devtoolDetail, devtoolProgress, devtoolsScreen, helpDoc, helpGroup, helpRoot, noticeScreen, pluginDetail, pluginsList, pluginUpdates, promptScreen, settings as settingsScreen, updatePreview, updates as updatesScreen, webScreen, type ComponentSummary, type HelpEntry, type HomeAlerts, type PluginSummary, type UpdateSlot, type UpdateSnapshot } from './control.js'
+import { jobActive, readDevtoolsStatus, type DevtoolsJob, type DevtoolsStatus } from './devtools.js'
 import { resolveTimeZone, validTimeZone } from './time.js'
 import { connectorVersion, runtimeVersion, supportedRange } from './about.js'
 import { BotPool, type BotHandle } from './bots.js'
@@ -1129,7 +1130,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (detail.length > 300) detail = `${detail.slice(0, 299)}…`
     const known: Record<number, string> = {
       401: 'the updater rejected the token — check `DSH_UPDATER_TOKEN` in the deployment .env',
-      409: 'another update or component job is already running — wait for it or cancel it',
+      404: 'the updater has no devtools endpoint — update the setup to 0.18.0 first',
+      409: 'another update, component or toolchain job is already running — wait for it or cancel it',
       422: detail,
       503: 'the updater is disabled or cannot read release tags — check `systemctl status dsh-updater.service`',
     }
@@ -4405,7 +4407,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   /** Resolve a short card target against the current screen. */
   const resolveCardTarget = (target: string): string | undefined => {
     if (target === 'home' || target === 'system' || target === 'sessions' || target === 'plugins'
-      || target === 'components' || target === 'updates' || target === 'settings' || target === 'help' || target === 'web') return target
+      || target === 'components' || target === 'updates' || target === 'settings' || target === 'help' || target === 'web' || target === 'devtools') return target
+    if (target === 'devtool:ios' || target === 'devtool:android') return target
     if (target.startsWith('plugin:')) {
       const key = target.slice('plugin:'.length)
       if (/^\d+$/.test(key)) {
@@ -4460,8 +4463,38 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   let componentOrder: string[] = []
   let updateSnapshot: UpdateSnapshot | undefined
   let updateChecking: Promise<UpdateSnapshot> | undefined
+  let devtoolsCache: DevtoolsStatus | undefined
+  let devtoolsCacheAt = 0
+  let devtoolsWatch: ReturnType<typeof setTimeout> | undefined
 
-  type CardPromptKind = 'workspace-new' | 'session-new' | 'session-rename' | 'plugin-add' | 'component-port' | 'timezone' | 'firewall-port'
+  const devtoolsJob = async (): Promise<DevtoolsJob | undefined> => {
+    if (updaterToken.length === 0) return undefined
+    try {
+      const response = await updaterFetch('/status')
+      if (!response.ok) return undefined
+      const body = await response.json() as { job?: DevtoolsJob }
+      return body.job?.kind === 'devtools' ? body.job : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  const loadDevtoolsStatus = async (force = false): Promise<DevtoolsStatus> => {
+    if (!force && devtoolsCache !== undefined && Date.now() - devtoolsCacheAt < 15_000) return devtoolsCache
+    const job = await devtoolsJob()
+    devtoolsCache = await readDevtoolsStatus({
+      requested: process.env.DSH_DEVTOOLS,
+      ...(job === undefined ? {} : { job }),
+    })
+    devtoolsCacheAt = Date.now()
+    return devtoolsCache
+  }
+
+  const devtoolsSummary = (status: DevtoolsStatus): string => status.tools
+    .map((tool) => `${tool.id} ${tool.installed ? '✓' : '○'}`)
+    .join(' · ')
+
+  type CardPromptKind = 'workspace-new' | 'session-new' | 'session-rename' | 'plugin-add' | 'component-port' | 'timezone' | 'firewall-port' | 'devtool-sdk'
   interface CardPrompt {
     chatId: number
     userId: number | undefined
@@ -4652,12 +4685,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (bindings.update !== undefined) {
       lines.push({ k: 'update', v: `${bindings.update.phase} → ${bindings.update.target}` })
     }
+    const devtools = await loadDevtoolsStatus()
     return {
       screen: 'system',
       title: 'System',
       version: connectorVersion(),
       back: 'home',
       lines,
+      rows: [{ title: 'Mobile toolchains', meta: devtoolsSummary(devtools), go: 'devtools' }],
       actions: [
         { label: 'Restart', act: 'restart', tone: 'bad' },
         { label: 'Restart now', act: 'system:restartnow', tone: 'bad' },
@@ -4838,6 +4873,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const cardView = async (target: string): Promise<CardView | undefined> => {
     if (target === 'home') return await homeCard()
     if (target === 'system') return systemCard()
+    if (target === 'devtools') return devtoolsScreen(await loadDevtoolsStatus(), await devtoolsJob())
+    if (target === 'devtool:ios' || target === 'devtool:android') {
+      const status = await loadDevtoolsStatus()
+      const tool = status.tools.find((entry) => `devtool:${entry.id}` === target)
+      if (tool === undefined) return devtoolsScreen(status, await devtoolsJob())
+      return devtoolDetail(tool, status, await devtoolsJob())
+    }
     if (target === 'sessions') return sessionsCard()
     if (target === 'plugins') return pluginsScreen()
     if (target === 'components') return componentsScreen()
@@ -4941,6 +4983,59 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const screen = bindings.panelMessage?.screen
     if (screen === undefined || !screen.startsWith('component:')) return undefined
     return componentCache?.find((component) => component.name === screen.slice('component:'.length))
+  }
+
+  const watchDevtools = (chatId: number, messageId: number): void => {
+    if (devtoolsWatch !== undefined) clearTimeout(devtoolsWatch)
+    const started = Date.now()
+    const tick = async (): Promise<void> => {
+      if (Date.now() - started > 3_600_000) return
+      if (bindings.panelMessage?.messageId !== messageId) return
+      const activeScreen = bindings.panelMessage?.screen
+      if (activeScreen === undefined || (activeScreen !== 'devtools' && !activeScreen.startsWith('devtool:'))) return
+      const job = await devtoolsJob()
+      if (job !== undefined && jobActive(job)) {
+        const shown = await editRichView(chatId, messageId, devtoolProgress(job))
+        if (!shown) return
+        devtoolsWatch = setTimeout(() => { void tick() }, 4000)
+        return
+      }
+      devtoolsCache = undefined
+      await editRichCard(chatId, messageId, 'devtools')
+    }
+    devtoolsWatch = setTimeout(() => { void tick() }, 1000)
+  }
+
+  const startDevtoolsJob = async (
+    chatId: number,
+    messageId: number,
+    body: Record<string, unknown>,
+    title: string,
+  ): Promise<void> => {
+    if (updaterToken.length === 0) {
+      await editRichView(chatId, messageId, noticeScreen(title, 'the updater is not configured (`DSH_UPDATER_TOKEN` is empty).', currentDevtool() === undefined ? 'devtools' : `devtool:${currentDevtool() ?? 'ios'}`))
+      return
+    }
+    try {
+      const response = await updaterFetch('/devtools', body)
+      if (!response.ok) {
+        await editRichView(chatId, messageId, noticeScreen(title, `the updater refused it: ${await updaterFailure(response)}`, currentDevtool() === undefined ? 'devtools' : `devtool:${currentDevtool() ?? 'ios'}`))
+        return
+      }
+      const payload = await response.json() as { job?: DevtoolsJob }
+      const job = payload.job ?? { action: String(body.action ?? 'job'), state: 'accepted' }
+      await editRichView(chatId, messageId, devtoolProgress(job))
+      watchDevtools(chatId, messageId)
+    } catch (error) {
+      await editRichView(chatId, messageId, noticeScreen(title, `cannot reach the updater: ${String(error)}`, currentDevtool() === undefined ? 'devtools' : `devtool:${currentDevtool() ?? 'ios'}`))
+    }
+  }
+
+  const currentDevtool = (): 'ios' | 'android' | undefined => {
+    const screen = bindings.panelMessage?.screen
+    if (screen === 'devtool:ios') return 'ios'
+    if (screen === 'devtool:android') return 'android'
+    return undefined
   }
 
   const startCardPrompt = async (
@@ -5064,6 +5159,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await editRichView(prompt.chatId, prompt.messageId, noticeScreen('Components', result, `component:${name}`))
       return true
     }
+    if (prompt.kind === 'devtool-sdk') {
+      if (!value.startsWith('/')) {
+        await editRichView(prompt.chatId, prompt.messageId, noticeScreen('iOS SDK', 'send an absolute path to Xcode.xip, Xcode.app or darwin.xtoolsdk.', 'devtool:ios'))
+        return true
+      }
+      await editRichView(prompt.chatId, prompt.messageId, noticeScreen('iOS SDK', 'validating the file and handing the job to the updater…', 'devtool:ios'))
+      await startDevtoolsJob(prompt.chatId, prompt.messageId, { action: 'sdk', path: value }, 'Install Darwin SDK')
+      return true
+    }
+
     if (prompt.kind === 'timezone') {
       try {
         new Intl.DateTimeFormat(undefined, { timeZone: value })
@@ -5423,6 +5528,92 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return
     }
 
+    if (action === 'devtools:refresh') {
+      await answer('…')
+      devtoolsCache = undefined
+      const target = screen === 'devtool:ios' || screen === 'devtool:android' ? screen : 'devtools'
+      await editRichCard(chatId, messageId, target)
+      return
+    }
+
+    if (action === 'devtools:cancel') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can cancel a toolchain job')
+      await answer('…')
+      try {
+        const response = await updaterFetch('/cancel', {})
+        await editRichView(chatId, messageId, noticeScreen('Mobile toolchains', response.status === 202 ? 'cancel requested; the updater will stop the process group.' : `the updater answered ${String(response.status)}.`, 'devtools'))
+      } catch (error) {
+        await editRichView(chatId, messageId, noticeScreen('Mobile toolchains', `cannot reach the updater: ${String(error)}`, 'devtools'))
+      }
+      return
+    }
+
+    if (action === 'devtool:install' || action === 'devtool:remove') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can change toolchains')
+      const toolId = currentDevtool()
+      if (toolId === undefined) return answer('stale card — open Mobile toolchains again')
+      const status = await loadDevtoolsStatus()
+      const tool = status.tools.find((entry) => entry.id === toolId)
+      if (tool === undefined) return answer('stale card — open Mobile toolchains again')
+      await answer('…')
+      await editRichView(chatId, messageId, devtoolConfirm(tool, action === 'devtool:install' ? 'install' : 'remove'))
+      return
+    }
+
+    if (action === 'devtool:install!' || action === 'devtool:remove!') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can change toolchains')
+      const toolId = currentDevtool()
+      if (toolId === undefined) return answer('stale card — open Mobile toolchains again')
+      await answer('…')
+      await startDevtoolsJob(chatId, messageId, {
+        action: action === 'devtool:install!' ? 'install' : 'remove',
+        tools: toolId,
+      }, action === 'devtool:install!' ? 'Install toolchain' : 'Remove toolchain')
+      return
+    }
+
+    if (action === 'devtool:sdk') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can install the iOS SDK')
+      await answer('…')
+      await startCardPrompt(
+        chatId, messageId, query.from?.id, 'devtool-sdk', undefined,
+        'Install Darwin SDK',
+        'Send the absolute path to Xcode.xip (or Xcode.app / darwin.xtoolsdk) on this host. Apple login is not required.',
+      )
+      return
+    }
+
+    if (action === 'devtool:auth-help') {
+      await answer('…')
+      await editRichView(chatId, messageId, devtoolAuthHelp())
+      return
+    }
+
+    if (action === 'devtool:logout') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can log out Apple')
+      await answer('…')
+      await editRichView(chatId, messageId, {
+        screen: 'devtool:ios',
+        title: 'Log out of Apple?',
+        version: '',
+        back: 'devtool:ios',
+        note: 'This removes the token from dsh home. Builds continue; device deploy needs a new login.',
+        actions: [
+          { label: 'Logout', act: 'devtool:logout!', tone: 'bad' },
+          { label: 'Cancel', act: 'back' },
+        ],
+        caption: 'control · mobile toolchains · logout',
+      })
+      return
+    }
+
+    if (action === 'devtool:logout!') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can log out Apple')
+      await answer('…')
+      await startDevtoolsJob(chatId, messageId, { action: 'logout' }, 'Apple logout')
+      return
+    }
+
     if (action === 'system:updates') {
       await answer('…')
       await editRichCard(chatId, messageId, 'updates')
@@ -5673,6 +5864,32 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * while update and plugin management delegate to the chat cards that carry
    * the confirmation and the rollback window.
    */
+  const panelDevtoolsPayload = (status: DevtoolsStatus): string => {
+    const toolMetaText = (tool: DevtoolsStatus['tools'][number]): string => {
+      if (!tool.installed) return tool.missing ?? 'not installed'
+      return [
+        ...tool.versions,
+        ...(tool.sdk === undefined ? [] : [`SDK ${tool.sdk}`]),
+        ...(tool.auth === undefined ? [] : [tool.auth]),
+      ].join(' · ')
+    }
+    const data: PanelDevtools = {
+      requested: status.requested,
+      tools: status.tools.map((tool) => ({
+        id: tool.id,
+        label: tool.label,
+        installed: tool.installed,
+        meta: toolMetaText(tool),
+      })),
+      ...(status.job === undefined ? {} : { job: {
+        ...(status.job.action === undefined ? {} : { action: status.job.action }),
+        ...(status.job.state === undefined ? {} : { state: status.job.state }),
+        ...(status.job.stage === undefined ? {} : { stage: status.job.stage }),
+      } }),
+    }
+    return panelDevtools(data)
+  }
+
   const handleWidgetQuery = async (query: TgWidgetQuery): Promise<void> => {
     const answer = async (data: string): Promise<void> => {
       await client.answerWidgetQuery(query.id, data).catch((error: unknown) => {
@@ -5692,6 +5909,32 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     const data = query.data ?? ''
     if (data.startsWith('a:')) logger.info(`dsh-telegram-connector: widget action ${data}`)
+
+    if (data === 'd') {
+      const status = await loadDevtoolsStatus(true)
+      return answer(panelDevtoolsPayload(status))
+    }
+
+    if (data === 'a:d:card') {
+      const chatId = query.chat?.id ?? bindings.controlChatId
+      if (chatId === undefined) return answer(panelError('no chat'))
+      await answer(panelOk('opening the chat card'))
+      await postCard(chatId, 'devtools')
+      return
+    }
+
+    if (data.startsWith('a:d:install:')) {
+      if (!isAdmin(query.from?.id)) return answer(panelError('only the admin can install toolchains'))
+      const tool = data.slice('a:d:install:'.length)
+      if (tool !== 'ios' && tool !== 'android') return answer(panelError('unknown toolchain'))
+      try {
+        const response = await updaterFetch('/devtools', { action: 'install', tools: tool })
+        if (!response.ok) return answer(panelError(await updaterFailure(response)))
+        return answer(panelOk('install started'))
+      } catch (error) {
+        return answer(panelError(`cannot reach the updater: ${String(error)}`))
+      }
+    }
 
     if (data.startsWith('n:')) {
       const target = data.slice(2)

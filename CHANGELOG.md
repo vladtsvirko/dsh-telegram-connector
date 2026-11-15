@@ -1,4 +1,20 @@
-# Changelog
+## 0.23.0
+
+- **Mobile toolchains in the control app.** System now has a *Mobile
+  toolchains* row with iOS and Android state: installed versions, Darwin SDK,
+  Apple login, disk free, and a requested-but-missing warning. iOS offers
+  Install SDK, login instructions, logout and remove; Android offers
+  install/repair, remove and the existing restart. All install/remove/SDK work
+  goes to the setup updater's new `/devtools` job; the rich card polls `/status`
+  and can cancel.
+- **Apple login is still host-only.** Telegram never asks for an Apple password
+  or 2FA; the card prints the host command. Without a token, builds work and
+  deploy commands refuse.
+- **HTML panel parity.** The legacy `/panel` System tab gains a *Mobile
+  toolchains* row that opens the full chat card; the widget document stays
+  inside its 4 KB compressed budget. Wired to the same payload as the rich card.
+- Removal and logout confirm first; install/remove jobs are admin-only.
+
 
 ## 0.22.0
 

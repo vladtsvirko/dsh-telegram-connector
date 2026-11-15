@@ -4,6 +4,7 @@
  * as an HTML widget when Telegram re-enables widgets.
  */
 import type { CardAction, CardLine, CardRow, CardTile, CardView } from './cards.js'
+import type { DevtoolsJob, DevtoolsStatus, DevtoolsTool } from './devtools.js'
 
 export interface PluginSummary {
   name: string
@@ -244,6 +245,141 @@ export function componentDetail(component: ComponentSummary, webUrl?: string): C
     note: component.description,
     actions,
     caption: `control · ${component.name}`,
+  }
+}
+
+const toolMeta = (tool: DevtoolsTool): string => {
+  if (!tool.installed) return tool.missing ?? 'not installed'
+  const facts = [...tool.versions]
+  if (tool.sdk !== undefined) facts.push(`SDK ${tool.sdk}`)
+  if (tool.auth !== undefined) facts.push(tool.auth)
+  return facts.join(' · ')
+}
+
+const jobNote = (job: DevtoolsJob | undefined): string | undefined => {
+  if (job === undefined) return undefined
+  const action = job.action ?? 'job'
+  if (job.state === 'done') return `${action} finished`
+  if (job.state === 'failed') return `${action} failed${job.error === undefined ? '' : `: ${job.error}`}`
+  if (job.state === 'cancelled') return `${action} cancelled`
+  return `${action} ${job.state ?? 'running'}${job.stage === undefined ? '' : ` · ${job.stage}`} — tap Refresh`
+}
+
+export function devtoolsScreen(status: DevtoolsStatus, job?: DevtoolsJob): CardView {
+  return {
+    screen: 'devtools',
+    title: 'Mobile toolchains',
+    version: '',
+    back: 'system',
+    lines: [
+      { k: 'requested', v: status.requested },
+      ...(status.diskFreeGb === undefined ? [] : [{ k: 'disk', v: `${String(status.diskFreeGb)} GB free` }]),
+    ],
+    rows: status.tools.map((tool) => ({
+      title: `${tool.installed ? '✓' : '○'} ${tool.label}`,
+      meta: toolMeta(tool),
+      go: `devtool:${tool.id}`,
+    })),
+    note: jobNote(job) ?? 'Optional host toolchains. Build without Apple login; deploy is opt-in.',
+    actions: [{ label: 'Refresh', act: 'devtools:refresh' }],
+    caption: 'control · mobile toolchains',
+  }
+}
+
+export function devtoolDetail(tool: DevtoolsTool, status: DevtoolsStatus, job?: DevtoolsJob): CardView {
+  const actions: CardAction[] = []
+  if (tool.id === 'ios') {
+    if (!tool.installed) {
+      actions.push({ label: 'Install iOS toolchain', act: 'devtool:install' })
+    } else {
+      actions.push({ label: 'Install SDK', act: 'devtool:sdk' })
+      actions.push({ label: 'Login instructions', act: 'devtool:auth-help' })
+      if (tool.auth?.startsWith('logged in') === true) actions.push({ label: 'Logout', act: 'devtool:logout', tone: 'bad' })
+      actions.push({ label: 'Remove', act: 'devtool:remove', tone: 'bad' })
+    }
+  } else if (!tool.installed) {
+    actions.push({ label: 'Install Android toolchain', act: 'devtool:install' })
+  } else {
+    actions.push({ label: 'Install / Repair', act: 'devtool:install' })
+    actions.push({ label: 'Remove', act: 'devtool:remove', tone: 'bad' })
+    actions.push({ label: 'Restart runtime', act: 'system:restartnow' })
+  }
+  actions.push({ label: 'Refresh', act: 'devtools:refresh' })
+  return {
+    screen: `devtool:${tool.id}`,
+    title: tool.label,
+    version: '',
+    back: 'devtools',
+    lines: [
+      { k: 'state', v: tool.installed ? 'installed' : 'missing' },
+      ...(tool.versions.length === 0 ? [] : [{ k: 'versions', v: tool.versions.join(' · ') }]),
+      ...(tool.sdk === undefined ? [] : [{ k: 'Darwin SDK', v: tool.sdk }]),
+      ...(tool.auth === undefined ? [] : [{ k: 'Apple login', v: tool.auth }]),
+      { k: 'requested', v: status.requested },
+      ...(status.diskFreeGb === undefined ? [] : [{ k: 'disk', v: `${String(status.diskFreeGb)} GB free` }]),
+    ],
+    note: jobNote(job) ?? (tool.id === 'ios'
+      ? 'Builds do not need an Apple login. Login only enables signing and device deploy.'
+      : 'No Android Studio or emulator; use the project Gradle wrapper.'),
+    actions,
+    caption: `control · mobile toolchains · ${tool.id}`,
+  }
+}
+
+export function devtoolConfirm(tool: DevtoolsTool, action: 'install' | 'remove'): CardView {
+  const remove = action === 'remove'
+  return {
+    screen: `devtool:${tool.id}`,
+    title: remove ? `Remove ${tool.label}?` : `${tool.installed ? 'Repair' : 'Install'} ${tool.label}?`,
+    version: '',
+    back: `devtool:${tool.id}`,
+    lines: [
+      { k: 'toolchain', v: tool.label },
+      { k: 'size', v: 'about 7 GB' },
+      ...(tool.id === 'ios' && !remove ? [{ k: 'note', v: 'Xcode.xip is a separate step; Apple login stays optional' }] : []),
+      ...(tool.id === 'android' && !remove ? [{ k: 'license', v: 'installing accepts the Android SDK license' }] : []),
+      ...(remove ? [{ k: 'keeps', v: 'apt packages, projects, Gradle cache and .env answers' }] : []),
+    ],
+    note: remove ? 'The toolchain tree and launchers are deleted. This cannot be undone from here.' : 'The updater runs this in the background; the card updates as it goes.',
+    actions: [
+      { label: remove ? 'Remove' : 'Start install', act: `devtool:${action}!`, tone: remove ? 'bad' : 'pri' },
+      { label: 'Cancel', act: 'back' },
+    ],
+    caption: `control · mobile toolchains · ${action}`,
+  }
+}
+
+export function devtoolProgress(job: DevtoolsJob): CardView {
+  const active = job.state !== undefined && !['done', 'failed', 'cancelled', 'rolled-back'].includes(job.state)
+  return {
+    screen: 'devtools',
+    title: 'Mobile toolchains',
+    version: '',
+    back: 'devtools',
+    lines: [
+      { k: 'action', v: job.action ?? 'job' },
+      { k: 'state', v: job.state ?? 'running' },
+      ...(job.stage === undefined ? [] : [{ k: 'stage', v: job.stage }]),
+      ...(job.exitCode === undefined ? [] : [{ k: 'exit', v: String(job.exitCode) }]),
+      ...(job.error === undefined ? [] : [{ k: 'error', v: job.error }]),
+    ],
+    note: active ? 'This can take several minutes; the card refreshes itself.' : 'Finished — Refresh for the new tree.',
+    actions: [
+      ...(active ? [{ label: 'Cancel job', act: 'devtools:cancel', tone: 'bad' as const }] : []),
+      { label: 'Refresh', act: 'devtools:refresh' },
+    ],
+    caption: 'control · mobile toolchains · job',
+  }
+}
+
+export function devtoolAuthHelp(): CardView {
+  return {
+    screen: 'devtool:ios',
+    title: 'Apple login',
+    version: '',
+    back: 'devtool:ios',
+    note: 'Login needs a terminal, Apple ID and 2FA, so it cannot run from Telegram.\n\nOn the host:\n  cd /srv/dsh && ./setup.sh devtools login\n\nAfter login, `xtool dev run` can deploy. `logout` removes the token. The agent can deploy too while the token is in dsh home.',
+    caption: 'control · mobile toolchains · login',
   }
 }
 

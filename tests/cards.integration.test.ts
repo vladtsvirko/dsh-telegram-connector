@@ -56,6 +56,33 @@ describe('the rich card app', () => {
     expect(html).not.toContain('More')
   }, 20_000)
 
+  it('opens Mobile toolchains from System', async () => {
+    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
+    active.push(harness)
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    const home = await harness.waitFor(() => harness.calls.find((call) => call.method === 'sendRichMessage'), 'the home card', 6000)
+    const messageId = home.messageId as number
+
+    harness.pushUpdate(rich(messageId, 'n:system'))
+    const system = await harness.waitFor(
+      () => harness.edited.find((call) => call.method === 'editMessageText' && markupOf(call).includes('Mobile toolchains')),
+      'the system card',
+      6000,
+    )
+    expect(markupOf(system)).toContain('Mobile toolchains')
+
+    harness.pushUpdate(rich(messageId, 'n:devtools'))
+    const tools = await harness.waitFor(
+      () => harness.edited.find((call) => call.method === 'editMessageText'
+        && htmlOf(call).includes('iOS') && htmlOf(call).includes('Android')),
+      'the toolchains card',
+      6000,
+    )
+    expect(htmlOf(tools)).toContain('iOS')
+    expect(htmlOf(tools)).toContain('Android')
+    expect(markupOf(tools)).toContain('devtool')
+  }, 20_000)
+
   it('edits the same card while navigating to a workspace and a session', async () => {
     const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
     active.push(harness)

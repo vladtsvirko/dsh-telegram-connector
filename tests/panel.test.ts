@@ -7,6 +7,7 @@ import {
   PANEL_MAX_WORKSPACES,
   panelCaption,
   panelComponents,
+  panelDevtools,
   panelError,
   panelOk,
   panelPlugins,
@@ -166,6 +167,21 @@ describe('the widget document', () => {
     expect(end).toBeGreaterThan(start)
     const script = html.slice(start + '<script>'.length, end)
     expect(() => new Function(script)).not.toThrow()
+  })
+
+  it('offers the mobile toolchains row and a compact payload', () => {
+    const html = renderPanelHtml(state())
+    expect(html).toContain('Mobile toolchains')
+    const payload = panelDevtools({
+      requested: 'ios,android',
+      tools: [
+        { id: 'ios', label: 'iOS', installed: true, meta: 'swift 6.4.2 · SDK 27.2 · logged out' },
+        { id: 'android', label: 'Android', installed: false, meta: 'requested but not installed' },
+      ],
+      job: { action: 'install', state: 'running', stage: 'downloading' },
+    })
+    expect(Buffer.byteLength(payload, 'utf8')).toBeLessThanOrEqual(PANEL_ANSWER_BYTES)
+    expect(JSON.parse(payload)).toMatchObject({ k: 'd', r: 'ios,android' })
   })
 
   it('stays inside the widget size limits', () => {

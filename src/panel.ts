@@ -188,6 +188,30 @@ export function panelPlugins(plugins: readonly PanelPlugin[], trial?: PanelTrial
 }
 
 /** A web link for the widget to open on a later tap; never stored in the HTML. */
+export interface PanelDevtools {
+  requested: string
+  tools: Array<{ id: string; label: string; installed: boolean; meta: string }>
+  job?: { action?: string; state?: string; stage?: string }
+}
+
+export function panelDevtools(data: PanelDevtools): string {
+  return JSON.stringify({
+    k: 'd',
+    r: clip(data.requested, 24),
+    t: data.tools.map((tool) => ({
+      i: tool.id,
+      l: clip(tool.label, 12),
+      o: tool.installed ? 1 : 0,
+      m: clip(tool.meta, 58),
+    })),
+    ...(data.job === undefined ? {} : { j: {
+      ...(data.job.action === undefined ? {} : { a: clip(data.job.action, 12) }),
+      ...(data.job.state === undefined ? {} : { s: clip(data.job.state, 16) }),
+      ...(data.job.stage === undefined ? {} : { g: clip(data.job.stage, 16) }),
+    } }),
+  })
+}
+
 export function panelWeb(url: string): string {
   return JSON.stringify({ k: 'u', u: url })
 }
@@ -418,12 +442,14 @@ export function renderPanelHtml(state: PanelState): string {
     list.appendChild(action('Update setup', function () {
       ask('a:upd', function (data) { footText(data.m || 'confirmation sent below'); });
     }));
-    list.appendChild(action('Help', function () {
-      ask('a:help', function (data) { footText(data.m || 'sent below'); });
-    }));
+    ask('d', function (d) {
+      if (d.k === 'd') list.appendChild(action('Mobile toolchains', function () {
+        ask('a:d:card', function (a) { footText(a.m || '…'); });
+      }));
+    });
     view.appendChild(list);
     tabsOn('system');
-    footText('changes confirm before they run');
+    footText('confirm');
   }
   function components() {
     clear(view);

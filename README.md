@@ -96,8 +96,9 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   messages with inline buttons and edited in place; the widget cards return
   automatically when Telegram allows them again. Sessions browses
   workspaces and topics, opens a topic directly, and edits a session's model
-  from the runtime's catalog; System shows the probes and restarts behind an
-  inline confirmation. `/panel` keeps the previous tabbed panel (update,
+  from the runtime's catalog; System shows the probes, restarts behind an
+  inline confirmation, and opens Mobile toolchains (iOS/Android state,
+  install/remove, Xcode SDK path, Apple login instructions and logout). `/panel` keeps the previous tabbed panel (update,
   plugins, components) until those move into cards. Deployment actions are
   admin-only, exactly like the typed commands. `/dashboard` in a group still
   claims an empty topic as the dashboard.
@@ -170,7 +171,7 @@ install without the setup.
 The connector is published to npm as an exact version:
 
 ```sh
-dsh plugin --profile web add dsh-telegram-connector@0.22.0
+dsh plugin --profile web add dsh-telegram-connector@0.23.0
 ```
 
 The registry tarball already contains the built `lib/`, so there is no
@@ -201,7 +202,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.22.0
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.23.0
 ```
 
 That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the
