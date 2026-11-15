@@ -3,10 +3,13 @@
  *
  * The mapping follows DSH's own containment hierarchy:
  *
- *   private chat with the bot   the control plane (workspaces, plugins, components)
- *   group                       one workspace
- *   topic inside that group     one session
- *   General topic               the workspace dashboard
+ *   private chat with the bot     the control plane (workspaces, plugins, components)
+ *   group                         one or more workspaces
+ *   topic inside that group       one session, owned by one workspace
+ *   General topic                 the group dashboard
+ *
+ * A group with more than one workspace prefixes every session topic with
+ * `[Workspace]`; the prefix is what routes an empty topic to its workspace.
  *
  * @module dsh-telegram-connector
  */
@@ -103,9 +106,9 @@ import {
   sessionFor,
   sessionKey,
   sessionsOfChat,
+  sessionsOfWorkspace,
   setSession,
-  workspaceByChat,
-  workspaceIdByChat,
+  workspacesOfChat,
   type Bindings,
   type SessionBinding,
   type WorkspaceBinding,
@@ -461,8 +464,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const file = bindingsPath(dshHome)
 
   const runtimes = new Map<string, TopicRuntime>()
-  /** Topic names seen at creation, applied to the session when its agent starts. */
-  const topicTitles = new Map<number, string>()
+  /** Topic names seen at creation/edit, keyed `${chatId}:${threadId}`. */
+  const topicTitles = new Map<string, string>()
   /** Prompts injected from Telegram, so their user/message event is not mirrored back. */
   const injected = new Map<string, number>()
   let bindings: Bindings = { version: 2, workspaces: {}, sessions: {} }
@@ -551,6 +554,27 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
     })
     return persistChain
+  }
+
+  const topicKey = (chatId: number, threadId: number): string => `${chatId}:${threadId}`
+
+  /** The last topic name we wrote or observed, including any workspace prefix. */
+  const topicTitleOf = (chatId: number, threadId: number): string | undefined =>
+    topicTitles.get(topicKey(chatId, threadId)) ?? bindings.topicTitles?.[topicKey(chatId, threadId)]
+
+  /** Remember a topic name; persisted because a bot cannot list topics later. */
+  const rememberTopicTitle = async (chatId: number, threadId: number, title: string): Promise<void> => {
+    const key = topicKey(chatId, threadId)
+    if (bindings.topicTitles?.[key] === title && topicTitles.get(key) === title) return
+    topicTitles.set(key, title)
+    bindings.topicTitles = { ...(bindings.topicTitles ?? {}), [key]: title }
+    await persist()
+  }
+
+  const forgetTopicTitle = (chatId: number, threadId: number): void => {
+    const key = topicKey(chatId, threadId)
+    topicTitles.delete(key)
+    if (bindings.topicTitles !== undefined) delete bindings.topicTitles[key]
   }
 
   // --- reactions -----------------------------------------------------------
@@ -827,8 +851,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const suppressed = suppressedLost.get(item.chatId) ?? 0
     suppressedLost.set(item.chatId, 0)
 
-    const workspace = Object.values(bindings.workspaces).find((candidate) => candidate.chatId === item.chatId)
     const session = item.threadId === 0 ? undefined : sessionFor(bindings, item.chatId, item.threadId)
+    const workspace = (session === undefined ? undefined : bindings.workspaces[session.workspaceId])
+      ?? Object.values(bindings.workspaces).find((candidate) => candidate.chatId === item.chatId)
     const where = workspace === undefined
       ? `chat \`${item.chatId}\``
       : `**${workspace.title}**${session?.title === undefined ? '' : ` · topic “${session.title}”`}`
@@ -892,9 +917,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const queueStatusTimers = new Map<number, NodeJS.Timeout>()
 
   const updateQueueStatus = async (chatId: number, depth: number): Promise<void> => {
-    const workspace = Object.values(bindings.workspaces).find((candidate) => candidate.chatId === chatId)
-    if (workspace === undefined) return
-    const threadId = workspace.systemThreadId ?? 0
+    const entries = workspacesOfChat(bindings, chatId)
+    if (entries.length === 0) return
+    const threadId = entries.length > 1 ? 0 : (entries[0]![1].systemThreadId ?? 0)
     const existing = queueStatusMessages.get(chatId)
     if (depth === 0) {
       if (existing === undefined) return
@@ -4077,7 +4102,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     runtime.dispose = () => handle.dispose()
 
     // the topic has a name; the fresh session has only a generated one
-    const wanted = runtime.session.title ?? topicTitles.get(runtime.threadId)
+    const cached = topicTitleOf(runtime.chatId, runtime.threadId)
+    const wanted = runtime.session.title
+      ?? (cached === undefined ? undefined : bareTopicTitle(runtime.chatId, runtime.session.workspaceId, cached))
     if (wanted !== undefined && wanted.trim().length > 0) {
       runtime.session.title = wanted.trim()
       renameSession(runtime, wanted.trim())
@@ -4125,14 +4152,167 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       ? '(bot username unknown)'
       : `https://t.me/${botUsername}?startgroup=${STARTGROUP_PREFIX}${workspaceId}`
 
+  /** Every workspace attached to this group, in title order. */
+  const groupWorkspaceEntries = (chatId: number): Array<[string, WorkspaceBinding]> =>
+    workspacesOfChat(bindings, chatId)
+
+  /** A group with one workspace keeps bare topic names; two or more get prefixes. */
+  const groupIsMulti = (chatId: number): boolean => groupWorkspaceEntries(chatId).length > 1
+
   /**
-   * Drop every session binding in a group. The runtime goes first: disposing it
+   * The `[Workspace]` prefix. The label is clipped so the prefix cannot eat the
+   * whole 128-character Telegram limit; routing uses the same label, so a long
+   * workspace title still resolves deterministically.
+   */
+  const topicPrefixLabel = (workspace: WorkspaceBinding): string =>
+    truncate(workspace.title, 72).replace(/[[\]]/g, ' ').trim() || workspace.title.slice(0, 8)
+  const topicPrefixOf = (workspace: WorkspaceBinding): string => `[${topicPrefixLabel(workspace)}]`
+
+  /** Split `[Workspace] title` against the workspaces actually attached here. */
+  const splitWorkspaceTopic = (
+    chatId: number,
+    rawTitle: string,
+  ): { workspaceId: string; workspace: WorkspaceBinding; title: string } | undefined => {
+    const text = rawTitle.trimStart()
+    const entries = [...groupWorkspaceEntries(chatId)]
+      .sort((left, right) => topicPrefixOf(right[1]).length - topicPrefixOf(left[1]).length)
+    for (const [workspaceId, workspace] of entries) {
+      const prefix = topicPrefixOf(workspace)
+      if (text.slice(0, prefix.length).toLowerCase() !== prefix.toLowerCase()) continue
+      return {
+        workspaceId,
+        workspace,
+        title: text.slice(prefix.length).replace(/^\s+/, ''),
+      }
+    }
+    return undefined
+  }
+
+  /** The full topic name for a session title; prefixes only in a shared group. */
+  const formatTopicTitle = (chatId: number, workspace: WorkspaceBinding, title: string): string => {
+    const bare = truncate(title, 120) || 'session'
+    if (!groupIsMulti(chatId)) return bare
+    const prefix = `${topicPrefixOf(workspace)} `
+    const room = Math.max(8, 128 - prefix.length)
+    const body = bare.length <= room ? bare : `${bare.slice(0, room - 1)}…`
+    return `${prefix}${body}`
+  }
+
+  /** Strip any known workspace prefix from a title the user typed. */
+  const bareTopicTitle = (chatId: number, _workspaceId: string, rawTitle: string): string => {
+    const split = splitWorkspaceTopic(chatId, rawTitle)
+    return split === undefined ? rawTitle.trim() : split.title.trim()
+  }
+
+  const expectedTopicTitle = (chatId: number, bound: SessionBinding): string | undefined => {
+    const workspace = bindings.workspaces[bound.workspaceId]
+    if (workspace === undefined) return undefined
+    const bare = bound.title ?? `session ${bound.sessionId.slice(-6)}`
+    return formatTopicTitle(chatId, workspace, bare)
+  }
+
+  /** A topic name that does not collide with another session in this group. */
+  const uniqueTopicTitle = (
+    chatId: number,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+    rawTitle: string,
+    exceptThreadId?: number,
+  ): string => {
+    const bare = bareTopicTitle(chatId, workspaceId, rawTitle) || 'session'
+    const taken = new Set(sessionsOfChat(bindings, chatId)
+      .filter(([threadId]) => threadId !== exceptThreadId)
+      .map(([, bound]) => {
+        const candidate = bindings.workspaces[bound.workspaceId]
+        const value = bound.topicTitle
+          ?? (candidate === undefined ? (bound.title ?? '') : formatTopicTitle(chatId, candidate, bound.title ?? ''))
+        return value.toLowerCase()
+      }))
+    for (let n = 1; n < 100; n += 1) {
+      const candidate = formatTopicTitle(chatId, workspace, n === 1 ? bare : `${bare} (${n})`)
+      if (!taken.has(candidate.toLowerCase())) return candidate
+    }
+    return formatTopicTitle(chatId, workspace, bare)
+  }
+
+  /** The workspace a topic belongs to: its binding first, then its name prefix. */
+  const resolveTopicWorkspace = (
+    chatId: number,
+    threadId: number,
+  ): [string, WorkspaceBinding] | undefined => {
+    const bound = sessionFor(bindings, chatId, threadId)
+    if (bound !== undefined) {
+      const workspace = bindings.workspaces[bound.workspaceId]
+      if (workspace !== undefined && workspace.chatId === chatId) return [bound.workspaceId, workspace]
+      return undefined
+    }
+    const entries = groupWorkspaceEntries(chatId)
+    if (entries.length === 1) return entries[0]
+    if (entries.length === 0) return undefined
+    const title = topicTitleOf(chatId, threadId)
+    if (title === undefined) return undefined
+    const split = splitWorkspaceTopic(chatId, title)
+    return split === undefined ? undefined : [split.workspaceId, split.workspace]
+  }
+
+  /** General in a multi-workspace group, the workspace's own dashboard otherwise. */
+  const groupDashboardThread = (chatId: number): number => {
+    const entries = groupWorkspaceEntries(chatId)
+    if (entries.length > 1) return 0
+    return entries[0]?.[1].systemThreadId ?? 0
+  }
+
+  /**
+   * Rename every bound topic to the shape its group currently requires. Called
+   * when the workspace count crosses one, so a second workspace adds prefixes
+   * to existing topics and removing it takes them away again.
+   */
+  const retitleGroupTopics = async (chatId: number): Promise<void> => {
+    const entries = groupWorkspaceEntries(chatId)
+    const multi = entries.length > 1
+    let changed = false
+    let first = true
+    for (const [threadId, bound] of sessionsOfChat(bindings, chatId)) {
+      const workspace = bindings.workspaces[bound.workspaceId]
+      if (workspace === undefined || workspace.chatId !== chatId) continue
+      const bare = bareTopicTitle(chatId, bound.workspaceId, bound.title ?? `session ${bound.sessionId.slice(-6)}`)
+      const expected = formatTopicTitle(chatId, workspace, bare)
+      const already = multi
+        ? bound.topicTitle === expected
+        : (bound.topicTitle === bare || (bound.topicTitle === undefined && bound.title === bare))
+      if (already) continue
+      if (!first) await pause(1100)
+      first = false
+      await botPool.takeMain(chatId)
+      await renameTopic(chatId, threadId, expected)
+      bound.title = bare
+      bound.topicTitle = expected
+      setSession(bindings, chatId, threadId, bound)
+      topicTitles.set(topicKey(chatId, threadId), expected)
+      bindings.topicTitles = { ...(bindings.topicTitles ?? {}), [topicKey(chatId, threadId)]: expected }
+      changed = true
+    }
+    if (changed) await persist()
+  }
+
+  /**
+   * Drop session bindings in a group. The runtime goes first: disposing it
    * flushes a half-finished answer, and flushing into a topic that was just
    * deleted loses it.
+   *
+   * `workspaceId` narrows the operation to one workspace's topics; without it
+   * every workspace in the group is detached.
    */
-  const clearChatSessions = async (chatId: number, options: { deleteTopics?: boolean } = {}): Promise<void> => {
-    clearStagedForChat(chatId)
-    for (const [threadId, bound] of sessionsOfChat(bindings, chatId)) {
+  const clearChatSessions = async (
+    chatId: number,
+    options: { deleteTopics?: boolean; workspaceId?: string } = {},
+  ): Promise<void> => {
+    const rows = options.workspaceId === undefined
+      ? sessionsOfChat(bindings, chatId)
+      : sessionsOfWorkspace(bindings, chatId, options.workspaceId)
+    if (options.workspaceId === undefined) clearStagedForChat(chatId)
+    for (const [threadId, bound] of rows) {
+      if (options.workspaceId !== undefined) clearStagedForTopic(chatId, threadId)
       const runtime = runtimes.get(runtimeKey(chatId, threadId))
       if (runtime !== undefined) {
         await disposeRuntime(runtime)
@@ -4141,19 +4321,17 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (options.deleteTopics !== false) await deleteTopic(chatId, threadId)
       forgetProcessCard(bound.sessionId)
       removeSession(bindings, chatId, threadId)
+      forgetTopicTitle(chatId, threadId)
     }
   }
 
   /**
-   * Attach a group to a workspace.
-   *
-   * Idempotent on purpose: this runs from a chat link a user can tap twice, and
-   * it used to delete every topic in the group on the second tap. A group that
-   * already hosts another workspace is refused, not seized — the other
-   * workspace's owner has to `/unbind` it first.
+   * Attach a workspace to a group. A group may host several workspaces; each
+   * topic then carries its workspace's prefix. Idempotent: tapping the link
+   * twice must not touch topics.
    */
   const bindGroup = async (message: TgMessage, workspaceId: string): Promise<void> => {
-    // Attaching a group decides which workspace everything in it can reach, and
+    // Attaching a workspace decides what everything in the group can reach, and
     // a group message can come from any member. Same rule as the other
     // deployment-wide commands.
     if (!requireAdmin(message)) return
@@ -4162,41 +4340,73 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, `unknown workspace \`${workspaceId}\` — see /workspaces in the bot chat`)
     }
     const chatId = message.chat.id
-    if (workspace.chatId === chatId) {
-      return postDashboardCard(chatId, 0, 'group', dashboardText(workspaceId, workspace))
+    const attached = groupWorkspaceEntries(chatId)
+    if (workspace.chatId === chatId && attached.some(([id]) => id === workspaceId)) {
+      return postDashboardCard(
+        chatId,
+        0,
+        'group',
+        attached.length > 1 ? groupDashboardText(chatId) : dashboardText(workspaceId, workspace),
+      )
     }
-    const existingOwner = workspaceIdByChat(bindings, chatId)
-    if (existingOwner !== undefined && existingOwner !== workspaceId) {
+    const collision = attached.find(([id, candidate]) =>
+      id !== workspaceId && candidate.title.toLowerCase() === workspace.title.toLowerCase())
+    if (collision !== undefined) {
       return reply(
         message,
-        [
-          `this group already hosts workspace \`${existingOwner}\`.`,
-          'Nothing was changed. To hand this group over, run `/unbind` here first, then tap the link again.',
-        ].join('\n'),
+        `this group already hosts **${collision[1].title}**; workspace names must differ to make the topic prefix unambiguous.`,
       )
     }
 
-    // a workspace lives in exactly one group
+    // A workspace still lives in exactly one group; attaching it elsewhere
+    // moves it and leaves the other workspaces in its old group alone.
     const previousChat = workspace.chatId
-    // the group being linked is fresh to this workspace: drop whatever a
-    // previous install left in it
-    await clearChatSessions(chatId)
-    workspace.chatId = chatId
-    bindings.workspaces[workspaceId] = workspace
-    await groupTitle(chatId, workspace.title)
-    // the old group keeps no bindings: its topics reply "not attached", but the
-    // conversation history stays where it is instead of being deleted
     if (previousChat !== 0 && previousChat !== chatId) {
-      await clearChatSessions(previousChat, { deleteTopics: false })
+      await clearChatSessions(previousChat, { deleteTopics: false, workspaceId })
       await sendTo(previousChat, 0, `this group no longer hosts **${workspace.title}** — the workspace moved.`)
       logger.info(`dsh-telegram-connector: workspace ${workspaceId} moved group ${previousChat} → ${chatId}`)
     }
+
+    // Drop only this workspace's leftovers in the new group; other workspaces'
+    // topics are not ours to delete.
+    await clearChatSessions(chatId, { workspaceId })
+    workspace.chatId = chatId
+    bindings.workspaces[workspaceId] = workspace
+    // The first workspace names the group; with several, the group keeps the
+    // name the humans gave it (renaming it to one workspace would be wrong).
+    if (attached.length === 0) await groupTitle(chatId, workspace.title)
     await persist()
-    await postDashboardCard(chatId, 0, 'group', dashboardText(workspaceId, workspace))
+    if (attached.length === 1) await retitleGroupTopics(chatId)
+    await postDashboardCard(
+      chatId,
+      0,
+      'group',
+      groupWorkspaceEntries(chatId).length > 1 ? groupDashboardText(chatId) : dashboardText(workspaceId, workspace),
+    )
+  }
+
+  /** Detach one workspace from a group without touching its siblings. */
+  const unbindWorkspace = async (
+    message: TgMessage,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+  ): Promise<string> => {
+    const topics = sessionsOfWorkspace(bindings, message.chat.id, workspaceId).length
+    await clearChatSessions(message.chat.id, { workspaceId })
+    delete bindings.workspaces[workspaceId]
+    await persist()
+    if (groupWorkspaceEntries(message.chat.id).length === 1) await retitleGroupTopics(message.chat.id)
+    const remaining = groupWorkspaceEntries(message.chat.id).length
+    return [
+      `detached **${workspace.title}** — ${String(topics)} topic(s) deleted with its bindings.`,
+      remaining === 0
+        ? 'this group is no longer attached to a workspace; the workspace and its sessions stay in DSH.'
+        : `this group still hosts ${String(remaining)} other workspace(s).`,
+    ].join('\n')
   }
 
   const dashboardText = (workspaceId: string, workspace: WorkspaceBinding): string => {
-    const sessions = sessionsOfChat(bindings, workspace.chatId)
+    const sessions = sessionsOfWorkspace(bindings, workspace.chatId, workspaceId)
     const rows = sessions.length === 0
       ? '_no sessions yet_'
       : sessions
@@ -4218,7 +4428,30 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       '',
       rows,
       '',
+      groupIsMulti(workspace.chatId)
+        ? `_several workspaces share this group: name topics \`${topicPrefixOf(workspace)} title\`._`
+        : '',
       '`/new [title]` start a session · `/sessions` refresh · `/status` · `/unbind`\nUse the buttons below for the common actions.',
+    ].filter((line) => line.length > 0).join('\n')
+  }
+
+  /** General's card when the group hosts more than one workspace. */
+  const groupDashboardText = (chatId: number): string => {
+    const entries = groupWorkspaceEntries(chatId)
+    const rows = entries.map(([workspaceId, workspace]) => {
+      const sessions = sessionsOfWorkspace(bindings, chatId, workspaceId)
+      const live = sessions.filter(([threadId]) => runtimes.get(runtimeKey(chatId, threadId))?.agent !== undefined).length
+      return `· **${workspace.title}** — \`${workspaceId.slice(0, 8)}…\` · ${String(sessions.length)} session(s) · ${String(live)} live`
+    })
+    return [
+      `**group dashboard** — ${String(entries.length)} workspaces`,
+      '',
+      ...rows,
+      '',
+      'Each session topic is named `[Workspace] title`.',
+      `\`/new ${entries[0]?.[1].title ?? 'workspace'} [title]\` start a session in one workspace`,
+      '`/sync [workspace]` adopt every session · `/workspaces` list · `/unbind <workspace>` detach',
+      '`/archived` · `/help` · use the buttons below.',
     ].join('\n')
   }
 
@@ -4226,12 +4459,30 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * session list (that is `/sessions`, and it would otherwise be the same
    * text twice). */
   const workspaceStatusText = (workspaceId: string, workspace: WorkspaceBinding): string => {
-    const rows = sessionsOfChat(bindings, workspace.chatId)
+    const rows = sessionsOfWorkspace(bindings, workspace.chatId, workspaceId)
     const live = rows.filter(([threadId]) => runtimes.get(runtimeKey(workspace.chatId, threadId))?.agent !== undefined).length
     return [
       `**${workspace.title}** — status`,
       `workspace: \`${workspaceId}\``,
       `sessions: ${rows.length} (${live} live)`,
+      `model route: \`${config.provider ?? 'default'}/${config.model ?? 'default'}\``,
+      `Telegram polling: ${stopped ? 'stopped' : 'running'}`,
+      `timezone: \`${timeZone()}\``,
+    ].join('\n')
+  }
+
+  const groupStatusText = (chatId: number): string => {
+    const entries = groupWorkspaceEntries(chatId)
+    const lines = entries.map(([workspaceId, workspace]) => {
+      const rows = sessionsOfWorkspace(bindings, chatId, workspaceId)
+      const live = rows.filter(([threadId]) => runtimes.get(runtimeKey(chatId, threadId))?.agent !== undefined).length
+      return `· **${workspace.title}** — ${String(rows.length)} session(s), ${String(live)} live · \`${workspaceId.slice(0, 8)}…\``
+    })
+    const total = entries.reduce((sum, [workspaceId]) => sum + sessionsOfWorkspace(bindings, chatId, workspaceId).length, 0)
+    return [
+      '**group** — status',
+      `workspaces: ${String(entries.length)} · sessions: ${String(total)}`,
+      ...lines,
       `model route: \`${config.provider ?? 'default'}/${config.model ?? 'default'}\``,
       `Telegram polling: ${stopped ? 'stopped' : 'running'}`,
       `timezone: \`${timeZone()}\``,
@@ -4275,14 +4526,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const panelState = (): PanelState => {
     const entries = Object.entries(bindings.workspaces)
       .sort((left, right) => left[1].title.localeCompare(right[1].title, undefined, { sensitivity: 'base' }))
-    const count = (workspace: { chatId: number }): { sessions: number; live: number } => {
+    const count = (workspaceId: string, workspace: { chatId: number }): { sessions: number; live: number } => {
       if (workspace.chatId === 0) return { sessions: 0, live: 0 }
-      const sessions = sessionsOfChat(bindings, workspace.chatId)
+      const sessions = sessionsOfWorkspace(bindings, workspace.chatId, workspaceId)
       const live = sessions.filter(([threadId]) => runtimes.get(runtimeKey(workspace.chatId, threadId))?.agent !== undefined).length
       return { sessions: sessions.length, live }
     }
     const workspaces = entries.slice(0, PANEL_MAX_WORKSPACES).map(([workspaceId, workspace]) => {
-      const totals = count(workspace)
+      const totals = count(workspaceId, workspace)
       return {
         id: workspaceId.slice(0, 8),
         title: workspace.title,
@@ -4293,8 +4544,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     })
     let sessions = 0
     let live = 0
-    for (const [, workspace] of entries) {
-      const totals = count(workspace)
+    for (const [workspaceId, workspace] of entries) {
+      const totals = count(workspaceId, workspace)
       sessions += totals.sessions
       live += totals.live
     }
@@ -4391,7 +4642,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const sortedSessions = (workspaceId: string): Array<[number, SessionBinding]> => {
     const workspace = bindings.workspaces[workspaceId]
     if (workspace === undefined || workspace.chatId === 0) return []
-    return sessionsOfChat(bindings, workspace.chatId)
+    return sessionsOfWorkspace(bindings, workspace.chatId, workspaceId)
       .sort((left, right) => (left[1].title ?? '').localeCompare(right[1].title ?? ''))
   }
 
@@ -4706,8 +4957,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   const sessionsCard = (): CardView => {
     const entries = sortedWorkspaces()
-    const rows = entries.map(([, workspace], index) => {
-      const sessions = workspace.chatId === 0 ? [] : sessionsOfChat(bindings, workspace.chatId)
+    const rows = entries.map(([workspaceId, workspace], index) => {
+      const sessions = workspace.chatId === 0 ? [] : sessionsOfWorkspace(bindings, workspace.chatId, workspaceId)
       const live = sessions.filter(([threadId]) => runtimes.get(runtimeKey(workspace.chatId, threadId))?.agent !== undefined).length
       return {
         title: workspace.title,
@@ -4761,7 +5012,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const sessionCard = async (workspaceId: string, sessionId: string): Promise<CardView | undefined> => {
     const workspace = bindings.workspaces[workspaceId]
     if (workspace === undefined || workspace.chatId === 0) return undefined
-    const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === sessionId)
+    const found = sessionsOfWorkspace(bindings, workspace.chatId, workspaceId).find(([, bound]) => bound.sessionId === sessionId)
     if (found === undefined) return undefined
     const [threadId, bound] = found
     const live = runtimes.get(runtimeKey(workspace.chatId, threadId))?.agent !== undefined
@@ -5083,7 +5334,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (context === undefined) return undefined
     const workspace = bindings.workspaces[context.workspaceId]
     if (workspace === undefined || workspace.chatId === 0) return undefined
-    const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === context.sessionId)
+    const found = sessionsOfWorkspace(bindings, workspace.chatId, context.workspaceId).find(([, bound]) => bound.sessionId === context.sessionId)
     if (found === undefined) return undefined
     return { ...context, threadId: found[0] }
   }
@@ -5128,7 +5379,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const workspaceId = prompt.context
       const workspace = workspaceId === undefined ? undefined : bindings.workspaces[workspaceId]
       if (workspace !== undefined && workspace.chatId !== 0) {
-        await runGroupCommand(workspace.chatId, 0, `/new ${value}`, prompt.userId)
+        const shared = groupWorkspaceEntries(workspace.chatId).length > 1
+        await runGroupCommand(
+          workspace.chatId,
+          0,
+          shared ? `/new ${workspaceId} ${value}` : `/new ${value}`,
+          prompt.userId,
+        )
         await finish(`workspace:${workspaceId}`)
       } else {
         await editRichView(prompt.chatId, prompt.messageId, noticeScreen('New session', 'this workspace has no group yet — link one first.', 'sessions'))
@@ -5138,9 +5395,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (prompt.kind === 'session-rename') {
       const [workspaceId, sessionId] = (prompt.context ?? '').split(':')
       const workspace = workspaceId === undefined ? undefined : bindings.workspaces[workspaceId]
-      const found = workspace === undefined || sessionId === undefined || workspace.chatId === 0
+      const found = workspace === undefined || workspaceId === undefined || sessionId === undefined || workspace.chatId === 0
         ? undefined
-        : sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === sessionId)
+        : sessionsOfWorkspace(bindings, workspace.chatId, workspaceId).find(([, bound]) => bound.sessionId === sessionId)
       if (workspace !== undefined && workspace.chatId !== 0 && sessionId !== undefined && found !== undefined) {
         await runGroupCommand(workspace.chatId, found[0], `/rename ${sessionId} ${value}`, prompt.userId)
         await finish(`session:${workspaceId}:${sessionId}`)
@@ -5316,7 +5573,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         await answer('unknown workspace')
         return
       }
-      const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === context.sessionId)
+      const found = sessionsOfWorkspace(bindings, workspace.chatId, context.workspaceId).find(([, bound]) => bound.sessionId === context.sessionId)
       if (found === undefined) {
         await answer('unknown session')
         return
@@ -5364,7 +5621,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         await answer('unknown workspace')
         return
       }
-      const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === context.sessionId)
+      const found = sessionsOfWorkspace(bindings, workspace.chatId, context.workspaceId).find(([, bound]) => bound.sessionId === context.sessionId)
       if (found === undefined) {
         await answer('unknown session')
         return
@@ -5814,7 +6071,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           title: 'Remove workspace?',
           version: '',
           back: `workspace:${workspaceId}`,
-          note: `${workspace.title} is unregistered and its group is cleared. The group and its sessions stay.`,
+          note: `${workspace.title} is unregistered and its session topics are deleted. Other workspaces in the group stay.`,
           actions: [
             { label: 'Remove', act: 'workspace:remove!', tone: 'bad' },
             { label: 'Cancel', act: 'back' },
@@ -5985,7 +6242,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (context === undefined) return answer(panelError('open a session card first'))
       const workspace = bindings.workspaces[context.workspaceId]
       if (workspace === undefined || workspace.chatId === 0) return answer(panelError('no such workspace'))
-      const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === context.sessionId)
+      const found = sessionsOfWorkspace(bindings, workspace.chatId, context.workspaceId).find(([, bound]) => bound.sessionId === context.sessionId)
       if (found === undefined) return answer(panelError('no such session'))
       const catalog = await modelCatalog()
       if (catalog.length > 0 && !catalog.some((entry) => entry.provider === provider && entry.model === model)) {
@@ -6011,7 +6268,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       const workspace = bindings.workspaces[context.workspaceId]
       if (workspace === undefined || workspace.chatId === 0) return answer(panelError('no such workspace'))
-      const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === context.sessionId)
+      const found = sessionsOfWorkspace(bindings, workspace.chatId, context.workspaceId).find(([, bound]) => bound.sessionId === context.sessionId)
       if (found === undefined) return answer(panelError('no such session'))
       removeSession(bindings, workspace.chatId, found[0])
       await persist()
@@ -6253,7 +6510,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         return reply(message, 'no workspaces yet — `/workspace new <title>`')
       }
       const rows = entries.map(([id, workspace]) => {
-        const group = workspace.chatId === 0 ? `no group — ${linkFor(id)}` : `group \`${workspace.chatId}\``
+        const shared = workspace.chatId === 0 ? 0 : groupWorkspaceEntries(workspace.chatId).length
+        const group = workspace.chatId === 0
+          ? `no group — ${linkFor(id)}`
+          : `group \`${workspace.chatId}\`${shared > 1 ? ` · ${String(shared)} workspaces share it` : ''}`
         return `· **${workspace.title}** — \`${id.slice(0, 8)}…\`\n   ${group}`
       })
       return reply(message, `**workspaces**\n${rows.join('\n')}`)
@@ -6315,7 +6575,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         const found = findWorkspace(bindings, name)
         if (found === undefined) return reply(message, `no workspace matching \`${name}\``)
         const [workspaceId, workspace] = found
-        const rows = workspace.chatId === 0 ? [] : sessionsOfChat(bindings, workspace.chatId)
+        const rows = workspace.chatId === 0 ? [] : sessionsOfWorkspace(bindings, workspace.chatId, workspaceId)
         const preview = rows
           .slice(0, 8)
           .map(([threadId, bound]) => `· ${bound.title ?? `topic ${String(threadId)}`}`)
@@ -6329,10 +6589,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
               logger.warn(`dsh-telegram-connector: workspace delete failed: ${String(error)}`)
             })
           }
-          const topics = current.chatId === 0 ? 0 : sessionsOfChat(bindings, current.chatId).length
-          if (current.chatId !== 0) await clearChatSessions(current.chatId)
+          const topics = current.chatId === 0 ? 0 : sessionsOfWorkspace(bindings, current.chatId, workspaceId).length
+          if (current.chatId !== 0) await clearChatSessions(current.chatId, { workspaceId })
           delete bindings.workspaces[workspaceId]
           await persist()
+          if (current.chatId !== 0 && groupWorkspaceEntries(current.chatId).length === 1) {
+            await retitleGroupTopics(current.chatId)
+          }
           return topics === 0
             ? 'removed from DSH. The directory, its sessions and the group are untouched.'
             : `removed from DSH, and ${String(topics)} topic(s) in its group were deleted. The directory, its sessions and the group are untouched.`
@@ -6395,6 +6658,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   const boundedPrefix = (id: string, prefix: string): boolean => id === prefix || id.startsWith(prefix)
 
+  /** The same lookup, restricted to one workspace's topics. */
+  const findSessionInWorkspace = (
+    chatId: number,
+    workspaceId: string,
+    needle: string,
+  ): [number, SessionBinding] | undefined => {
+    const query = needle.trim().toLowerCase()
+    if (query.length === 0) return undefined
+    const rows = sessionsOfWorkspace(bindings, chatId, workspaceId)
+    return rows.find(([, bound]) => boundedPrefix(bound.sessionId, query))
+      ?? rows.find(([, bound]) => (bound.title ?? '').toLowerCase() === query)
+      ?? rows.find(([, bound]) => (bound.title ?? '').toLowerCase().includes(query))
+  }
+
   /** `/dangerous cleanup [confirm]`: drop known topics that are not sessions. */
   const runCleanup = async (
     message: TgMessage,
@@ -6406,7 +6683,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     if (rest[0] !== 'cleanup') {
       return reply(message, '`/dangerous cleanup` — delete every known topic in this group that is not a session')
     }
-    const seen = workspace.seenThreads ?? []
+    const seen = [...new Set(groupWorkspaceEntries(message.chat.id)
+      .flatMap(([, candidate]) => candidate.seenThreads ?? []))]
     const unbound = seen.filter(
       (id) => id !== 0 && id !== threadId && sessionFor(bindings, message.chat.id, id) === undefined,
     )
@@ -6418,12 +6696,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       for (const id of unbound) {
         await deleteTopic(message.chat.id, id)
         removeSession(bindings, message.chat.id, id)
+        forgetTopicTitle(message.chat.id, id)
         runtimes.delete(runtimeKey(message.chat.id, id))
         deleted += 1
       }
-      const current = bindings.workspaces[workspaceId] ?? workspace
-      current.seenThreads = (current.seenThreads ?? seen).filter((id) => !unbound.includes(id))
-      bindings.workspaces[workspaceId] = current
+      for (const [id, candidate] of groupWorkspaceEntries(message.chat.id)) {
+        candidate.seenThreads = (candidate.seenThreads ?? []).filter((thread) => !unbound.includes(thread))
+        bindings.workspaces[id] = candidate
+      }
       await persist()
       return `deleted ${String(deleted)} unbound topic(s)`
     }
@@ -6546,7 +6826,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (command === '/status' && argument.length > 0) {
-      const found = findSessionOf(message.chat.id, argument)
+      const found = findSessionInWorkspace(message.chat.id, workspaceId, argument)
       if (found === undefined) {
         return reply(message, `no session matching \`${argument}\` — \`/sessions\` lists them.`)
       }
@@ -6570,12 +6850,23 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       return reply(message, dashboardText(workspaceId, workspace))
     }
 
+    if (command === '/workspaces') {
+      const rows = groupWorkspaceEntries(message.chat.id).map(([id, candidate]) => {
+        const sessions = sessionsOfWorkspace(bindings, message.chat.id, id)
+        return `· **${candidate.title}** — \`${id.slice(0, 8)}…\` · ${String(sessions.length)} session(s) · prefix \`${topicPrefixOf(candidate)}\``
+      })
+      return reply(message, `**workspaces in this group**\n${rows.join('\n')}`)
+    }
+
     if (command === '/status') {
       return reply(message, workspaceStatusText(workspaceId, workspace))
     }
 
     if (command === '/dashboard') {
       if (!requireAdmin(message)) return
+      if (groupWorkspaceEntries(message.chat.id).length > 1) {
+        return reply(message, 'with several workspaces in this group the dashboard is General; workspace topics are for sessions only.')
+      }
       const thread = message.message_thread_id ?? 0
       if (sessionFor(bindings, message.chat.id, thread) !== undefined) {
         return reply(message, 'this topic is a session — pick a topic without a conversation to be the dashboard')
@@ -6591,7 +6882,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (archived.length === 0) return reply(message, 'nothing archived')
       const shown = sessionsOfChat(bindings, message.chat.id).map(([, session]) => session.sessionId)
       const rows = archived.map((id) => `\`${id}\`${shown.includes(id) ? ' (has topic)' : ''}`)
-      return reply(message, `**archived sessions**\n${rows.join('\n')}\n\n\`/unarchive <id>\` restores one and gives it a topic`)
+      const hint = groupWorkspaceEntries(message.chat.id).length > 1 ? '/unarchive <workspace> <id>' : '/unarchive <id>'
+      return reply(message, `**archived sessions**\n${rows.join('\n')}\n\n\`${hint}\` restores one and gives it a topic`)
     }
 
     if (command === '/unarchive') {
@@ -6600,6 +6892,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (registry === undefined) return reply(message, 'this composition exposes no workspace registry')
 
       if (needle === 'all') {
+        if (groupWorkspaceEntries(message.chat.id).length > 1) {
+          return reply(message, 'with several workspaces, restore one at a time: `/unarchive <workspace> <id>`. The runtime does not record which workspace an archived session belonged to.')
+        }
         const ids = (registry.archivedSessionIds ?? []).map(String)
         if (ids.length === 0) return reply(message, 'nothing is archived')
         const known = new Set(sessionsOfChat(bindings, message.chat.id).map(([, bound]) => bound.sessionId))
@@ -6612,12 +6907,14 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
             continue
           }
           if (known.has(id)) continue
-          const base = (await sessionTitleOf(id)) ?? `session ${id.slice(-6)}`
-          const title = uniqueTitle(message.chat.id, base.slice(0, 120))
+          const bare = truncate((await sessionTitleOf(id)) ?? `session ${id.slice(-6)}`, 120)
+          const title = uniqueTopicTitle(message.chat.id, workspaceId, workspace, bare)
           const topic = await createTopic(message.chat.id, title)
           if (topic.threadId === undefined) break
           const threadId = topic.threadId
-          setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId: id, title })
+          setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId: id, title: bare, topicTitle: title })
+          topicTitles.set(topicKey(message.chat.id, threadId), title)
+          bindings.topicTitles = { ...(bindings.topicTitles ?? {}), [topicKey(message.chat.id, threadId)]: title }
           await persist()
           await backfill(message.chat.id, threadId, id)
           restored += 1
@@ -6642,12 +6939,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         await backfill(message.chat.id, threadId, match)
         return reply(message, `restored \`${match}\` in its existing topic ${threadId}`)
       }
-      const topic = await createTopic(message.chat.id, `session ${match.slice(-6)}`)
+      const bare = `session ${match.slice(-6)}`
+      const title = uniqueTopicTitle(message.chat.id, workspaceId, workspace, bare)
+      const topic = await createTopic(message.chat.id, title)
       if (topic.threadId === undefined) {
         return reply(message, `restored, but the topic could not be created: ${topic.error ?? 'unknown error'}`)
       }
       const threadId = topic.threadId
-      setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId: match, title: `session ${match.slice(-6)}` })
+      setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId: match, title: bare, topicTitle: title })
+      topicTitles.set(topicKey(message.chat.id, threadId), title)
+      bindings.topicTitles = { ...(bindings.topicTitles ?? {}), [topicKey(message.chat.id, threadId)]: title }
       await persist()
       await backfill(message.chat.id, threadId, match)
       return reply(message, `restored \`${match}\` as topic ${threadId} — name it from this topic with \`/rename ${match} <title>\``)
@@ -6655,7 +6956,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     if (command === '/rename' || command === '/forget' || command === '/model' || command === '/close' || command === '/reopen') {
       const [needle, ...tail] = rest
-      const found = needle === undefined ? undefined : findSessionOf(message.chat.id, needle)
+      const found = needle === undefined ? undefined : findSessionInWorkspace(message.chat.id, workspaceId, needle)
       if (found === undefined) {
         return reply(message, `no session matching \`${needle ?? ''}\` — \`/sync\` lists what exists, or use an id prefix / topic title`)
       }
@@ -6665,12 +6966,16 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (command === '/rename') {
         const title = tail.join(' ').trim()
         if (title.length === 0) return reply(message, 'usage: `/rename <session> <new title>`')
-        bound.title = title.slice(0, 120)
+        const bare = bareTopicTitle(message.chat.id, bound.workspaceId, title)
+        const next = uniqueTopicTitle(message.chat.id, workspaceId, workspace, bare, threadId)
+        bound.title = bare
+        bound.topicTitle = next
         setSession(bindings, message.chat.id, threadId, bound)
         await persist()
-        if (runtime !== undefined) renameSession(runtime, bound.title)
-        await renameTopic(message.chat.id, threadId, bound.title)
-        return reply(message, `renamed to **${bound.title}**`)
+        if (runtime !== undefined) renameSession(runtime, bare)
+        await renameTopic(message.chat.id, threadId, next)
+        await rememberTopicTitle(message.chat.id, threadId, next)
+        return reply(message, `renamed to **${bare}**`)
       }
 
       if (command === '/forget') {
@@ -6730,200 +7035,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (command === '/sync') {
-      const now = Date.now()
-      for (const [chatId, startedAt] of syncingChats) {
-        if (now - startedAt > 10 * 60_000) syncingChats.delete(chatId)
-      }
-      if (syncingChats.has(message.chat.id)) {
-        return reply(message, 'a sync is already running in this group — wait for its status card.')
-      }
-      syncingChats.set(message.chat.id, now)
-      const registry = registryOf(ctx)
-      if (registry === undefined) {
-        syncingChats.delete(message.chat.id)
-        return reply(message, 'this composition exposes no workspace registry')
-      }
-      let target = registry.get(workspaceId)
-      if (target === undefined) {
-        // The bindings survived but the runtime's registry did not. Recreate it
-        // from the bound path instead of refusing: that disagreement is exactly
-        // what makes the web UI list no workspace while Telegram lists topics.
-        const healed = await healRegistry()
-        target = registry.get(workspaceId)
-        if (target === undefined) {
-          syncingChats.delete(message.chat.id)
-          return reply(message, [
-            `the runtime does not know workspace \`${workspaceId}\` (path \`${workspace.path}\`).`,
-            healed.rebinds > 0 ? 'Its registration was restored under a new id — run `/sync` again.' : '',
-            healed.rebinds === 0 ? 'Check that the path exists and is a directory, then run `/sync` again.' : '',
-          ].filter((line) => line.length > 0).join('\n'))
-        }
-      }
-
-      const archived = new Set((registry?.archivedSessionIds ?? []).map(String))
-      const total = target.sessionIds.length
-      let card: TgMessage | undefined
-      let lastEdit = 0
-      let lastText = ''
-      const renderSync = async (text: string, force = false): Promise<void> => {
-        if (card === undefined) return
-        if (!force && (text === lastText || Date.now() - lastEdit < 1200)) return
-        lastText = text
-        lastEdit = Date.now()
-        await botPool.waitEdit(botPool.main, message.chat.id)
-        await client.editMessageText(message.chat.id, card.message_id, toTelegramHtml(text), {
-          parseMode: 'HTML',
-        }).catch(() => undefined)
-      }
-      const finishSync = async (text: string): Promise<void> => {
-        syncingChats.delete(message.chat.id)
-        if (card === undefined) {
-          await reply(message, text)
-          return
-        }
-        await renderSync(text, true)
-      }
-      try {
-        await botPool.takeMain(message.chat.id)
-        card = await client.sendMessage(
-          message.chat.id,
-          toTelegramHtml(`**sync** — checking ${String(total)} session(s)…`),
-          {
-            parseMode: 'HTML',
-            ...(message.message_thread_id === undefined ? {} : { threadId: message.message_thread_id }),
-          },
-        )
-      } catch (error) {
-        logger.warn(`dsh-telegram-connector: cannot post the sync card: ${String(error)}`)
-      }
-      let created = 0
-      let skipped = 0
-      let purged = 0
-      let kept = 0
-      let live = 0
-      /** Sessions that still need a topic, kept in the workspace's manual order. */
-      const pending: string[] = []
-
-      // One notice per sync, in the dashboard chat, the first time the pacing is
-      // long enough to explain (or Telegram answers 429).
-      let noticeSent = false
-      const rateLimitNotice = async (): Promise<void> => {
-        if (noticeSent) return
-        noticeSent = true
-        await renderSync('⏳ **sync** — waiting for Telegram\'s rate limit; it continues automatically.', true)
-      }
-
-      const paused = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-
-      // Probes and topic creation must come from the main bot; they share its
-      // general send budget through the pool.
-      const paced = async <T>(call: () => Promise<T>): Promise<T> => {
-        for (let attempt = 0; attempt < 6; attempt += 1) {
-          if (botPool.mainWait(message.chat.id) >= 1500) await rateLimitNotice()
-          await botPool.takeMain(message.chat.id)
-          try {
-            return await call()
-          } catch (error) {
-            if (error instanceof TelegramApiError && error.errorCode === 429) {
-              await rateLimitNotice()
-              botPool.block(botPool.main, message.chat.id, Math.max(1, error.retryAfter ?? 5) * 1000)
-              continue
-            }
-            throw error
-          }
-        }
-        throw new Error('Telegram did not lift the rate limit')
-      }
-
-      // Decide per session, not from a pre-computed "already known" set: a binding
-      // is only worth keeping if its thread still answers, and that has to be
-      // checked in the same pass that would otherwise skip the session.
-      let checked = 0
-      for (const raw of target.sessionIds) {
-        checked += 1
-        const sessionId = String(raw)
-        if (archived.has(sessionId)) {
-          skipped += 1
-          await renderSync(`**sync** · ${String(checked)}/${String(total)} checked · adopted ${String(created)} · archived ${String(skipped)}`)
-          continue
-        }
-
-        const existing = sessionsOfChat(bindings, message.chat.id).find(([, bound]) => bound.sessionId === sessionId)
-        if (existing !== undefined) {
-          const [threadId] = existing
-          let alive = true
-          let gone = false
-          try {
-            const probe = await paced(() => client.sendMessage(message.chat.id, '.', { threadId }))
-            await deleteMessage(message.chat.id, probe.message_id).catch(() => undefined)
-          } catch (error) {
-            alive = false
-            // Only a definite "this thread does not exist" is allowed to drop a
-            // binding. A rate limit, a 5xx or a network blip would otherwise
-            // unbind a healthy topic and mint a duplicate one next to it.
-            gone = isTopicGone(error)
-          }
-          if (alive) {
-            if (agents.get(SessionId(sessionId)) !== undefined) live += 1
-            await renderSync(`**sync** · ${String(checked)}/${String(total)} checked · adopted ${String(created)} · kept ${String(kept)}`)
-            continue
-          }
-          if (!gone) {
-            kept += 1
-            continue
-          }
-          const runtime = runtimes.get(runtimeKey(message.chat.id, threadId))
-          if (runtime !== undefined) {
-            await disposeRuntime(runtime)
-            runtimes.delete(runtimeKey(message.chat.id, threadId))
-          }
-          removeSession(bindings, message.chat.id, threadId)
-          purged += 1
-          await persist()
-        }
-
-        pending.push(sessionId)
-      }
-
-      // Telegram lists topics newest first, so creating them in workspace order
-      // would leave the group reading backwards. Create the last session first:
-      // after the last backfill the group reads top-to-bottom like the UI, whose
-      // sessionIds are in manual order. (Telegram orders the list by recency, so
-      // this is a snapshot, not a setting.)
-      let provisional = 0
-      for (const sessionId of pending.reverse()) {
-        await renderSync(`**sync** — creating topics for ${String(pending.length)} session(s) · adopted ${String(created)}`)
-        const stored = await sessionTitleOf(sessionId)
-        if (stored === undefined) provisional += 1
-        const base = stored ?? `session ${sessionId.slice(-6)}`
-        const title = uniqueTitle(message.chat.id, base.slice(0, 120))
-        let topic: TopicCreation | undefined
-        try {
-          topic = await paced(() => createTopic(message.chat.id, title, true))
-        } catch (error) {
-          return finishSync(
-            `sync stopped while waiting for Telegram: ${error instanceof Error ? error.message : String(error)}`,
-          )
-        }
-        if (topic?.threadId === undefined) break
-        const threadId = topic.threadId
-        setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId, title })
-        await persist()
-        await backfill(message.chat.id, threadId, sessionId)
-        created += 1
-        if (agents.get(SessionId(sessionId)) !== undefined) live += 1
-      }
-
-      return finishSync(
-        [
-          `**sync** — adopted ${String(created)}; ${String(skipped)} archived skipped; ${String(purged)} dead binding(s) replaced.`,
-          kept > 0 ? `${String(kept)} topic(s) could not be probed (rate limit or network) — kept as they are.` : '',
-          live > 0 ? `${String(live)} are open in a web UI: their topics mirror that tab, and Telegram prompts are refused until it closes.` : '',
-          provisional > 0 ? `${String(provisional)} had no title: name them with \`/rename <session> <title>\`.` : '',
-        ]
-          .filter((line) => line.length > 0)
-          .join('\n'),
-      )
+      return syncTopics(message, [[workspaceId, workspace]])
     }
 
     if (command === '/dangerous') {
@@ -6932,50 +7044,21 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (command === '/new') {
-      const sessionId = String(SessionId(randomUUID()))
-      const title = argument.length > 0 ? argument : `session ${sessionId.slice(-6)}`
-      const topic = await createTopic(message.chat.id, title)
-      if (topic.threadId === undefined) {
-        return reply(
-          message,
-          [
-            'could not create the session topic.',
-            topic.error === undefined ? '' : `Telegram: ${topic.error}`,
-            'Check that the bot is an admin with `can_manage_topics` in this group, then try `/new` again.',
-          ].filter((line) => line.length > 0).join('\n\n'),
-        )
-      }
-      const threadId = topic.threadId
-      setSession(bindings, message.chat.id, threadId, { workspaceId, sessionId, title })
-      await persist()
-      await sendTo(message.chat.id, threadId, `session \`${sessionId}\` ready — send a message to begin.`)
-      return reply(message, `started **${title}** (topic ${threadId})`)
+      const entries = groupWorkspaceEntries(message.chat.id)
+      const parsed = entries.length > 1 ? workspaceFromArgument(message.chat.id, argument) : undefined
+      return startSessionInWorkspace(
+        message,
+        parsed?.workspaceId ?? workspaceId,
+        parsed?.workspace ?? workspace,
+        parsed?.rest ?? argument,
+      )
     }
 
     if (command === '/unbind') {
-      if (!requireAdmin(message)) return
-      const rows = sessionsOfChat(bindings, message.chat.id)
-      const unbind = async (): Promise<string> => {
-        const topics = sessionsOfChat(bindings, message.chat.id).length
-        await clearChatSessions(message.chat.id)
-        delete bindings.workspaces[workspaceId]
-        await persist()
-        return `detached. \`${String(topics)}\` topic(s) deleted with their bindings; the workspace still exists in DSH, and the group is yours to keep or delete.`
-      }
-      if (rest[0] === 'confirm') return reply(message, await unbind())
-      return askConfirm(
-        message,
-        [
-          `**detach ${workspace.title} from this group?**`,
-          '',
-          rows.length === 0
-            ? 'no session topics are attached.'
-            : `${String(rows.length)} session topic(s) and their history will be deleted with their bindings.`,
-          'the workspace and its sessions stay in DSH; the group stays yours.',
-        ].join('\n'),
-        rows.length === 0 ? 'Detach group' : `Detach and delete ${String(rows.length)} topic(s)`,
-        unbind,
-      )
+      // A workspace-scoped dashboard usually means "this workspace"; General in
+      // a shared group has no single one and gets the normal listing.
+      const scoped = rest.length === 0 || (rest.length === 1 && rest[0] === 'confirm')
+      return unbindCommand(message, workspaceId, workspace, scoped ? [workspaceId, ...rest] : rest)
     }
 
     if (command === '/plugins' || command === '/plugin') {
@@ -6988,15 +7071,523 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return reply(message, 'this is the workspace dashboard — `/new` to start a session, or open one of the topics.')
   }
 
-  /** Make a topic title unique within its group: "x", "x (2)", "x (3)" … */
-  const uniqueTitle = (chatId: number, base: string): string => {
-    const taken = new Set(sessionsOfChat(bindings, chatId).map(([, bound]) => (bound.title ?? '').toLowerCase()))
-    if (!taken.has(base.toLowerCase())) return base
-    for (let n = 2; n < 100; n += 1) {
-      const candidate = `${base} (${n})`
-      if (!taken.has(candidate.toLowerCase())) return candidate
+  /**
+   * Adopt every session in the requested workspaces as a topic. `targets`
+   * defaults to every workspace attached to the group; the dashboard passes
+   * one workspace when it is workspace-scoped.
+   */
+  const syncTopics = async (
+    message: TgMessage,
+    requested?: Array<[string, WorkspaceBinding]>,
+  ): Promise<void> => {
+    const chatId = message.chat.id
+    const now = Date.now()
+    for (const [runningChat, startedAt] of syncingChats) {
+      if (now - startedAt > 10 * 60_000) syncingChats.delete(runningChat)
     }
-    return base
+    if (syncingChats.has(chatId)) {
+      return reply(message, 'a sync is already running in this group — wait for its status card.')
+    }
+    syncingChats.set(chatId, now)
+    const registry = registryOf(ctx)
+    if (registry === undefined) {
+      syncingChats.delete(chatId)
+      return reply(message, 'this composition exposes no workspace registry')
+    }
+
+    const initial = requested ?? groupWorkspaceEntries(chatId)
+    if (initial.length === 0) {
+      syncingChats.delete(chatId)
+      return reply(message, 'this group is not attached to a workspace.\n`/bind <workspace id or title>` first.')
+    }
+    let entries = initial
+    const missing = entries.filter(([workspaceId]) => registry.get(workspaceId) === undefined)
+    let healNote = ''
+    if (missing.length > 0) {
+      // The bindings survived but the runtime's registry did not. Recreate it
+      // from the bound path instead of refusing: that disagreement is exactly
+      // what makes the web UI list no workspace while Telegram lists topics.
+      const healed = await healRegistry()
+      const byPath = new Map(groupWorkspaceEntries(chatId).map(([workspaceId, workspace]) => [workspace.path, [workspaceId, workspace] as [string, WorkspaceBinding]]))
+      entries = entries.map(([workspaceId, workspace]) => byPath.get(workspace.path) ?? [workspaceId, workspace])
+      if (healed.rebinds > 0) healNote = 'registration restored under a new id; run `/sync` again if a workspace is still missing.'
+    }
+    const targets = entries
+      .map(([workspaceId, workspace]) => ({ workspaceId, workspace, target: registry.get(workspaceId) }))
+      .filter((entry): entry is { workspaceId: string; workspace: WorkspaceBinding; target: NonNullable<ReturnType<WorkspaceRegistry['get']>> } => entry.target !== undefined)
+    if (targets.length === 0) {
+      syncingChats.delete(chatId)
+      return reply(message, [
+        `the runtime does not know ${entries.map(([, workspace]) => `\`${workspace.title}\``).join(', ')}.`,
+        healNote,
+        'Check that the paths exist and are directories, then run `/sync` again.',
+      ].filter((line) => line.length > 0).join('\n'))
+    }
+
+    const archived = new Set((registry.archivedSessionIds ?? []).map(String))
+    const total = targets.reduce((sum, entry) => sum + entry.target.sessionIds.length, 0)
+    let card: TgMessage | undefined
+    let lastEdit = 0
+    let lastText = ''
+    const renderSync = async (text: string, force = false): Promise<void> => {
+      if (card === undefined) return
+      if (!force && (text === lastText || Date.now() - lastEdit < 1200)) return
+      lastText = text
+      lastEdit = Date.now()
+      await botPool.waitEdit(botPool.main, chatId)
+      await client.editMessageText(chatId, card.message_id, toTelegramHtml(text), {
+        parseMode: 'HTML',
+      }).catch(() => undefined)
+    }
+    const finishSync = async (text: string): Promise<void> => {
+      syncingChats.delete(chatId)
+      if (card === undefined) {
+        await reply(message, text)
+        return
+      }
+      await renderSync(text, true)
+    }
+    try {
+      await botPool.takeMain(chatId)
+      card = await client.sendMessage(
+        chatId,
+        toTelegramHtml(`**sync** — checking ${String(total)} session(s) in ${String(targets.length)} workspace(s)…`),
+        {
+          parseMode: 'HTML',
+          ...(message.message_thread_id === undefined ? {} : { threadId: message.message_thread_id }),
+        },
+      )
+    } catch (error) {
+      logger.warn(`dsh-telegram-connector: cannot post the sync card: ${String(error)}`)
+    }
+    let created = 0
+    let skipped = 0
+    let purged = 0
+    let kept = 0
+    let live = 0
+    let retitled = 0
+    /** Sessions that still need a topic, in workspace manual order. */
+    const pending: Array<{ workspaceId: string; workspace: WorkspaceBinding; sessionId: string }> = []
+
+    // One notice per sync, in the dashboard chat, the first time the pacing is
+    // long enough to explain (or Telegram answers 429).
+    let noticeSent = false
+    const rateLimitNotice = async (): Promise<void> => {
+      if (noticeSent) return
+      noticeSent = true
+      await renderSync('⏳ **sync** — waiting for Telegram\'s rate limit; it continues automatically.', true)
+    }
+
+    // Probes and topic creation must come from the main bot; they share its
+    // general send budget through the pool.
+    const paced = async <T>(call: () => Promise<T>): Promise<T> => {
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        if (botPool.mainWait(chatId) >= 1500) await rateLimitNotice()
+        await botPool.takeMain(chatId)
+        try {
+          return await call()
+        } catch (error) {
+          if (error instanceof TelegramApiError && error.errorCode === 429) {
+            await rateLimitNotice()
+            botPool.block(botPool.main, chatId, Math.max(1, error.retryAfter ?? 5) * 1000)
+            continue
+          }
+          throw error
+        }
+      }
+      throw new Error('Telegram did not lift the rate limit')
+    }
+
+    // Decide per session, not from a pre-computed "already known" set: a binding
+    // is only worth keeping if its thread still answers, and that has to be
+    // checked in the same pass that would otherwise skip the session.
+    let checked = 0
+    for (const { workspaceId, workspace, target } of targets) {
+      for (const raw of target.sessionIds) {
+        checked += 1
+        const sessionId = String(raw)
+        if (archived.has(sessionId)) {
+          skipped += 1
+          await renderSync(`**sync** · ${String(checked)}/${String(total)} checked · adopted ${String(created)} · archived ${String(skipped)}`)
+          continue
+        }
+
+        const existing = sessionsOfWorkspace(bindings, chatId, workspaceId).find(([, bound]) => bound.sessionId === sessionId)
+        if (existing !== undefined) {
+          const [threadId, bound] = existing
+          let alive = true
+          let gone = false
+          try {
+            const probe = await paced(() => client.sendMessage(chatId, '.', { threadId }))
+            await deleteMessage(chatId, probe.message_id).catch(() => undefined)
+          } catch (error) {
+            alive = false
+            // Only a definite "this thread does not exist" is allowed to drop a
+            // binding. A rate limit, a 5xx or a network blip would otherwise
+            // unbind a healthy topic and mint a duplicate one next to it.
+            gone = isTopicGone(error)
+          }
+          if (alive) {
+            const expected = uniqueTopicTitle(chatId, workspaceId, workspace, bound.title ?? `session ${sessionId.slice(-6)}`, threadId)
+            if (bound.topicTitle !== expected) {
+              await paced(() => client.editForumTopic(chatId, threadId, truncate(expected, 128)))
+              bound.topicTitle = expected
+              setSession(bindings, chatId, threadId, bound)
+              topicTitles.set(topicKey(chatId, threadId), expected)
+              bindings.topicTitles = { ...(bindings.topicTitles ?? {}), [topicKey(chatId, threadId)]: expected }
+              await persist()
+              retitled += 1
+            }
+            if (agents.get(SessionId(sessionId)) !== undefined) live += 1
+            await renderSync(`**sync** · ${String(checked)}/${String(total)} checked · adopted ${String(created)} · kept ${String(kept)}`)
+            continue
+          }
+          if (!gone) {
+            kept += 1
+            continue
+          }
+          const runtime = runtimes.get(runtimeKey(chatId, threadId))
+          if (runtime !== undefined) {
+            await disposeRuntime(runtime)
+            runtimes.delete(runtimeKey(chatId, threadId))
+          }
+          removeSession(bindings, chatId, threadId)
+          forgetTopicTitle(chatId, threadId)
+          purged += 1
+          await persist()
+        }
+
+        pending.push({ workspaceId, workspace, sessionId })
+      }
+    }
+
+    // Telegram lists topics newest first, so creating them in workspace order
+    // would leave the group reading backwards. Create the last session first:
+    // after the last backfill the group reads top-to-bottom like the UI, whose
+    // sessionIds are in manual order. (Telegram orders the list by recency, so
+    // this is a snapshot, not a setting.)
+    let provisional = 0
+    for (const { workspaceId, workspace, sessionId } of pending.reverse()) {
+      await renderSync(`**sync** — creating topics for ${String(pending.length)} session(s) · adopted ${String(created)}`)
+      const stored = await sessionTitleOf(sessionId)
+      if (stored === undefined) provisional += 1
+      const bare = truncate(stored ?? `session ${sessionId.slice(-6)}`, 120)
+      const title = uniqueTopicTitle(chatId, workspaceId, workspace, bare)
+      let topic: TopicCreation | undefined
+      try {
+        topic = await paced(() => createTopic(chatId, title, true))
+      } catch (error) {
+        return finishSync(
+          `sync stopped while waiting for Telegram: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+      if (topic?.threadId === undefined) break
+      const threadId = topic.threadId
+      setSession(bindings, chatId, threadId, { workspaceId, sessionId, title: bare, topicTitle: title })
+      topicTitles.set(topicKey(chatId, threadId), title)
+      bindings.topicTitles = { ...(bindings.topicTitles ?? {}), [topicKey(chatId, threadId)]: title }
+      await persist()
+      await backfill(chatId, threadId, sessionId)
+      created += 1
+      if (agents.get(SessionId(sessionId)) !== undefined) live += 1
+    }
+
+    return finishSync(
+      [
+        `**sync** — adopted ${String(created)} across ${String(targets.length)} workspace(s); ${String(skipped)} archived skipped; ${String(purged)} dead binding(s) replaced.`,
+        entries.length > targets.length
+          ? `${String(entries.length - targets.length)} attached workspace(s) are missing from the runtime; their sessions were not synced.`
+          : '',
+        retitled > 0 ? `${String(retitled)} topic(s) renamed to the workspace prefix.` : '',
+        kept > 0 ? `${String(kept)} topic(s) could not be probed (rate limit or network) — kept as they are.` : '',
+        live > 0 ? `${String(live)} are open in a web UI: their topics mirror that tab, and Telegram prompts are refused until it closes.` : '',
+        provisional > 0 ? `${String(provisional)} had no title: name them with \`/rename <session> <title>\`.` : '',
+        healNote,
+      ]
+        .filter((line) => line.length > 0)
+        .join('\n'),
+    )
+  }
+
+  /** General's command surface when a group hosts more than one workspace. */
+  const handleGroupDashboard = async (message: TgMessage): Promise<void> => {
+    const chatId = message.chat.id
+    const entries = groupWorkspaceEntries(chatId)
+    const [command, ...rest] = (message.text ?? '').trim().split(/\s+/)
+    const argument = rest.join(' ').trim()
+
+    if (command === '/help' || command === '/start') {
+      return showHelp(message, command, rest, 'dashboard')
+    }
+    if (hasHelpFlag(rest)) {
+      return reply(message, lookupText([command ?? '', ...stripHelpFlag(rest)].join(' '), 'dashboard') ?? indexText('dashboard'))
+    }
+
+    if (command === '/workspaces') {
+      const rows = entries.map(([workspaceId, workspace]) => {
+        const sessions = sessionsOfWorkspace(bindings, chatId, workspaceId)
+        return `· **${workspace.title}** — \`${workspaceId.slice(0, 8)}…\` · ${String(sessions.length)} session(s)\n   prefix: \`${topicPrefixOf(workspace)}\``
+      })
+      return reply(message, `**workspaces in this group**\n${rows.join('\n')}\n\n\`/unbind <workspace>\` detaches one; \`/bind <workspace>\` adds another.`)
+    }
+
+    if (command === '/sessions') {
+      return reply(message, groupDashboardText(chatId))
+    }
+
+    if (command === '/status' && argument.length === 0) {
+      return reply(message, groupStatusText(chatId))
+    }
+
+    if (command === '/status') {
+      const found = findSessionOf(chatId, rest[0] ?? '')
+      const workspace = found === undefined ? undefined : bindings.workspaces[found[1].workspaceId]
+      if (found !== undefined && workspace !== undefined) {
+        return handleDashboard(message, found[1].workspaceId, workspace)
+      }
+      return reply(message, `no session matching \`${rest[0] ?? ''}\` — \`/sessions\` lists them.`)
+    }
+
+    if (command === '/dashboard') {
+      if (!requireAdmin(message)) return
+      if ((message.message_thread_id ?? 0) !== 0) {
+        return reply(message, 'with several workspaces in this group the dashboard is General.')
+      }
+      return postDashboardCard(chatId, 0, 'group', groupDashboardText(chatId))
+    }
+
+    if (command === '/archived') {
+      const archived = (registryOf(ctx)?.archivedSessionIds ?? []).map(String)
+      if (archived.length === 0) return reply(message, 'nothing archived')
+      const shown = sessionsOfChat(bindings, chatId).map(([, session]) => session.sessionId)
+      const rows = archived.map((id) => `\`${id}\`${shown.includes(id) ? ' (has topic)' : ''}`)
+      const hint = groupWorkspaceEntries(message.chat.id).length > 1 ? '/unarchive <workspace> <id>' : '/unarchive <id>'
+      return reply(message, `**archived sessions**\n${rows.join('\n')}\n\n\`${hint}\` restores one and gives it a topic`)
+    }
+
+    if (command === '/unarchive') {
+      const words = rest.filter((word) => word.length > 0)
+      const first = words[0] ?? ''
+      if (first === 'all') {
+        if (entries.length === 1) return handleDashboard(message, entries[0]![0], entries[0]![1])
+        return reply(message, 'with several workspaces, restore one at a time: `/unarchive <workspace> <id>`. The runtime does not record which workspace an archived session belonged to.')
+      }
+      const existing = sessionsOfChat(bindings, chatId).find(([, bound]) => bound.sessionId === first || (first.length > 0 && bound.sessionId.startsWith(first)))
+      if (existing !== undefined) {
+        const workspace = bindings.workspaces[existing[1].workspaceId]
+        if (workspace !== undefined) return handleDashboard(message, existing[1].workspaceId, workspace)
+      }
+      if (entries.length === 1) return handleDashboard(message, entries[0]![0], entries[0]![1])
+      const parsed = workspaceFromArgument(chatId, words.join(' '))
+      const sessionId = parsed?.rest.split(/\s+/)[0]
+      if (parsed !== undefined && sessionId !== undefined && sessionId.length > 0) {
+        return handleDashboard({ ...message, text: `/unarchive ${sessionId}` }, parsed.workspaceId, parsed.workspace)
+      }
+      return reply(message, 'with several workspaces, name one: `/unarchive <workspace> <id>`.')
+    }
+
+    if (command === '/rename' || command === '/forget' || command === '/model' || command === '/close' || command === '/reopen') {
+      const found = findSessionOf(chatId, rest[0] ?? '')
+      const workspace = found === undefined ? undefined : bindings.workspaces[found[1].workspaceId]
+      if (found !== undefined && workspace !== undefined) {
+        return handleDashboard(message, found[1].workspaceId, workspace)
+      }
+      return reply(message, `no session matching \`${rest[0] ?? ''}\` — \`/sync\` lists what exists, or use an id prefix / topic title`)
+    }
+
+    if (command === '/sync') {
+      if (argument.length === 0) return syncTopics(message)
+      const workspace = findGroupWorkspace(chatId, argument)
+      if (workspace === undefined) return reply(message, `no workspace matching \`${argument}\` in this group.`)
+      return syncTopics(message, [workspace])
+    }
+
+    if (command === '/new') {
+      if (entries.length === 1) return startSessionInWorkspace(message, entries[0]![0], entries[0]![1], argument)
+      const parsed = workspaceFromArgument(chatId, argument)
+      if (parsed === undefined) {
+        return reply(message, [
+          'which workspace?',
+          ...entries.map(([, workspace]) => `· **${workspace.title}** — \`/new ${workspace.title} <title>\``),
+        ].join('\n'))
+      }
+      return startSessionInWorkspace(message, parsed.workspaceId, parsed.workspace, parsed.rest)
+    }
+
+    if (command === '/bind') {
+      if (argument.length === 0) return reply(message, 'usage: `/bind <workspace id or title>`')
+      const found = findWorkspace(bindings, argument)
+      if (found === undefined) return reply(message, `no workspace matching \`${argument}\` — check /workspaces in the bot chat`)
+      return bindGroup(message, found[0])
+    }
+
+    if (command === '/unbind') {
+      const first = entries[0]
+      if (first === undefined) return reply(message, 'this group is not attached to a workspace.')
+      return unbindCommand(message, first[0], first[1], rest)
+    }
+
+    if (command === '/dangerous') {
+      if (!requireAdmin(message)) return
+      const first = entries[0]
+      if (first === undefined) return reply(message, 'this group is not attached to a workspace.')
+      return runCleanup(message, first[0], first[1], 0, rest)
+    }
+
+    if (command === '/plugins' || command === '/plugin') {
+      return reply(message, 'plugins are profile-global — manage them in the private chat with the bot (`/plugins`).')
+    }
+    if (command === '/system') {
+      return reply(message, 'system commands are profile-global — use the private chat with the bot (`/system status`).')
+    }
+
+    return reply(message, groupDashboardText(chatId))
+  }
+
+  /** Find one attached workspace by id, id prefix or title. */
+  const findGroupWorkspace = (
+    chatId: number,
+    needle: string,
+  ): [string, WorkspaceBinding] | undefined => {
+    const query = needle.trim().toLowerCase()
+    if (query.length === 0) return undefined
+    const entries = groupWorkspaceEntries(chatId)
+    return entries.find(([id, workspace]) =>
+      id.toLowerCase() === query
+      || (query.length >= 6 && id.toLowerCase().startsWith(query))
+      || workspace.title.toLowerCase() === query)
+  }
+
+  /**
+   * Parse `[workspace] [title]` for `/new` and `/unarchive`. A leading exact
+   * title or id is consumed; everything else is the title. This lets a title
+   * repeat a workspace name without being eaten.
+   */
+  const workspaceFromArgument = (
+    chatId: number,
+    argument: string,
+  ): { workspaceId: string; workspace: WorkspaceBinding; rest: string } | undefined => {
+    const text = argument.trim()
+    const entries = [...groupWorkspaceEntries(chatId)]
+      .sort((left, right) => right[1].title.length - left[1].title.length)
+    for (const [workspaceId, workspace] of entries) {
+      const title = workspace.title.toLowerCase()
+      if (text.toLowerCase() === title) return { workspaceId, workspace, rest: '' }
+      if (text.toLowerCase().startsWith(`${title} `)) {
+        return { workspaceId, workspace, rest: text.slice(workspace.title.length).trim() }
+      }
+    }
+    const [first, ...tail] = text.split(/\s+/)
+    if (first !== undefined) {
+      const found = findGroupWorkspace(chatId, first)
+      if (found !== undefined) return { workspaceId: found[0], workspace: found[1], rest: tail.join(' ').trim() }
+    }
+    return undefined
+  }
+
+  /** Create a session topic in one workspace; titles carry the group prefix. */
+  const startSessionInWorkspace = async (
+    message: TgMessage,
+    workspaceId: string,
+    workspace: WorkspaceBinding,
+    rawTitle: string,
+  ): Promise<void> => {
+    const raw = rawTitle.trim()
+    const sessionId = String(SessionId(randomUUID()))
+    const bare = truncate(raw.length > 0 ? raw : `session ${sessionId.slice(-6)}`, 120)
+    const title = uniqueTopicTitle(message.chat.id, workspaceId, workspace, bare)
+    const topic = await createTopic(message.chat.id, title)
+    if (topic.threadId === undefined) {
+      return reply(
+        message,
+        [
+          'could not create the session topic.',
+          topic.error === undefined ? '' : `Telegram: ${topic.error}`,
+          'Check that the bot is an admin with `can_manage_topics` in this group, then try `/new` again.',
+        ].filter((line) => line.length > 0).join('\n\n'),
+      )
+    }
+    const threadId = topic.threadId
+    setSession(bindings, message.chat.id, threadId, {
+      workspaceId,
+      sessionId,
+      title: bare,
+      topicTitle: title,
+    })
+    topicTitles.set(topicKey(message.chat.id, threadId), title)
+    bindings.topicTitles = { ...(bindings.topicTitles ?? {}), [topicKey(message.chat.id, threadId)]: title }
+    await persist()
+    await sendTo(message.chat.id, threadId, `session \`${sessionId}\` ready — send a message to begin.`)
+    return reply(message, `started **${bare}** in **${workspace.title}** (topic ${threadId})`)
+  }
+
+  /** Shared `/unbind` grammar: no argument in a single-workspace group, otherwise a name or `all`. */
+  const unbindCommand = async (
+    message: TgMessage,
+    defaultWorkspaceId: string,
+    defaultWorkspace: WorkspaceBinding,
+    rest: readonly string[],
+  ): Promise<void> => {
+    if (!requireAdmin(message)) return
+    const entries = groupWorkspaceEntries(message.chat.id)
+    const words = rest.map((word) => word.trim()).filter((word) => word.length > 0)
+    const confirmed = words[words.length - 1] === 'confirm'
+    const target = (confirmed ? words.slice(0, -1) : words).join(' ').trim()
+    const detach = async (workspaceId: string, workspace: WorkspaceBinding, confirmed: boolean): Promise<void> => {
+      const rows = sessionsOfWorkspace(bindings, message.chat.id, workspaceId)
+      if (confirmed) return reply(message, await unbindWorkspace(message, workspaceId, workspace))
+      return askConfirm(
+        message,
+        [
+          `**detach ${workspace.title} from this group?**`,
+          '',
+          rows.length === 0
+            ? 'no session topics are attached.'
+            : `${String(rows.length)} session topic(s) and their history will be deleted with its bindings.`,
+          'the workspace and its sessions stay in DSH; the group stays yours.',
+        ].join('\n'),
+        rows.length === 0 ? 'Detach workspace' : `Detach and delete ${String(rows.length)} topic(s)`,
+        async () => unbindWorkspace(message, workspaceId, workspace),
+      )
+    }
+    const usage = [
+      'this group hosts several workspaces.',
+      `· ${entries.map(([, workspace]) => workspace.title).join(' · ')}`,
+      'use `/unbind <workspace>` or `/unbind all`.',
+    ].join('\n')
+
+    if (target.length === 0) {
+      if (entries.length > 1) return reply(message, usage)
+      return detach(defaultWorkspaceId, defaultWorkspace, confirmed)
+    }
+    if (target.toLowerCase() === 'all') {
+      const rows = sessionsOfChat(bindings, message.chat.id)
+      const run = async (): Promise<string> => {
+        const topics = rows.length
+        await clearChatSessions(message.chat.id)
+        const names = entries.map(([, workspace]) => workspace.title)
+        for (const [workspaceId] of entries) delete bindings.workspaces[workspaceId]
+        await persist()
+        return `detached ${names.map((name) => `**${name}**`).join(', ')} — ${String(topics)} topic(s) deleted with their bindings. The workspaces stay in DSH.`
+      }
+      if (confirmed) return reply(message, await run())
+      return askConfirm(
+        message,
+        [
+          `**detach all ${String(entries.length)} workspaces from this group?**`,
+          '',
+          rows.length === 0
+            ? 'no session topics are attached.'
+            : `${String(rows.length)} session topic(s) and their history will be deleted with their bindings.`,
+          'the workspaces and their sessions stay in DSH; the group stays yours.',
+        ].join('\n'),
+        rows.length === 0 ? 'Detach all' : `Detach and delete ${String(rows.length)} topic(s)`,
+        run,
+      )
+    }
+    const found = findGroupWorkspace(message.chat.id, target)
+    if (found === undefined) return reply(message, `no workspace matching \`${target}\` in this group.\n\n${usage}`)
+    return detach(found[0], found[1], confirmed)
   }
 
   /** The session's own title, when the query service can read one. */
@@ -7033,7 +7624,15 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   ): Promise<void> => {
     // any topic without a session becomes one, so creating topics by hand works
     const existing = sessionFor(bindings, message.chat.id, threadId)
-    const session: SessionBinding = existing ?? { workspaceId, sessionId: String(SessionId(randomUUID())) }
+    const topicName = topicTitleOf(message.chat.id, threadId)
+    const split = topicName === undefined ? undefined : splitWorkspaceTopic(message.chat.id, topicName)
+    const session: SessionBinding = existing ?? {
+      workspaceId,
+      sessionId: String(SessionId(randomUUID())),
+      ...(topicName === undefined || topicName.trim().length === 0
+        ? {}
+        : { title: (split?.title ?? topicName).trim(), topicTitle: topicName }),
+    }
     if (existing === undefined) {
       setSession(bindings, message.chat.id, threadId, session)
       await persist()
@@ -7146,7 +7745,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       // Only a workspace with topics can be missing from something the user
       // sees. A bare binding is a group that was linked before any session
       // existed: recreating it would invent a workspace the user never had.
-      const bound = sessionsOfChat(bindings, workspace.chatId)
+      const bound = workspace.chatId === 0 ? [] : sessionsOfWorkspace(bindings, workspace.chatId, workspaceId)
       if (entry === undefined && bound.length === 0) continue
       if (entry === undefined) {
         try {
@@ -7179,7 +7778,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         }
       }
       const known = new Set((entry.sessionIds ?? []).map(String))
-      for (const [, session] of sessionsOfChat(bindings, workspace.chatId)) {
+      for (const [, session] of bound) {
         if (known.has(session.sessionId)) continue
         try {
           await entry.attachSession(session.sessionId)
@@ -7439,17 +8038,19 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
     const first = group.items[0]?.message
     if (first === undefined) return
-    const workspaceId = workspaceIdByChat(bindings, group.chatId)
-    if (workspaceId === undefined) {
+    const resolved = resolveTopicWorkspace(group.chatId, group.threadId)
+    if (resolved === undefined) {
       await reply(
         first,
-        'this group is not attached to a workspace.\n`/bind <workspace id or title>` — or create one from the bot chat.',
+        'this topic is not assigned to a workspace.\nIn a shared group, rename it `[Workspace] title`; in General use `/new <workspace> <title>`.',
       )
       return
     }
-    const workspace = bindings.workspaces[workspaceId]
-    if (workspace === undefined) return
-    if (group.threadId === (workspace.systemThreadId ?? 0)) {
+    const [workspaceId, workspace] = resolved
+    const dashboardThread = groupWorkspaceEntries(group.chatId).length > 1
+      ? 0
+      : (workspace.systemThreadId ?? 0)
+    if (group.threadId === dashboardThread) {
       await reply(first, 'attachments belong in a session topic — open one and send them there.')
       return
     }
@@ -7817,10 +8418,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     const threadId = message.message_thread_id ?? 0
-    const workspaceId = workspaceIdByChat(bindings, message.chat.id)
+    const groupEntries = groupWorkspaceEntries(message.chat.id)
 
     // closing a topic retires the session in DSH; reopening brings it back
-    if (workspaceId !== undefined && (message.forum_topic_closed !== undefined || message.forum_topic_reopened !== undefined)) {
+    if (message.forum_topic_closed !== undefined || message.forum_topic_reopened !== undefined) {
       const bound = sessionFor(bindings, message.chat.id, threadId)
       const registry = registryOf(ctx)
       if (bound !== undefined && registry !== undefined) {
@@ -7839,10 +8440,20 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     if (message.forum_topic_created !== undefined && threadId !== 0) {
-      topicTitles.set(threadId, message.forum_topic_created.name)
-      if (workspaceId !== undefined) {
-        const created = bindings.workspaces[workspaceId]
-        if (created !== undefined) await rememberThread(workspaceId, created, threadId)
+      const name = message.forum_topic_created.name
+      await rememberTopicTitle(message.chat.id, threadId, name)
+      const split = splitWorkspaceTopic(message.chat.id, name)
+      if (split !== undefined) {
+        await rememberThread(split.workspaceId, split.workspace, threadId)
+      } else if (groupEntries.length === 1) {
+        const [onlyId, only] = groupEntries[0]!
+        await rememberThread(onlyId, only, threadId)
+      } else if (groupEntries.length > 1) {
+        await sendTo(
+          message.chat.id,
+          threadId,
+          `this group hosts ${String(groupEntries.length)} workspaces: rename this topic to \`[Workspace] title\` before the first message, or use General and \`/new <workspace> <title>\`.`,
+        ).catch(() => undefined)
       }
     }
 
@@ -7852,7 +8463,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (payload !== undefined && payload.startsWith(STARTGROUP_PREFIX)) {
         return bindGroup(message, payload.slice(STARTGROUP_PREFIX.length))
       }
-      if (workspaceId === undefined) {
+      if (groupEntries.length === 0) {
         return reply(
           message,
           'this group is not attached to a workspace.\n`/bind <workspace id or title>` — or create one from the bot chat.',
@@ -7860,69 +8471,140 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
     }
 
-    // a group renamed by hand renames the workspace
-    if (message.new_chat_title !== undefined && workspaceId !== undefined) {
-      const workspace = bindings.workspaces[workspaceId]
-      if (workspace !== undefined && workspace.title !== message.new_chat_title) {
-        workspace.title = message.new_chat_title.slice(0, 128)
-        bindings.workspaces[workspaceId] = workspace
-        const controller = controllerOf(ctx)
-        if (controller !== undefined) {
-          await controller.rename({ workspaceId, title: workspace.title }).catch((error: unknown) => {
-            logger.warn(`dsh-telegram-connector: group rename failed: ${String(error)}`)
-          })
+    // A group title can name one workspace; with several it is the humans' name,
+    // so it must not rename one of them.
+    if (message.new_chat_title !== undefined) {
+      if (groupEntries.length === 1) {
+        const [workspaceId, workspace] = groupEntries[0]!
+        if (workspace.title !== message.new_chat_title) {
+          workspace.title = message.new_chat_title.slice(0, 128)
+          bindings.workspaces[workspaceId] = workspace
+          const controller = controllerOf(ctx)
+          if (controller !== undefined) {
+            await controller.rename({ workspaceId, title: workspace.title }).catch((error: unknown) => {
+              logger.warn(`dsh-telegram-connector: group rename failed: ${String(error)}`)
+            })
+          }
+          await persist()
         }
-        await persist()
+      } else if (groupEntries.length > 1) {
+        logger.info(`dsh-telegram-connector: group ${message.chat.id} renamed to "${message.new_chat_title}" (shared; workspace titles unchanged)`)
+      }
+      return
+    }
+
+    // A topic renamed by hand updates the session title. In a shared group the
+    // name must keep its workspace prefix; the prefix is routing, not decoration.
+    const editedName = message.forum_topic_edited?.name
+    if (editedName !== undefined) {
+      const bound = sessionFor(bindings, message.chat.id, threadId)
+      const workspace = bound === undefined ? undefined : bindings.workspaces[bound.workspaceId]
+      if (bound !== undefined && workspace !== undefined) {
+        if (groupEntries.length > 1) {
+          const split = splitWorkspaceTopic(message.chat.id, editedName)
+          if (split !== undefined && split.workspaceId === bound.workspaceId) {
+            const bare = split.title.trim().length > 0
+              ? split.title.trim()
+              : (bound.title ?? `session ${bound.sessionId.slice(-6)}`)
+            const expected = formatTopicTitle(message.chat.id, workspace, bare)
+            if (bound.title !== bare || bound.topicTitle !== expected) {
+              bound.title = bare
+              bound.topicTitle = expected
+              setSession(bindings, message.chat.id, threadId, bound)
+              const live = runtimes.get(runtimeKey(message.chat.id, threadId))
+              if (live !== undefined) renameSession(live, bare)
+              await persist()
+            }
+            if (editedName !== expected) await renameTopic(message.chat.id, threadId, expected)
+            await rememberTopicTitle(message.chat.id, threadId, expected)
+          } else {
+            const expected = expectedTopicTitle(message.chat.id, bound)
+              ?? formatTopicTitle(message.chat.id, workspace, bound.title ?? `session ${bound.sessionId.slice(-6)}`)
+            await renameTopic(message.chat.id, threadId, expected)
+            await rememberTopicTitle(message.chat.id, threadId, expected)
+            await sendTo(
+              message.chat.id,
+              threadId,
+              `this topic belongs to **${workspace.title}**; its name must start with \`${topicPrefixOf(workspace)}\`.`,
+            )
+          }
+        } else {
+          const bare = editedName.trim()
+          if (bare.length > 0 && (bound.title !== bare || bound.topicTitle !== bare)) {
+            bound.title = bare
+            bound.topicTitle = bare
+            setSession(bindings, message.chat.id, threadId, bound)
+            const live = runtimes.get(runtimeKey(message.chat.id, threadId))
+            if (live !== undefined) renameSession(live, bare)
+            await persist()
+          }
+          await rememberTopicTitle(message.chat.id, threadId, editedName.trim())
+        }
+      } else {
+        await rememberTopicTitle(message.chat.id, threadId, editedName.trim())
+        if (groupEntries.length > 1 && splitWorkspaceTopic(message.chat.id, editedName) === undefined) {
+          await sendTo(
+            message.chat.id,
+            threadId,
+            `this group hosts ${String(groupEntries.length)} workspaces: name this topic \`[Workspace] title\` so the first message can be routed.`,
+          )
+        }
       }
       return
     }
 
     if (text === undefined && media === undefined && forwarded === undefined) return
 
-    if (workspaceId === undefined) {
-      if (text !== undefined && text.startsWith('/bind')) {
-        const argument = text.trim().split(/\s+/).slice(1).join(' ').trim()
-        const found = findWorkspace(bindings, argument)
-        if (found === undefined) {
-          return reply(message, `no workspace matching \`${argument}\` — check /workspaces in the bot chat`)
-        }
-        return bindGroup(message, found[0])
+    // `/bind` is always group administration, not a session prompt.
+    if (text !== undefined && text.startsWith('/bind')) {
+      const argument = text.trim().split(/\s+/).slice(1).join(' ').trim()
+      const found = findWorkspace(bindings, argument)
+      if (found === undefined) {
+        return reply(message, `no workspace matching \`${argument}\` — check /workspaces in the bot chat`)
       }
+      return bindGroup(message, found[0])
+    }
+
+    if (groupEntries.length === 0) {
       return reply(
         message,
         'this group is not attached to a workspace.\n`/bind <workspace id or title>` — or `/workspace new <title>` in the bot chat.',
       )
     }
 
-    const workspace = bindings.workspaces[workspaceId]
-    if (workspace === undefined) return
-
-    // a topic renamed by hand renames the session's cached title
-    const editedName = message.forum_topic_edited?.name
-    if (editedName !== undefined) {
-      const session = sessionFor(bindings, message.chat.id, threadId)
-      if (session !== undefined && editedName.trim().length > 0 && session.title !== editedName.trim()) {
-        session.title = editedName.trim()
-        setSession(bindings, message.chat.id, threadId, session)
-        const live = runtimes.get(runtimeKey(message.chat.id, threadId))
-        if (live !== undefined) renameSession(live, session.title)
-        await persist()
-      }
-      return
+    // A multi-workspace group's General is the group dashboard. It has no
+    // workspace, which is exactly why routing checks it before resolving one.
+    if (threadId === 0 && groupEntries.length > 1) {
+      return handleGroupDashboard(message)
     }
 
-    if (threadId !== 0) await rememberThread(workspaceId, workspace, threadId)
-
-    const systemThread = workspace.systemThreadId ?? 0
-    if (threadId === systemThread) {
+    const resolved = resolveTopicWorkspace(message.chat.id, threadId)
+    if (resolved === undefined) {
+      return reply(
+        message,
+        [
+          'this topic is not assigned to a workspace.',
+          `rename it with one of ${groupEntries.map(([, workspace]) => `\`${topicPrefixOf(workspace)}\``).join(', ')} followed by the session title,`,
+          'or use General and `/new <workspace> <title>`.',
+        ].join('\n'),
+      )
+    }
+    const [workspaceId, workspace] = resolved
+    const bound = sessionFor(bindings, message.chat.id, threadId)
+    const systemThread = groupEntries.length > 1 ? 0 : (workspace.systemThreadId ?? 0)
+    if (bound === undefined && threadId === systemThread) {
       if (forwarded !== undefined) {
         return reply(message, 'forwarded messages belong in a session topic — open one and send them there.')
       }
       if (media !== undefined) {
         return reply(message, 'attachments belong in a session topic — open one and send them there.')
       }
-      return handleDashboard(message, workspaceId, workspace)
+      return groupEntries.length > 1
+        ? handleGroupDashboard(message)
+        : handleDashboard(message, workspaceId, workspace)
     }
+
+    if (threadId !== 0) await rememberThread(workspaceId, workspace, threadId)
 
     if (forwarded !== undefined) {
       return handleForwardedTurn(message, workspaceId, workspace, threadId, forwarded)
@@ -8019,8 +8701,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         if (workspace.chatId !== 0 && entry.title !== workspace.title) {
           workspace.title = entry.title
           bindings.workspaces[id] = workspace
-          await groupTitle(workspace.chatId, workspace.title)
+          const shared = groupWorkspaceEntries(workspace.chatId).length > 1
+          if (!shared) await groupTitle(workspace.chatId, workspace.title)
           await persist()
+          if (shared) await retitleGroupTopics(workspace.chatId)
         }
         if (workspace.chatId === 0 && bindings.controlChatId !== undefined && !reminded.has(id)) {
           reminded.add(id)
@@ -8291,21 +8975,25 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
 
     const membership = new Map<string, { present: number; missing: number }>()
+    const groupChats = new Set<number>()
     for (const workspace of Object.values(bindings.workspaces)) {
-      if (workspace.chatId === 0) continue
+      if (workspace.chatId !== 0) groupChats.add(workspace.chatId)
+    }
+    for (const chatId of groupChats) {
+      const threadId = groupDashboardThread(chatId)
       for (const bot of botPool.bots) {
         if (bot.main || bot.disabled === true || bot.id === undefined) continue
         try {
-          const member = await client.getChatMember(workspace.chatId, bot.id)
+          const member = await client.getChatMember(chatId, bot.id)
           const present = member.status === 'member'
             || member.status === 'administrator'
             || member.status === 'creator'
-          botPool.markMissing(bot, workspace.chatId, !present)
+          botPool.markMissing(bot, chatId, !present)
           const stats = membership.get(bot.label) ?? { present: 0, missing: 0 }
           if (present) stats.present += 1
           else stats.missing += 1
           membership.set(bot.label, stats)
-          const key = `${workspace.chatId}:${bot.label}`
+          const key = `${chatId}:${bot.label}`
           if (present) {
             reportedMissing.delete(key)
             continue
@@ -8314,8 +9002,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           reportedMissing.add(key)
           const who = bot.username === undefined ? bot.label : `@${bot.username}`
           await sendTo(
-            workspace.chatId,
-            workspace.systemThreadId ?? 0,
+            chatId,
+            threadId,
             `${who} (${bot.label}) is not in this group — add it as a member to raise the rate limit (20 messages/min per bot).`,
             'control',
           )
@@ -8348,6 +9036,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     // chat, once, instead of letting the bot answer "not attached" forever.
     let loadWarning = ''
     bindings = await loadBindings(file, (line) => { loadWarning = line })
+    topicTitles.clear()
+    for (const [key, title] of Object.entries(bindings.topicTitles ?? {})) topicTitles.set(key, title)
     if (loadWarning.length > 0) {
       void (async () => {
         const chat = bindings.controlChatId

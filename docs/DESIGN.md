@@ -19,14 +19,18 @@ group  "web-app"                 one Workspace
 
 group  "landing-page"            another Workspace
  └── …
+group  "agency"                  two Workspaces share the group
+ ├── General                     group dashboard
+ ├── [web-app] session-…         a Session owned by web-app
+ └── [landing-page] session-…    a Session owned by landing-page
 ```
 
 | Telegram | DSH object | Authoritative |
 |---|---|---|
 | Private chat with the bot | control plane | connector |
-| Group | `Workspace` (id, path, title) | DSH |
-| Topic in that group | `Session` (id, title, model) | DSH |
-| General topic, or a topic claimed with `/dashboard` | workspace dashboard | connector |
+| Group | one or more `Workspace`s (id, path, title) | DSH |
+| Topic in that group | one `Session` (id, title, model), owned by one workspace | DSH |
+| General topic, or a topic claimed with `/dashboard` | group dashboard when shared, workspace dashboard otherwise | connector |
 | Message in a session topic | a turn in that session | session log |
 
 ## 2. Source of truth
@@ -96,10 +100,12 @@ setting). So the flow is deliberately asymmetric:
 | Topics (sessions) | the bot (`createForumTopic`) from `/new`, or you by hand |
 
 When the bot is added through the link, Telegram delivers `/start workspace_<id>`
-inside the new group; that message is the binding handshake. A bound group
-cannot be rebound: binding a different workspace is refused, and the group must
-be `/unbind`-ed first (which deletes its session topics), so a group always maps
-to exactly one workspace.
+inside the new group; that message is the binding handshake. A workspace lives in
+exactly one group, but the relation is one-to-many in the other direction: a
+group may host several workspaces, and `/bind`/another startgroup link adds one.
+Topics then carry a `[Workspace]` prefix; the prefix is the routing key for a
+topic that has no session binding yet. `/unbind <workspace>` detaches one
+without touching its siblings.
 
 Group requirements: **Topics enabled**, bot **admin** with *Manage Topics* (and
 *Change Info* for title sync), **privacy mode off** so plain topic messages are
@@ -165,14 +171,14 @@ live.
 
 | Event | Result |
 |---|---|
-| workspace renamed in UI | group title follows within `reconcileIntervalSeconds` |
-| group renamed by hand | workspace renamed; the connector records the title first so its own echo is ignored |
-| topic renamed by hand | session's cached title updated; a live agent is renamed through the session-title service when present |
+| workspace renamed in UI | in a one-workspace group the title follows within `reconcileIntervalSeconds`; in a shared group the `[Workspace]` prefixes are rewritten |
+| group renamed by hand | workspace renamed when it is the only one; a shared group's title changes no workspace |
+| topic renamed by hand | session's cached title updated; a shared group repairs a missing/wrong prefix; a live agent is renamed through the session-title service when present |
 | topic closed / reopened by hand | session archived / unarchived |
 | workspace has no group | reminder with the startgroup link, once per process |
 | workspace deleted in UI | notice in the control chat |
-| `/sync` | sessions created in the UI get topics, bindings and a history replay |
-| `/unarchive` | archived sessions return as topics |
+| `/sync` | every active session in every attached workspace gets a topic, binding and history replay; archived ones are skipped |
+| `/unarchive` | archived sessions return as topics; a shared group needs the workspace |
 
 `/sync` decides **per session** rather than from a precomputed "already known"
 set: archived → skip; bound → probe the topic with a real send-and-delete and
@@ -220,10 +226,12 @@ One topic = one session, no exceptions.
 
 ```
 update → allowlist → private? control
-                   → group?  workspace by chatId
+                   → group?  workspaces of chatId
                             → closed/reopened? archive toggle
+                            → topic edited? prefix repair / session title
+                            → General in a shared group? group dashboard
                             → dashboard topic? dashboard commands
-                            → session topic? agent.followup()
+                            → session binding or [Workspace] prefix? agent.followup()
         session/event assistant/message → accumulate → throttled edit
         turn end → final edit
         session/event outside a runtime → mirror into its topic

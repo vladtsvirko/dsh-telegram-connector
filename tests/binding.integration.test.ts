@@ -62,7 +62,7 @@ describe('binding a group to a workspace', () => {
     expect(state.sessions[`${CHAT_ID}:${THREAD_ID}`]?.sessionId).toBe(SESSION_ID)
   }, 20_000)
 
-  it('refuses a group that already hosts another workspace instead of seizing it', async () => {
+  it('adds a second workspace to a group instead of refusing it', async () => {
     // Seeded before boot: the plugin reads bindings once, at start.
     const dir = await mkdtemp(join(tmpdir(), 'dsh-binding-'))
     const workspaceRoot = join(dir, 'workspace')
@@ -70,19 +70,23 @@ describe('binding a group to a workspace', () => {
     seeded.workspaces['ws-two'] = { ...seeded.workspaces[WORKSPACE_ID]!, chatId: OTHER_CHAT, title: 'Other' }
     const harness = await start(await boot({ workspaceRoot }, { dir, bindings: seeded }))
 
-    // The link for the Test Workspace is tapped in a group that already hosts
-    // ws-two: that group belongs to ws-two and must not be taken over.
+    // The link for Test Workspace is tapped in a group that already hosts
+    // ws-two. A group may host several workspaces; the move is additive.
     harness.pushUpdate(harness.makeUpdate({ text: `/start workspace_${WORKSPACE_ID}`, chatId: OTHER_CHAT, threadId: 0 }))
-    const refusal = await harness.waitFor(
-      () => harness.sent.find((call) => callText(call).includes('already hosts')),
-      'the refusal for a group that hosts another workspace',
+    const dashboard = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('group dashboard')),
+      'the group dashboard after adding the second workspace',
       6000,
     )
-    expect(callText(refusal)).toContain('ws-two')
-    // Nothing was unregistered and no topic was deleted.
+    expect(callText(dashboard)).toContain('2 workspaces')
+    expect(callText(dashboard)).toContain('Test Workspace')
+    expect(callText(dashboard)).toContain('Other')
     const after = await bindings(harness)
     expect(after.workspaces['ws-two']?.chatId).toBe(OTHER_CHAT)
-    expect(after.workspaces[WORKSPACE_ID]?.chatId).toBe(CHAT_ID)
+    expect(after.workspaces[WORKSPACE_ID]?.chatId).toBe(OTHER_CHAT)
+    // The workspace moved, so its old topic binding is gone; no topic was
+    // deleted, because only the binding moves.
+    expect(after.sessions[`${CHAT_ID}:${THREAD_ID}`]).toBeUndefined()
     expect(harness.calls.some((call) => call.method === 'deleteForumTopic')).toBe(false)
   }, 20_000)
 

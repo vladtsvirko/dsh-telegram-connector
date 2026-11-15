@@ -15,7 +15,7 @@ describe('help registry', () => {
 
   it('lists the dashboard surface and points at the bot chat', () => {
     const index = indexText('dashboard')
-    expect(index).toContain('/new [title]')
+    expect(index).toContain('/new [workspace] [title]')
     expect(index).toContain('/sync')
     expect(index).toContain('bot chat')
     expect(index).not.toContain('/plugin add')

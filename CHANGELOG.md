@@ -1,3 +1,28 @@
+## 0.24.0
+
+- **A group may host several workspaces.** `/bind` and another startgroup link
+  now add a workspace instead of refusing a group that already has one. A
+  workspace still lives in exactly one group; moving it clears only its own
+  bindings in the old group and leaves sibling workspaces alone.
+- **Topic prefixes are the routing key.** When a group gains a second
+  workspace, every existing session topic is renamed to `[Workspace] title` and
+  new topics follow the format. An empty topic is routed by that prefix; a
+  topic renamed by hand without it is repaired and explained. One-workspace
+  groups keep bare titles.
+- **`/sync` walks every attached workspace.** It adopts all active sessions in
+  every connected workspace (or the one named in `/sync <workspace>`), skips
+  archived sessions, probes existing topics and creates prefixed topics for the
+  rest. Old bare titles are upgraded on the first sync in a shared group.
+- **Scoped management.** `/new <workspace> <title>`, `/unbind <workspace|all>`,
+  `/unarchive <workspace> <id>`, per-workspace `/sessions`, `/status`,
+  `/archived` and the group dashboard; `/workspace remove` deletes only that
+  workspace's topics. The control app counts each workspace's sessions
+  independently.
+- **Durable topic names.** `bindings.json` keeps a `topicTitles` inventory
+  (`chat:thread → name`) so a hand-made prefixed topic can still be routed after
+  a connector restart, before any edit event. It is optional on load; old
+  bindings need no migration.
+
 ## 0.23.0
 
 - **Mobile toolchains in the control app.** System now has a *Mobile

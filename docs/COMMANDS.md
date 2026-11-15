@@ -5,9 +5,13 @@ The bot has three surfaces. Each has its own command set, and each answers
 
 ```
 private chat with the bot        control plane   workspaces, plugins, restarts, updates
-group "web-app"                  workspace
+group "web-app"                  one workspace
  ├── General / /dashboard topic  dashboard       sessions: /new, /sync, /close …
  └── session-…                   session topic   plain text is a turn, nothing else
+group "agency"                   several workspaces share the group
+ ├── General                     group dashboard sessions in every workspace
+ ├── [web-app] session-…         session topic   routed by its prefix
+ └── [landing-page] session-…    session topic   routed by its prefix
 ```
 
 Conventions:
@@ -37,17 +41,17 @@ Conventions:
 
 | Command | What it does |
 |---|---|
-| `/workspaces` | list workspaces, their group, and the startgroup link (only for a workspace that has no group yet) |
+| `/workspaces` | list workspaces, their group, and the startgroup link (only for a workspace that has no group yet); in a shared group, the same group is listed for each of its workspaces |
 | `/workspace new <title>` | create `<workspaceRoot>/<slug>`, register it in DSH, print the link |
 | `/workspace link <name>` | print that link again |
-| `/workspace remove <name>` | unregister from DSH, delete the binding, delete the group's session topics after a confirmation card; files and sessions are untouched |
+| `/workspace remove <name>` | unregister from DSH, delete the binding, delete only that workspace's session topics after a confirmation card; sibling workspaces and their topics stay, files and sessions are untouched |
 
-A workspace lives in exactly one group. A group that is already bound **cannot**
-be rebound: binding a different workspace there is refused, and you must
-`/unbind` first (which deletes the group's session topics). An **unbound** group
-accepts `/bind <workspace id or title>` to attach itself; that command is only
-relevant before the group is bound, so it is answered by routing rather than the
-dashboard.
+A workspace lives in exactly one group, but a group may host **several**
+workspaces. `/bind <workspace id or title>` attaches another one; the startgroup
+link does the same. When a group gains a second workspace, its existing session
+topics are renamed to `[Workspace] title` and every new topic follows that shape.
+`/unbind <workspace>` detaches one and deletes only its topics; `/unbind all`
+detaches them all.
 
 ### Plugins
 
@@ -207,19 +211,19 @@ label.
 
 | Command | What it does |
 |---|---|
-| `/new [title]` | mint a session and create its topic |
+| `/new [workspace] [title]` | mint a session and create its topic; in a shared group the workspace is required |
 | `/sessions` | dashboard: path, workspace id, sessions |
 | `/status [session]` | dashboard summary (sessions, model route, poller, timezone); with a session, that session's id, topic, model and agent state |
 | `/dashboard` | claim this empty topic as the dashboard and post its button card |
-| `/sync` | adopt sessions created in the web UI: topic + history replay; paced to Telegram limits |
+| `/sync [workspace]` | adopt every active session in every attached workspace (or one): topic + history replay; archived sessions skipped; paced to Telegram limits |
 | `/archived` | archived sessions and whether they have a topic |
-| `/unarchive <id\|all>` | restore archived sessions and create their topics |
+| `/unarchive [workspace] <id\|all>` | restore archived sessions and create their topics; a shared group needs the workspace |
 | `/rename <session> <title>` | rename session and topic |
 | `/model <session> [<provider>/<model>]` | per-session model route; without a route it lists the models this runtime advertises |
 | `/close <session>` | archive the session and close its topic |
 | `/reopen <session>` | unarchive and reopen |
 | `/forget <session>` | drop the topic→session binding; both stay |
-| `/unbind` | detach the group and delete its session topics |
+| `/unbind [workspace\|all]` | detach one workspace (or all) and delete only its session topics |
 | `/dangerous cleanup [confirm]` | delete known topics that are not sessions |
 
 `/dashboard` only accepts a topic that holds no session, so a hand-made empty

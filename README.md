@@ -3,7 +3,9 @@
 Drive a [DeepSeek Harness](https://github.com/deepseek-ai) runtime from Telegram —
 same workspaces, same sessions, same tools as the web UI, from your phone.
 
-One **Telegram group per workspace**, one **forum topic per session**. A session
+One **forum topic per session**, grouped by workspace. A group may host one
+workspace or several; a shared group names every session topic
+`[Workspace] title`, and that prefix is what routes an empty topic. A session
 started in the browser can be adopted as a topic with its history (`/sync`); a
 session started from the phone is the same session in the browser. There is no
 shadow store of conversations: Telegram is a projection of the harness.
@@ -16,6 +18,10 @@ group "web-app"                  one workspace
  └── session-2f41…               one session
 group "landing-page"             another workspace
  └── …
+group "agency"                   two workspaces share the group
+ ├── General                     group dashboard: /new <workspace>, /sync, /unbind
+ ├── [web-app] session-9cb8…     one workspace's session
+ └── [landing-page] session-2f41… another workspace's session
 ```
 
 The full command reference is [`docs/COMMANDS.md`](docs/COMMANDS.md) — the bot's
@@ -27,6 +33,10 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 - **Topics are sessions.** Create a topic by hand and start talking, or let the
   bot create one per session with `/new`. Topics are never silently re-assigned.
+- **A group may host several workspaces.** `/bind` (or another startgroup link)
+  adds a workspace; existing topics gain their `[Workspace]` prefixes, and
+  `/sync` adopts every active session in every attached workspace. Archived
+  sessions are skipped.
 - **Web ↔ phone continuity.** `/sync` adopts sessions created in the web UI,
   creates a topic for each and replays the tail of the conversation. Renaming
   round-trips both ways, and closing a topic archives its session. Archiving
@@ -171,7 +181,7 @@ install without the setup.
 The connector is published to npm as an exact version:
 
 ```sh
-dsh plugin --profile web add dsh-telegram-connector@0.23.1
+dsh plugin --profile web add dsh-telegram-connector@0.24.0
 ```
 
 The registry tarball already contains the built `lib/`, so there is no
@@ -202,7 +212,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.23.1
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.24.0
 ```
 
 That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the
@@ -291,10 +301,10 @@ session id, an id prefix, or the topic title.
 
 | Command | Effect |
 |---|---|
-| `/workspaces` | list workspaces, their groups and links (a link only for a group-less workspace) |
+| `/workspaces` | list workspaces, their groups and links (a link only for a group-less workspace); a shared group is still one group |
 | `/workspace new <title>` | create directory + workspace, print the group link |
 | `/workspace link <name>` | print the group link again |
-| `/workspace remove <name>` | preview the topics, confirm, then unregister from DSH and delete the group's session topics (files and sessions are untouched) |
+| `/workspace remove <name>` | preview the topics, confirm, then unregister from DSH and delete only that workspace's session topics (sibling workspaces and their topics stay) |
 | `/plugins` | list the profile's bundles: enabled, disabled, available |
 | `/plugins info <name>` | version, source, rows, overrides and any error |
 | `/plugins add <spec>` | inspect a package, then install it after **Confirm** (or `/plugins confirm`) |
@@ -330,17 +340,17 @@ not one workspace.
 
 | Command | Effect |
 |---|---|
-| `/new [title]` | mint a session and create its topic |
+| `/new [workspace] [title]` | mint a session and create its topic; the workspace is required when several share the group |
 | `/sessions` · `/status` | dashboard; `/status <session>` shows one session |
 | `/dashboard` | make this empty topic the command surface |
-| `/sync` | adopt sessions created in the web UI: topic + history per session |
+| `/sync [workspace]` | adopt every active session in every attached workspace (or one): topic + history per session; archived ones are skipped |
 | `/archived` | archived sessions and whether they have a topic |
-| `/unarchive <id\|all>` | restore archived sessions, create topics |
+| `/unarchive [workspace] <id\|all>` | restore archived sessions, create topics; a shared group needs the workspace |
 | `/rename <session> <title>` | rename session and topic |
 | `/model <session> <provider>/<model>` | per-session model route |
 | `/close <session>` · `/reopen <session>` | archive/unarchive and close/reopen the topic |
 | `/forget <session>` | drop the binding; session and topic stay |
-| `/unbind` | detach the group and delete its session topics |
+| `/unbind [workspace\|all]` | detach one workspace (or all) and delete only its session topics |
 | `/dangerous cleanup [confirm]` | delete known topics that are not sessions |
 
 ### Session topic
@@ -363,17 +373,20 @@ the session as an argument; a session topic is for talking, not configuring.
 Only a leading non-whitespace `/` starts a command; slashes later in the text
 are literal.
 
-An unbound group accepts `/bind <workspace id|title>`.
+An unbound group accepts `/bind <workspace id|title>`; a bound group accepts it too and adds another workspace. A workspace still lives in exactly one group.
 
 ## How sync works
 
 DSH state is the truth; Telegram follows it.
 
-- Workspace renamed in the UI → group title follows within
-  `reconcileIntervalSeconds`.
-- Group renamed by hand → workspace renamed in DSH.
+- Workspace renamed in the UI → in a one-workspace group the title follows
+  within `reconcileIntervalSeconds`; in a shared group the topic prefixes are
+  rewritten instead.
+- Group renamed by hand → the workspace renamed in DSH when it is the only one;
+  a shared group's name belongs to the humans and changes no workspace.
 - Topic renamed by hand → session title updated (and pushed to a live agent
-  through the session-title service, when present).
+  through the session-title service, when present). In a shared group a rename
+  without the right `[Workspace]` prefix is repaired and explained.
 - Topic closed/reopened by hand → session archived/unarchived.
 - A workspace deleted in the UI → notice in the control chat; the group is left
   alone, since only a human can delete a group.
@@ -385,15 +398,19 @@ DSH state is the truth; Telegram follows it.
   same sink as a Telegram one (edits, splitting, the rich/HTML fallback) but has
   no process card — you are watching the process in the web UI.
 
-`/sync` is the explicit adoption step. For every session in the workspace it
-decides once: archived → skip; bound → probe the topic with a message send and
-delete it, keeping the binding if it answers and dropping it if not; otherwise
-create a topic, bind it, and replay the last 20 messages as one transcript. It
-is safe to run repeatedly — the second run reports `adopted 0`.
+`/sync` is the explicit adoption step. It walks every workspace attached to the
+group (or the one named in `/sync <workspace>`) and decides per session:
+archived → skip; bound → probe the topic with a message send and delete it,
+keeping the binding if it answers and dropping it if not; otherwise create a
+topic, bind it, and replay the last 20 messages as one transcript. It is safe to
+run repeatedly — the second run reports `adopted 0`.
 
-Topics are created last-session-first, so the group reads top-to-bottom in the
-workspace's order. That is a snapshot: Telegram orders the topic list by recency
-and offers no reorder method, so it can drift as topics see activity.
+In a shared group every created or adopted topic is named `[Workspace] title`;
+the prefix is routing as well as a label. `/sync` also rewrites old bare names
+when the group has just gained a second workspace. Topics are created
+last-session-first, so the group reads top-to-bottom in the workspace's order.
+That is a snapshot: Telegram orders the topic list by recency and offers no
+reorder method, so it can drift as topics see activity.
 
 ## Switching between the web UI and Telegram
 

@@ -121,8 +121,8 @@ export const COMMANDS: CommandDoc[] = [
     path: 'workspaces',
     usage: '/workspaces',
     summary: 'list workspaces, their group, and the link (only for a workspace with no group yet)',
-    details: 'A workspace with no group gets a one-tap link that adds the bot to a new group.',
-    surfaces: ['control'],
+    details: 'A group may host several workspaces. A workspace with no group gets a one-tap link that adds the bot to a new group.',
+    surfaces: ['control', 'dashboard'],
     group: 'workspace',
   },
   {
@@ -418,16 +418,17 @@ export const COMMANDS: CommandDoc[] = [
   // --- dashboard -----------------------------------------------------------
   {
     path: 'new',
-    usage: '/new [title]',
+    usage: '/new [workspace] [title]',
     summary: 'mint a session and create its topic',
-    details: 'Sessions are not created inside a session topic: one topic is always one session.',
+    details:
+      'In a group with one workspace the workspace argument is optional. With several, name the workspace first (`/new web-app a title`) so the topic gets its `[Workspace]` prefix; the dashboard lists the choices.',
     surfaces: ['dashboard'],
     group: 'sessions',
   },
   {
     path: 'sessions',
     usage: '/sessions',
-    summary: 'the workspace dashboard: path, workspace id, sessions',
+    summary: 'the dashboard: workspaces, paths, sessions',
     surfaces: ['dashboard'],
     group: 'sessions',
   },
@@ -437,16 +438,16 @@ export const COMMANDS: CommandDoc[] = [
     usage: '/dashboard',
     summary: 'make this empty topic the command surface',
     details:
-      'Only a topic with no session can claim the role, which is how a hand-made empty topic becomes the dashboard instead of General.',
+      'Only a topic with no session can claim the role, which is how a hand-made empty topic becomes the dashboard instead of General. A group with several workspaces always uses General as the group dashboard.',
     surfaces: ['dashboard'],
     group: 'sessions',
   },
   {
     path: 'sync',
-    usage: '/sync',
+    usage: '/sync [workspace]',
     summary: 'adopt sessions created in the web UI',
     details:
-      'For each session: archived ones are skipped, an existing topic is probed and kept only if it answers, the rest get a topic and a replay of their last 20 messages. Safe to repeat.',
+      'Adopts every active session in every workspace attached to the group (or only the named workspace). Archived sessions are skipped. An existing topic is probed and kept only if it answers; the rest get a topic and a replay of their last 20 messages. In a shared group new topics are prefixed `[Workspace]`. Safe to repeat.',
     surfaces: ['dashboard'],
     group: 'sessions',
   },
@@ -459,9 +460,11 @@ export const COMMANDS: CommandDoc[] = [
   },
   {
     path: 'unarchive',
-    usage: '/unarchive <id|all>',
+    usage: '/unarchive [workspace] <id|all>',
     summary: 'restore archived sessions and give them topics',
-    examples: ['/unarchive 0b6f', '/unarchive all'],
+    details:
+      'A shared group needs the workspace because the runtime does not record which workspace an archived session belonged to; restore those one at a time. A session that still has a topic is reopened in place.',
+    examples: ['/unarchive 0b6f', '/unarchive web-app 0b6f', '/unarchive all'],
     surfaces: ['dashboard'],
     group: 'sessions',
   },
@@ -507,9 +510,9 @@ export const COMMANDS: CommandDoc[] = [
     path: 'bind',
     admin: true,
     usage: '/bind <workspace id or title>',
-    summary: 'attach this group to a workspace (the startgroup link does the same)',
+    summary: 'attach another workspace to this group (the startgroup link does the same)',
     details:
-      'One group hosts one workspace, and one workspace lives in one group. The workspace must exist and be unclaimed; moving a workspace here clears the old group\'s bindings but leaves its conversation history. Only the admin can attach a group.',
+      'A group may host several workspaces; a workspace lives in one group. Adding a second workspace prefixes every existing topic with `[Workspace]` and makes the prefix required. Moving a workspace here clears only its old group bindings and leaves the conversation history. Only the admin can attach a workspace.',
     examples: ['/bind landing-page', '/bind 9cb8f1a2…'],
     surfaces: ['dashboard'],
     group: 'workspace',
@@ -517,9 +520,10 @@ export const COMMANDS: CommandDoc[] = [
   {
     path: 'unbind',
     admin: true,
-    usage: '/unbind',
-    summary: 'detach this group from the workspace',
-    details: 'Deletes the group\'s session topics and clears the bindings. The workspace and its sessions stay in DSH.',
+    usage: '/unbind [workspace|all]',
+    summary: 'detach a workspace from this group',
+    details:
+      'With one workspace the argument is optional. With several, name one or use `all`. Deletes that workspace\'s session topics and bindings; the workspace and its sessions stay in DSH, and sibling workspaces in the group are untouched.',
     surfaces: ['dashboard'],
     group: 'workspace',
   },

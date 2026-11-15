@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.24.0 | `0.2.1-rc.5` | needs UAT | several workspaces per group with `[Workspace]` topic prefixes; `/sync` across every connected workspace, archived sessions skipped; `/new`/`/unbind`/`/unarchive` scoped per workspace; durable topic-name inventory |
 | 0.23.1 | `0.2.1-rc.5` | needs UAT | SDK path prompt accepts absolute paths (0.23.0 cancelled any leading slash); otherwise the 0.23.0 toolchain card |
 | 0.23.0 | `0.2.1-rc.5` | needs UAT | Mobile toolchains from System: status, install/remove of iOS and Android, SDK path prompt, Apple login instructions, logout; privileged actions go through the setup 0.18+ updater `/devtools` endpoint; no credentials in Telegram |
 | 0.22.0 | `0.2.1-rc.5` | needs UAT | rich-first control app: Plugins, Updates, Components, System, Settings, Help, Web, Sessions/Workspaces management; text-entry actions use chat prompts; `/panel` remains legacy |

@@ -11,9 +11,11 @@ import {
   sessionFor,
   sessionKey,
   sessionsOfChat,
+  sessionsOfWorkspace,
   setSession,
   workspaceByChat,
   workspaceIdByChat,
+  workspacesOfChat,
 } from '../src/bindings.js'
 
 const temp = (): Promise<string> => mkdtemp(join(tmpdir(), 'connector-'))
@@ -106,6 +108,40 @@ describe('bindings v2', () => {
     expect(sessionFor(bindings, -100, 1)).toBeUndefined()
     expect(sessionsOfChat(bindings, -100)).toHaveLength(1)
     expect(sessionKey(-100, 2)).toBe('-100:2')
+  })
+})
+
+describe('several workspaces in one group', () => {
+  it('lists the group’s workspaces and keeps each session with its owner', async () => {
+    const bindings = await loadBindings(bindingsPath(await temp()))
+    bindings.workspaces['ws-a'] = { chatId: -100, path: '/srv/a', title: 'A' }
+    bindings.workspaces['ws-b'] = { chatId: -100, path: '/srv/b', title: 'B' }
+    bindings.workspaces['ws-c'] = { chatId: -200, path: '/srv/c', title: 'C' }
+    setSession(bindings, -100, 1, { workspaceId: 'ws-a', sessionId: 'a-1' })
+    setSession(bindings, -100, 2, { workspaceId: 'ws-b', sessionId: 'b-1' })
+    setSession(bindings, -200, 3, { workspaceId: 'ws-c', sessionId: 'c-1' })
+
+    expect(workspacesOfChat(bindings, -100).map(([id]) => id)).toEqual(['ws-a', 'ws-b'])
+    expect(sessionsOfWorkspace(bindings, -100, 'ws-a').map(([thread]) => thread)).toEqual([1])
+    expect(sessionsOfWorkspace(bindings, -100, 'ws-b').map(([thread]) => thread)).toEqual([2])
+    expect(sessionsOfChat(bindings, -100)).toHaveLength(2)
+    // The legacy first-match helpers still answer, but routing uses the session.
+    expect(workspaceIdByChat(bindings, -100)).toBe('ws-a')
+    expect(workspaceByChat(bindings, -100)?.title).toBe('A')
+  })
+
+  it('round-trips the durable topic-title inventory', async () => {
+    const dir = await temp()
+    const file = bindingsPath(dir)
+    const bindings = await loadBindings(file)
+    bindings.topicTitles = { '-100:7': '[A] hello', '-100:8': '[B] other' }
+    bindings.workspaces['ws-a'] = { chatId: -100, path: '/srv/a', title: 'A' }
+    setSession(bindings, -100, 7, { workspaceId: 'ws-a', sessionId: 'a-1', title: 'hello', topicTitle: '[A] hello' })
+    await saveBindings(file, bindings)
+
+    const again = await loadBindings(file)
+    expect(again.topicTitles).toEqual({ '-100:7': '[A] hello', '-100:8': '[B] other' })
+    expect(sessionFor(again, -100, 7)?.topicTitle).toBe('[A] hello')
   })
 })
 

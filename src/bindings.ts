@@ -1,9 +1,10 @@
 /**
- * Durable two-level bindings: workspace ↔ group, session ↔ topic.
+ * Durable bindings: workspace ↔ group, session ↔ topic.
  *
  * The shape follows DSH's own containment: a workspace owns its sessions. A
- * Telegram group stands for a workspace, and each forum topic inside it stands
- * for one session.
+ * Telegram group may host one or several workspaces, and each forum topic
+ * inside it stands for one session. `SessionBinding.workspaceId` is what
+ * decides which workspace a topic belongs to; the group is only the container.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -16,9 +17,9 @@ export interface ModelChoice {
   model?: string
 }
 
-/** A DSH workspace that is represented by one Telegram group. */
+/** A DSH workspace represented by a Telegram group. A group may host several. */
 export interface WorkspaceBinding {
-  /** Telegram group id. */
+  /** Telegram group id; 0 until the workspace is linked. */
   chatId: number
   path: string
   title: string
@@ -31,14 +32,20 @@ export interface WorkspaceBinding {
   seenThreads?: number[]
 }
 
-/** One topic inside a workspace group, standing for one DSH session. */
+/** One topic inside a group, standing for one DSH session. */
 export interface SessionBinding {
   workspaceId: string
   /** DSH session id; minted when the topic is created, adopted by the agent. */
   sessionId: string
   model?: ModelChoice
-  /** Cached topic title, so a rename can be attributed to the user or to us. */
+  /**
+   * Cached session title without the workspace prefix, so a rename can be
+   * attributed to the user or to us. In a multi-workspace group the topic name
+   * is `[Workspace] title`; this field keeps only `title`.
+   */
   title?: string
+  /** Last topic name this connector wrote or observed, including any prefix. */
+  topicTitle?: string
 }
 
 /** A setup update that was requested and has not finished booting yet. */
@@ -107,6 +114,13 @@ export interface Bindings {
   reactions?: StoredReactions
   /** sessionId → live process card that a restart should close. */
   processCards?: Record<string, ProcessCardBinding>
+  /**
+   * `${chatId}:${threadId}` → topic name. Telegram gives bots no way to list
+   * topics, so this is the only durable name inventory; a multi-workspace group
+   * needs it to route a topic before its first session exists (and after a
+   * restart, before any edit event).
+   */
+  topicTitles?: Record<string, string>
   /** workspaceId → group */
   workspaces: Record<string, WorkspaceBinding>
   /** `${chatId}:${threadId}` → session */
@@ -158,6 +172,12 @@ function isProcessCards(value: unknown): value is Record<string, ProcessCardBind
       && typeof card.messageId === 'number'
       && typeof card.rich === 'boolean'
   })
+}
+
+function isTopicTitles(value: unknown): value is Record<string, string> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.entries(value as Record<string, unknown>)
+    .every(([key, title]) => /^-?\d+:\d+$/.test(key) && typeof title === 'string')
 }
 
 function isReactions(value: unknown): value is StoredReactions {
@@ -222,6 +242,7 @@ export async function loadBindings(file: string, warn?: (line: string) => void):
     ...(typeof parsed.timezone === 'string' ? { timezone: parsed.timezone } : {}),
     ...(isReactions(parsed.reactions) ? { reactions: parsed.reactions } : {}),
     ...(isProcessCards(parsed.processCards) ? { processCards: parsed.processCards } : {}),
+    ...(isTopicTitles(parsed.topicTitles) ? { topicTitles: parsed.topicTitles } : {}),
     workspaces: parsed.workspaces ?? {},
     sessions: parsed.sessions ?? {},
   }
@@ -251,6 +272,25 @@ export function workspaceByChat(bindings: Bindings, chatId: number): WorkspaceBi
 
 export function workspaceIdByChat(bindings: Bindings, chatId: number): string | undefined {
   return Object.entries(bindings.workspaces).find(([, workspace]) => workspace.chatId === chatId)?.[0]
+}
+
+/** Every workspace attached to one group, in title order. */
+export function workspacesOfChat(
+  bindings: Bindings,
+  chatId: number,
+): Array<[string, WorkspaceBinding]> {
+  return Object.entries(bindings.workspaces)
+    .filter(([, workspace]) => workspace.chatId === chatId)
+    .sort((left, right) => left[1].title.localeCompare(right[1].title, undefined, { sensitivity: 'base' }))
+}
+
+/** The topic ids one workspace owns inside a group. */
+export function sessionsOfWorkspace(
+  bindings: Bindings,
+  chatId: number,
+  workspaceId: string,
+): Array<[number, SessionBinding]> {
+  return sessionsOfChat(bindings, chatId).filter(([, session]) => session.workspaceId === workspaceId)
 }
 
 /** Find a workspace by id, exact title, path basename or a unique prefix of the id. */
