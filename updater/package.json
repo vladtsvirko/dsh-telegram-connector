@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-updater",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Stable plugin update orchestrator for DSH: survives updates of the plugins it manages.",
   "type": "module",
   "main": "index.js",

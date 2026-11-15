@@ -31,6 +31,32 @@ async function post(pathInfo, body) {
   return response.json().catch(() => ({}))
 }
 
+async function sendTrialCard(chatId, text, trialId) {
+  const token = process.env.DSH_TELEGRAM_BOT_TOKEN ?? ''
+  if (token.length === 0 || chatId === undefined || chatId === null) return
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: 'Commit', callback_data: `trial:commit:${trialId}` },
+            { text: 'Roll back', callback_data: `trial:rollback:${trialId}` },
+          ]],
+        },
+      }),
+      signal: AbortSignal.timeout(10000),
+    })
+  } catch {
+    // The connector's own card is the fallback for a connector update; for
+    // other plugins the supervisor still holds the trial.
+  }
+}
+
 async function notify(chatId, text) {
   const token = process.env.DSH_TELEGRAM_BOT_TOKEN ?? ''
   if (token.length === 0 || chatId === undefined || chatId === null) return
@@ -52,8 +78,9 @@ export function apply(ctx) {
   const runUpdate = async (request) => {
     const manager = ctx.get('pluginManager')
     if (manager === undefined) throw new Error('the plugin manager is not mounted')
-    const { name: target, spec, chatId, label } = request
-    await post('/trial/open')
+    const { name: target, spec, chatId, label, announce } = request
+    const opened = await post('/trial/open')
+    const trial = opened?.trial
     await notify(chatId, `reloading ${label ?? target} live — no restart. The bot is back in a few seconds; the commit card follows.`)
     try {
       const removed = await manager.removeBundle(target)
@@ -68,6 +95,17 @@ export function apply(ctx) {
       if (installed.application !== 'applied') {
         await post('/trial/abandon').catch(() => undefined)
         await post('/update', { trial: true, ref: spec })
+        return
+      }
+      if (announce !== false && trial?.id !== undefined) {
+        const minutes = typeof trial.deadline === 'number'
+          ? Math.max(1, Math.round((trial.deadline - Date.now()) / 60000))
+          : undefined
+        await sendTrialCard(
+          chatId,
+          `updated ${label ?? target} — the new version is live.\n\ncommit it below, or put the previous state back${minutes === undefined ? '' : `; otherwise it rolls back in ${String(minutes)}m`}.`,
+          trial.id,
+        )
       }
     } catch (error) {
       await notify(chatId, `the live reload failed: ${String(error)}; rolling back.`)
@@ -76,6 +114,7 @@ export function apply(ctx) {
   }
 
   ctx.provide('pluginUpdater', {
+    version: '0.2.0',
     /**
      * Start an update. Returns false when this runtime cannot run it, so the
      * caller can fall back to its own path.

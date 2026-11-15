@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.21.0
+
+- **One update path for every plugin.** Connector, Penpot and `/system update
+  plugin …` / `/plugins update …` now all call the stable `pluginUpdater`:
+  open the HMR trial, remove + install the target, and let the new connector
+  adopt the trial when the target is the connector. The connector no longer
+  runs its own remove/install pipeline.
+- **The updater can post the card for non-connector targets.** It sends one
+  Commit/Roll back card with the trial id; the connector receives the callbacks
+  and commits or rolls back. Connector updates keep the reloaded connector's
+  card, so no duplicate.
+- The installed updater is versioned (`0.2.0`); `ensurePluginUpdater` upgrades
+  the copy from the connector package before routing. The connector's old
+  remove/install path remains only when the updater cannot be installed.
+
 ## 0.20.0
 
 - **A stable plugin updater ships with the connector.** `dsh-plugin-updater` is a

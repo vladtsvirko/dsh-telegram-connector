@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.21.0 | `0.2.1-rc.5` | needs UAT | every plugin update routes through `pluginUpdater`; non-connector targets get one updater card, connector targets keep the reloaded connector's card; updater 0.2.0 upgrades itself from the connector package |
 | 0.20.0 | `0.2.1-rc.5` | needs UAT | separate `dsh-plugin-updater` bundle installed once; connector updates remove/install through it with an HMR trial; automatic supervisor restart only on `restart-required`/failure |
 | 0.19.3 | `0.2.1-rc.5` | needs UAT | trial card only after the web answers; early Commit refused; commit feedback falls back to a message |
 | 0.19.2 | `0.2.1-rc.5` | needs UAT | rich-message card fallback (Home/Sessions/System, model, Forget, Restart) while Telegram has widgets disabled; widgets return automatically with a ten-minute probe |

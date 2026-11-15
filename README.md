@@ -81,9 +81,10 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   commands. Web UI prompts are unmarked; the marker is in the session, not in
   the Telegram message.
 - **Live plugin updates.** The connector ships a separate `dsh-plugin-updater`
-  bundle. The first connector update installs it into the profile once; after
-  that, `/system update connector` removes and reinstalls the connector through
-  the updater while the rest of DSH stays up. HMR applies the reload; a
+  bundle. It is installed once into the profile; every plugin update —
+  connector, Penpot, or `/system update plugin …` — goes through it: HMR trial,
+  remove + install, one commit card. The updater is never the target, so it
+  survives the update it is running. HMR applies the reload; a
   `restart-required` response falls back to the supervisor restart. The updater
   is a separate bundle, so it is never unloaded by the connector update it is
   running.
@@ -168,7 +169,7 @@ install without the setup.
 The connector is published to npm as an exact version:
 
 ```sh
-dsh plugin --profile web add dsh-telegram-connector@0.20.0
+dsh plugin --profile web add dsh-telegram-connector@0.21.0
 ```
 
 The registry tarball already contains the built `lib/`, so there is no
@@ -199,7 +200,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.20.0
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.21.0
 ```
 
 That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the

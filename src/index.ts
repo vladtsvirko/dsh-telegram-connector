@@ -2424,6 +2424,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         spec: release.spec,
         chatId: message.chat.id,
         label: `the connector ${current} → ${release.version}`,
+        announce: false,
       })) return
       const live = await startLiveConnectorUpdate(message.chat.id, release.spec, release.version)
         .catch((error: unknown) => {
@@ -2810,7 +2811,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     serviceOf<PluginManagerService>(ctx, 'pluginManager')
 
   interface PluginUpdaterService {
-    update(request: { name: string; spec: string; chatId?: number; label?: string }): boolean
+    version?: string
+    update(request: { name: string; spec: string; chatId?: number; label?: string; announce?: boolean }): boolean
     busy(): boolean
   }
 
@@ -2820,16 +2822,35 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * package) so updating the connector never unloads the updater.
    */
   const ensurePluginUpdater = async (): Promise<PluginUpdaterService | undefined> => {
-    const existing = serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
-    if (existing !== undefined) return existing
     const manager = pluginManager()
     if (manager === undefined) return undefined
+    // The updater needs the supervisor; leave test/standalone contexts alone.
+    if ((process.env.DSH_SUPERVISOR_URL ?? '').trim().length === 0
+      || (process.env.DSH_SUPERVISOR_TOKEN ?? '').trim().length === 0) return undefined
+    const home = (process.env.DSH_HOME ?? '').trim()
+    if (home.length === 0) return undefined
+    const source = join(dirname(fileURLToPath(import.meta.url)), '..', 'updater')
+    const target = join(home, 'plugins', 'dsh-plugin-updater')
+    let bundled = ''
     try {
-      const source = join(dirname(fileURLToPath(import.meta.url)), '..', 'updater')
-      const home = (process.env.DSH_HOME ?? '').trim()
-      if (home.length === 0) return undefined
-      const target = join(home, 'plugins', 'dsh-plugin-updater')
+      bundled = (JSON.parse(await readFile(join(source, 'package.json'), 'utf8')) as { version?: string }).version ?? ''
+    } catch (error) {
+      stderr(`cannot read the bundled updater version: ${String(error)}`)
+      return serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
+    }
+    const existing = serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
+    if (existing !== undefined && existing.version === bundled) return existing
+    try {
       await cp(source, target, { recursive: true, force: true })
+      if (existing !== undefined) {
+        // The updater is a separate bundle, so the connector can replace it
+        // without losing the actor that will do the actual plugin update.
+        const removed = await manager.removeBundle('dsh-plugin-updater')
+        if (removed.application === 'failed' || removed.application === 'cancelled') {
+          stderr(`plugin updater upgrade: remove ${removed.application}`)
+          return undefined
+        }
+      }
       const result = await manager.installBundle(target, { enabled: true, saveExact: true })
       if (result.application === 'failed' || result.application === 'cancelled') {
         stderr(`plugin updater install: ${result.application}`)
@@ -2837,10 +2858,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       for (let attempt = 0; attempt < 60; attempt += 1) {
         const service = serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
-        if (service !== undefined) return service
+        if (service !== undefined && service.version === bundled) return service
         await new Promise((resolve) => setTimeout(resolve, 500))
       }
-      stderr('plugin updater did not register its service')
+      stderr('plugin updater did not register its current service')
       return undefined
     } catch (error) {
       stderr(`cannot install the plugin updater: ${String(error)}`)
@@ -3019,6 +3040,17 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       if (order === 0) {
         return reply(message, `\`${bundle.name}\` is current (${current}); ${release.tag} is the newest version.`)
       }
+    }
+
+    if (!noTrial) {
+      const updater = await ensurePluginUpdater()
+      if (updater !== undefined && updater.update({
+        name: bundle.name,
+        spec: release.spec,
+        chatId: message.chat.id,
+        label: `${bundle.name} ${current ?? ''} → ${release.version}`,
+        announce: true,
+      })) return
     }
 
     let liveTrial: { id: string; deadline: number | null } | undefined
