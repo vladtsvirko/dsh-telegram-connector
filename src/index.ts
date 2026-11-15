@@ -2426,12 +2426,6 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         label: `the connector ${current} → ${release.version}`,
         announce: false,
       })) return
-      const live = await startLiveConnectorUpdate(message.chat.id, release.spec, release.version)
-        .catch((error: unknown) => {
-          stderr(`cannot start the live connector update: ${String(error)}`)
-          return false
-        })
-      if (live) return
     }
     try {
       await flushOffset()
@@ -2829,28 +2823,15 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       || (process.env.DSH_SUPERVISOR_TOKEN ?? '').trim().length === 0) return undefined
     const home = (process.env.DSH_HOME ?? '').trim()
     if (home.length === 0) return undefined
+    const existing = serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
+    // Never upgrade the updater inside an update command: that is a second
+    // HMR transaction while the first one may still be settling. An existing
+    // version is used as-is; the connector posts the card for an old updater.
+    if (existing !== undefined) return existing
     const source = join(dirname(fileURLToPath(import.meta.url)), '..', 'updater')
     const target = join(home, 'plugins', 'dsh-plugin-updater')
-    let bundled = ''
-    try {
-      bundled = (JSON.parse(await readFile(join(source, 'package.json'), 'utf8')) as { version?: string }).version ?? ''
-    } catch (error) {
-      stderr(`cannot read the bundled updater version: ${String(error)}`)
-      return serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
-    }
-    const existing = serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
-    if (existing !== undefined && existing.version === bundled) return existing
     try {
       await cp(source, target, { recursive: true, force: true })
-      if (existing !== undefined) {
-        // The updater is a separate bundle, so the connector can replace it
-        // without losing the actor that will do the actual plugin update.
-        const removed = await manager.removeBundle('dsh-plugin-updater')
-        if (removed.application === 'failed' || removed.application === 'cancelled') {
-          stderr(`plugin updater upgrade: remove ${removed.application}`)
-          return undefined
-        }
-      }
       const result = await manager.installBundle(target, { enabled: true, saveExact: true })
       if (result.application === 'failed' || result.application === 'cancelled') {
         stderr(`plugin updater install: ${result.application}`)
@@ -2858,10 +2839,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       for (let attempt = 0; attempt < 60; attempt += 1) {
         const service = serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
-        if (service !== undefined && service.version === bundled) return service
+        if (service !== undefined) return service
         await new Promise((resolve) => setTimeout(resolve, 500))
       }
-      stderr('plugin updater did not register its current service')
+      stderr('plugin updater did not register its service')
       return undefined
     } catch (error) {
       stderr(`cannot install the plugin updater: ${String(error)}`)
@@ -3004,6 +2985,26 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * both steps; when the install fails, the previous spec is put back at once
    * rather than leaving the profile without the plugin until the deadline.
    */
+  const waitForTrial = async (timeoutMs: number): Promise<{ id: string; deadline: number | null } | undefined> => {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const status = await supervisor?.status().catch(() => undefined)
+      if (status?.trial !== undefined && status.trial !== null) {
+        return { id: status.trial.id, deadline: status.trial.deadline }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    return undefined
+  }
+
+  /**
+   * Move an installed bundle to a newer tag.
+   *
+   * One path: the stable updater performs remove + install under its HMR
+   * trial. If it is unavailable, restart through the supervisor instead of
+   * running a second in-process HMR transaction. The connector itself is just
+   * another target, announced by its reloaded instance.
+   */
   const updateManagedPlugin = async (
     message: TgMessage,
     name: string,
@@ -3050,58 +3051,51 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         chatId: message.chat.id,
         label: `${bundle.name} ${current ?? ''} → ${release.version}`,
         announce: true,
-      })) return
-    }
-
-    let liveTrial: { id: string; deadline: number | null } | undefined
-    if (!noTrial && supervisor !== undefined) {
-      try {
-        const opened = await supervisor.openTrial()
-        if (opened.trial === undefined) throw new Error('the supervisor returned no trial')
-        liveTrial = { id: opened.trial.id, deadline: opened.trial.deadline }
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
-        return reply(message, `cannot open a rollback window (${detail}) — nothing was changed.`)
-      }
-    }
-
-    const previous = bundle.source
-    try {
-      await reply(message, `updating \`${bundle.name}\` ${current ?? ''} → ${release.version} — pnpm may take a minute.`)
-      const removed = await manager.removeBundle(bundle.name)
-      if (removed.application === 'failed' || removed.application === 'cancelled') {
-        if (liveTrial !== undefined) await supervisor?.abandonTrial().catch(() => undefined)
-        return reply(message, describeChange(removed, 'remove'))
-      }
-      const installed = await manager.installBundle(release.spec, { enabled: bundle.enabled })
-      if (installed.application === 'failed' || installed.application === 'cancelled') {
-        await reply(message, describeChange(installed, 'update'))
-        let restored: ChangeResult | undefined
-        try {
-          restored = await manager.installBundle(previous, { enabled: bundle.enabled })
-        } catch (error) {
-          stderr(`restoring ${bundle.name} failed: ${String(error)}`)
-        }
-        if (restored !== undefined && restored.application !== 'failed' && restored.application !== 'cancelled') {
-          if (liveTrial !== undefined) await supervisor?.abandonTrial().catch(() => undefined)
-          return reply(message, `\`${bundle.name}\` ${current ?? ''} is back in place — the update changed nothing.`)
-        }
-        // The fallback install failed too. Let the supervisor's snapshot do the
-        // only restoration that is guaranteed to be complete.
-        if (liveTrial !== undefined && supervisor !== undefined) {
-          await reply(message, 'the previous version could not be reinstalled; rolling the profile back…')
-          await supervisor.rollback(`plugin update of ${bundle.name} failed`).catch((error: unknown) => {
-            stderr(`rollback after failed update: ${String(error)}`)
-          })
-        } else {
-          await reply(message, 'the previous version could not be reinstalled — install it again from the host.')
+      })) {
+        // An older updater (0.1.x) cannot post the non-connector card. The
+        // connector is still up for this target, so it announces the trial
+        // itself; 0.2.x posts and the connector stays quiet.
+        if (updater.version === undefined) {
+          const trial = await waitForTrial(3000)
+          if (trial !== undefined) {
+            await sendTrialMessage(
+              message.chat.id,
+              `**updated** \`${bundle.name}\` ${current ?? ''} → ${release.version}.\n\ncommit it with the buttons below (or \`/system confirm\`), or put the previous state back with \`/system rollback\`.`,
+              trial.id,
+            )
+          }
         }
         return
       }
-      await finishPluginChange(message, installed, 'updated', liveTrial, !noTrial)
+    }
+    if (supervisor === undefined) {
+      // Standalone/test contexts have no supervisor and therefore no trial:
+      // fall back to the plugin manager's own remove + install.
+      try {
+        await reply(message, `updating \`${bundle.name}\` ${current ?? ''} → ${release.version}…`)
+        const removed = await manager.removeBundle(bundle.name)
+        if (removed.application === 'failed' || removed.application === 'cancelled') {
+          return reply(message, describeChange(removed, 'remove'))
+        }
+        const installed = await manager.installBundle(release.spec, { enabled: bundle.enabled })
+        if (installed.application === 'failed' || installed.application === 'cancelled') {
+          await manager.installBundle(bundle.source, { enabled: bundle.enabled }).catch(() => undefined)
+          return reply(message, describeChange(installed, 'update'))
+        }
+        return reply(message, `updated \`${bundle.name}\` to ${release.version}.`)
+      } catch (error) {
+        return reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    try {
+      await flushOffset()
+      await replyNow(
+        message,
+        `updating \`${bundle.name}\` ${current ?? ''} → ${release.version} — restarting dsh to apply it.`,
+      )
+      await supervisor.update(!noTrial, release.spec)
     } catch (error) {
-      if (liveTrial !== undefined) await supervisor?.abandonTrial().catch(() => undefined)
-      await reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
+      return reply(message, `error: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

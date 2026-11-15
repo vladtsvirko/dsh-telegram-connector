@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.21.1 | `0.2.1-rc.5` | needs UAT | updater-only update path; no in-command updater upgrade (fixes `HMR transactions cannot be nested`); supervisor restart fallback; 0.1.x updater card fallback |
 | 0.21.0 | `0.2.1-rc.5` | needs UAT | every plugin update routes through `pluginUpdater`; non-connector targets get one updater card, connector targets keep the reloaded connector's card; updater 0.2.0 upgrades itself from the connector package |
 | 0.20.0 | `0.2.1-rc.5` | needs UAT | separate `dsh-plugin-updater` bundle installed once; connector updates remove/install through it with an HMR trial; automatic supervisor restart only on `restart-required`/failure |
 | 0.19.3 | `0.2.1-rc.5` | needs UAT | trial card only after the web answers; early Commit refused; commit feedback falls back to a message |

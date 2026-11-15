@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.21.1
+
+- **Fixed a nested HMR transaction during plugin updates.** The updater was
+  upgraded inside the update command; that opened a second HMR transaction
+  ("HMR transactions cannot be nested") and made `/system update plugin …`
+  fail. The installed updater is now used as-is; a connector still posts the
+  trial card for an older updater, so no upgrade is required mid-update.
+- **One path, one fallback.** Updates go through `pluginUpdater`; when it is
+  unavailable the connector uses the supervisor restart, never a second
+  in-process remove/install. The plugin-manager path remains only for a
+  standalone runtime without a supervisor.
+- The updater's bundled 0.2.0 files take effect at the next DSH start; the
+  connector's card fallback covers 0.1.x until then.
+
 ## 0.21.0
 
 - **One update path for every plugin.** Connector, Penpot and `/system update
