@@ -69,6 +69,8 @@ export interface PanelMessageBinding {
   messageId: number
   /** Card target (`home`, `system`, `sessions`, `workspace:<id>`, …), when it is a card. */
   screen?: string
+  /** `card` = widget, `rich` = rich-message fallback, `panel` = legacy tabbed widget. */
+  kind?: 'card' | 'rich' | 'panel'
 }
 
 /** The trial message that owns the Commit / Roll back buttons, so a later boot can retire it. */
@@ -131,10 +133,11 @@ function isUpdate(value: unknown): value is UpdateBinding {
 
 function isPanelMessage(value: unknown): value is PanelMessageBinding {
   if (value === null || typeof value !== 'object') return false
-  const candidate = value as { chatId?: unknown; messageId?: unknown; screen?: unknown }
+  const candidate = value as { chatId?: unknown; messageId?: unknown; screen?: unknown; kind?: unknown }
   return typeof candidate.chatId === 'number'
     && typeof candidate.messageId === 'number'
     && (candidate.screen === undefined || typeof candidate.screen === 'string')
+    && (candidate.kind === undefined || candidate.kind === 'card' || candidate.kind === 'rich' || candidate.kind === 'panel')
 }
 
 function isTrialMessage(value: unknown): value is TrialMessageBinding {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.19.2
+
+- **Rich-message card fallback.** While Telegram has HTML widgets disabled
+  (the 2026-11-13 security shutdown), `/start` renders the same card app as a
+  rich message with an inline keyboard: Home, Sessions → workspace → session,
+  System, the web link, model choice, Forget and Restart, navigated by editing
+  the same message in place. No flat text menu and no extra messages.
+- Widgets stay preferred and return by themselves: the connector retries after
+  ten minutes, and a successful send brings the widget cards back.
+
 ## 0.19.1
 
 - **Telegram's widget shutdown is handled honestly.** On 2026-11-13 Telegram

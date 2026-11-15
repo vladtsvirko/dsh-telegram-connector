@@ -16,6 +16,7 @@
  */
 
 import { escapeHtml } from './render.js'
+import type { TgInlineButton, TgInlineKeyboard } from './telegram.js'
 
 /** Telegram's limits, enforced by tests. */
 export const CARD_HTML_BYTES = 32768
@@ -237,4 +238,108 @@ export function renderCard(view: CardView): string {
 ${hero}${lines}${rows}${tiles}${chipSection}${note}${actionSection}
 <div class="foot" id="f"></div>
 <script>${SCRIPT.split('CHIP_APPLY').join(arg(chipApply))}</script>`
+}
+
+
+// ---------------------------------------------------------------------------
+// Rich-message fallback
+// ---------------------------------------------------------------------------
+
+/**
+ * The same card, rendered as a rich message with an inline keyboard.
+ *
+ * Telegram disabled HTML widgets on 2026-11-13 after security reports, so the
+ * card app needs a carrier that still exists. Rich messages (Bot API 10.1+)
+ * support headings, lists and inline keyboards; navigation edits the same
+ * message in place, which keeps the one-screen behaviour without widgets.
+ */
+export interface RichCard {
+  html: string
+  keyboard: TgInlineKeyboard
+}
+
+/** Telegram button labels are short; keep them readable. */
+const BUTTON_TEXT_MAX = 60
+
+function buttonText(text: string): string {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  return clean.length <= BUTTON_TEXT_MAX ? clean : `${clean.slice(0, BUTTON_TEXT_MAX - 1)}…`
+}
+
+/** Callback data is capped at 64 bytes; a card without it is not tappable. */
+function callbackData(value: string): string | undefined {
+  const data = `rc:${value}`
+  return data.length <= 64 ? data : undefined
+}
+
+export function renderRichCard(view: CardView): RichCard {
+  const html: string[] = [`<p><b>${escapeHtml(view.title)}</b> <i>${escapeHtml(view.version)}</i></p>`]
+  if (view.hero !== undefined) {
+    html.push(`<p><b>${escapeHtml(view.hero.big)}</b></p>`)
+    html.push(`<p><i>${escapeHtml(view.hero.meta)}</i></p>`)
+  }
+  for (const line of view.lines ?? []) {
+    html.push(`<p><b>${escapeHtml(line.k)}</b> — ${escapeHtml(line.v)}</p>`)
+  }
+  if (view.rows !== undefined && view.rows.length > 0) {
+    const items = view.rows
+      .map((row) => `<li><b>${escapeHtml(row.title)}</b>${row.meta === undefined ? '' : ` — ${escapeHtml(row.meta)}`}</li>`)
+      .join('')
+    html.push(`<ul>${items}</ul>`)
+  }
+  if (view.chips !== undefined) html.push(`<p><b>${escapeHtml(view.chips.label)}</b></p>`)
+  if (view.note !== undefined) html.push(`<p><i>${escapeHtml(view.note)}</i></p>`)
+
+  const rows: TgInlineButton[][] = []
+  const push = (text: string, value?: string, url?: string): void => {
+    if (url !== undefined) {
+      rows.push([{ text: buttonText(text), url }])
+      return
+    }
+    if (value === undefined) return
+    const data = callbackData(value)
+    if (data !== undefined) rows.push([{ text: buttonText(text), callback_data: data }])
+  }
+
+  if (view.back !== undefined) push('‹ Back', `n:${view.back}`)
+  else if (view.screen !== 'home') push('⌂ Home', 'n:home')
+
+  const tiles = view.tiles ?? []
+  for (let index = 0; index < tiles.length; index += 2) {
+    const row: TgInlineButton[] = []
+    for (const tile of tiles.slice(index, index + 2)) {
+      const value = tile.go !== undefined ? `n:${tile.go}` : tile.act === undefined ? undefined : `a:${tile.act}`
+      const data = value === undefined ? undefined : callbackData(value)
+      if (data !== undefined) row.push({ text: buttonText(tile.title), callback_data: data })
+    }
+    if (row.length > 0) rows.push(row)
+  }
+
+  for (const row of view.rows ?? []) {
+    const label = row.meta === undefined ? row.title : `${row.title} · ${row.meta}`
+    if (row.href !== undefined) push(label, undefined, row.href)
+    else if (row.go !== undefined) push(label, `n:${row.go}`)
+    else if (row.act !== undefined) push(label, `a:${row.act}`)
+  }
+
+  if (view.chips !== undefined) {
+    let row: TgInlineButton[] = []
+    for (const chip of view.chips.items) {
+      const data = callbackData(`a:${view.chips.apply}:${chip.value}`)
+      if (data === undefined) continue
+      row.push({ text: buttonText(`${chip.on === true ? '✓ ' : ''}${chip.label}`), callback_data: data })
+      if (row.length === 2) {
+        rows.push(row)
+        row = []
+      }
+    }
+    if (row.length > 0) rows.push(row)
+  }
+
+  for (const action of view.actions ?? []) {
+    if (action.href !== undefined) push(action.label, undefined, action.href)
+    else if (action.act !== undefined) push(action.label, `a:${action.act}`)
+  }
+
+  return { html: html.join('\n'), keyboard: { inline_keyboard: rows } }
 }

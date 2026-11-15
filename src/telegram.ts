@@ -233,7 +233,8 @@ export interface WidgetSendOptions {
 
 export interface TgInlineButton {
   text: string
-  callback_data: string
+  callback_data?: string
+  url?: string
 }
 
 export interface TgChatMember {
@@ -442,6 +443,31 @@ export class TelegramClient {
       chat_id: chatId,
       rich_message: { markdown },
       ...(options.threadId === undefined ? {} : { message_thread_id: options.threadId }),
+      ...(options.replyMarkup === undefined ? {} : { reply_markup: options.replyMarkup }),
+    })
+  }
+
+  /** Send a rich message with explicit rich HTML (Bot API 10.2+). */
+  sendRichHtml(chatId: number, html: string, options: RichSendOptions = {}): Promise<TgMessage> {
+    return this.call<TgMessage>('sendRichMessage', {
+      chat_id: chatId,
+      rich_message: { html },
+      ...(options.threadId === undefined ? {} : { message_thread_id: options.threadId }),
+      ...(options.replyMarkup === undefined ? {} : { reply_markup: options.replyMarkup }),
+    })
+  }
+
+  /** Edit a rich message with explicit rich HTML. */
+  editRichHtml(
+    chatId: number,
+    messageId: number,
+    html: string,
+    options: RichSendOptions = {},
+  ): Promise<TgMessage | boolean> {
+    return this.call<TgMessage | boolean>('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      rich_message: { html },
       ...(options.replyMarkup === undefined ? {} : { reply_markup: options.replyMarkup }),
     })
   }

@@ -82,31 +82,70 @@ describe('the card app', () => {
     expect(html).toContain('Forget')
   }, 20_000)
 
-  it('falls back to the text menu while Telegram has widgets disabled', async () => {
+  it('falls back to rich cards while Telegram has widgets disabled', async () => {
     const harness = await boot(
       { adminUserId: USER_ID, allowedUserIds: [USER_ID] },
       { failSend: (call) => (call.method === 'sendWidget' ? 'Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED' : undefined) },
     )
     active.push(harness)
     harness.pushUpdate(privateUpdate(harness, '/start'))
-    const menu = await harness.waitFor(
-      () => harness.sent.find((call) => callText(call).includes('<b>menu</b>')),
-      'the text menu',
+    const rich = await harness.waitFor(
+      () => harness.calls.find((call) => call.method === 'sendRichMessage'),
+      'the rich card',
       6000,
     )
-    expect(callText(menu)).toContain('/system status')
-    expect(harness.calls.some((call) => call.method === 'sendWidget')).toBe(true)
-    expect(harness.sent.some((call) => callText(call).includes('needs a Telegram client'))).toBe(false)
+    const richMessage = rich.params.rich_message as { html?: string }
+    expect(String(richMessage.html)).toContain('Control')
+    expect(JSON.stringify(rich.params.reply_markup)).toContain('Sessions')
+    expect(rich.params.reply_markup).toBeTruthy()
+    expect(harness.sent.some((call) => callText(call).includes('<b>menu</b>'))).toBe(false)
 
-    // While the block is cached, /start must not try the API again.
     const attempts = harness.calls.filter((call) => call.method === 'sendWidget').length
+    expect(attempts).toBe(1)
     harness.pushUpdate(privateUpdate(harness, '/start'))
     await harness.waitFor(
-      () => harness.sent.filter((call) => callText(call).includes('<b>menu</b>')).length >= 2,
-      'the second text menu',
+      () => harness.calls.filter((call) => call.method === 'sendRichMessage').length >= 2,
+      'the second rich card',
       6000,
     )
     expect(harness.calls.filter((call) => call.method === 'sendWidget').length).toBe(attempts)
+  }, 20_000)
+
+  it('navigates a rich card in place', async () => {
+    const harness = await boot(
+      { adminUserId: USER_ID, allowedUserIds: [USER_ID] },
+      { failSend: (call) => (call.method === 'sendWidget' ? 'Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED' : undefined) },
+    )
+    active.push(harness)
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    const rich = await harness.waitFor(
+      () => harness.calls.find((call) => call.method === 'sendRichMessage'),
+      'the rich card',
+      6000,
+    )
+    const messageId = rich.messageId
+    expect(messageId).toBeTruthy()
+    harness.pushUpdate({
+      update_id: 9400,
+      callback_query: {
+        id: 'cb-rich-1',
+        from: { id: USER_ID, is_bot: false, first_name: 'Admin' },
+        message: {
+          message_id: messageId as number,
+          chat: { id: USER_ID, type: 'private' },
+          date: 0,
+        },
+        data: 'rc:n:sessions',
+      },
+    })
+    const edited = await harness.waitFor(
+      () => harness.edited.find((call) => call.method === 'editMessageText'),
+      'the edited rich card',
+      6000,
+    )
+    const html = String((edited.params.rich_message as { html?: string }).html)
+    expect(html).toContain('Test Workspace')
+    expect(edited.params.reply_markup).toBeTruthy()
   }, 20_000)
 
   it('keeps the legacy panel reachable during the transition', async () => {

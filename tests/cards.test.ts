@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { deflateSync } from 'node:zlib'
-import { CARD_COMPRESSED_BYTES, CARD_HTML_BYTES, renderCard, type CardView } from '../src/cards.js'
+import { CARD_COMPRESSED_BYTES, CARD_HTML_BYTES, renderCard, renderRichCard, type CardView } from '../src/cards.js'
 
 function view(overrides: Partial<CardView> = {}): CardView {
   return {
@@ -84,5 +84,40 @@ describe('the card renderer', () => {
       expect(Buffer.byteLength(html, 'utf8')).toBeLessThanOrEqual(CARD_HTML_BYTES)
       expect(deflateSync(html, { level: 9 }).length).toBeLessThan(CARD_COMPRESSED_BYTES - 150)
     }
+  })
+})
+
+describe('the rich-message fallback', () => {
+  it('renders the card as rich HTML plus a tappable keyboard', () => {
+    const rich = renderRichCard(view({
+      screen: 'session',
+      title: 'Topic 42',
+      back: 'workspace',
+      lines: [{ k: 'model', v: 'opencode-go/glm-5' }],
+      rows: [{ title: 'dsh-setup', meta: '4 sessions', go: 'session:0' }],
+      chips: { label: 'model', items: [{ label: 'GLM', value: 'opencode-go/glm-5', on: true }, { label: 'Kimi', value: 'opencode-go/kimi' }], apply: 'model' },
+      actions: [{ label: 'Open topic', href: 'https://t.me/c/1/42' }, { label: 'Forget', act: 'forget', tone: 'bad' }],
+    }))
+    expect(rich.html).toContain('<b>Topic 42</b>')
+    expect(rich.html).toContain('opencode-go/glm-5')
+    const buttons = rich.keyboard.inline_keyboard.flat()
+    expect(buttons.some((button) => button.url === 'https://t.me/c/1/42')).toBe(true)
+    expect(buttons.some((button) => button.callback_data === 'rc:n:workspace')).toBe(true)
+    expect(buttons.some((button) => button.callback_data === 'rc:a:model:opencode-go/glm-5')).toBe(true)
+    for (const button of buttons) {
+      if (button.callback_data !== undefined) {
+        expect(Buffer.byteLength(button.callback_data, 'utf8')).toBeLessThanOrEqual(64)
+      }
+    }
+  })
+
+  it('escapes rich HTML and keeps long callback data out', () => {
+    const rich = renderRichCard(view({
+      title: '</b><script>x',
+      chips: { label: 'model', items: [{ label: 'x', value: 'p/'.padEnd(70, 'x') }], apply: 'model' },
+    }))
+    expect(rich.html).not.toContain('<script>')
+    expect(rich.html).toContain('&lt;/b&gt;')
+    expect(rich.keyboard.inline_keyboard.flat().some((button) => button.callback_data?.startsWith('rc:a:model:'))).toBe(false)
   })
 })

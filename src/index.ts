@@ -24,7 +24,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { TelegramClient, TelegramApiError, isRichRejected, type TgCallbackQuery, type TgInlineKeyboard, type TgMessage, type TgWidgetQuery } from './telegram.js'
 import { splitForHtml, splitMessage, toPlainText, toRichMarkdown, toTelegramHtml } from './render.js'
 import { PANEL_MAX_WORKSPACES, panelCaption, panelComponents, panelError, panelOk, panelPlugins, panelSpaces, panelStatus, panelWeb, renderPanelHtml, workspaceLink, type PanelPlugin, type PanelState, type PanelTrial } from './panel.js'
-import { renderCard, type CardLine, type CardView } from './cards.js'
+import { renderCard, renderRichCard, type CardLine, type CardView } from './cards.js'
 import { installTelegramPrompt, registerTelegramSkill } from './telegram-prompt.js'
 import {
   attachmentPlaceholder,
@@ -4055,7 +4055,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         caption: panelCaption(state),
         allowQueries: true,
       })
-      bindings.panelMessage = { chatId, messageId: sent.message_id }
+      bindings.panelMessage = { chatId, messageId: sent.message_id, kind: 'panel' }
       await persist()
     } catch (error) {
       if (isWidgetUnavailable(error)) {
@@ -4107,6 +4107,34 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const [kind, workspaceId, sessionId] = screen.split(':')
     if (kind !== 'session' || workspaceId === undefined || sessionId === undefined) return undefined
     return { workspaceId, sessionId }
+  }
+
+  /** Resolve a short card target against the current screen. */
+  const resolveCardTarget = (target: string): string | undefined => {
+    if (target === 'home' || target === 'system' || target === 'sessions') return target
+    if (target === 'workspace') {
+      const screen = bindings.panelMessage?.screen
+      if (screen?.startsWith('session:')) {
+        const [, workspaceId] = screen.split(':')
+        return workspaceId === undefined ? 'sessions' : `workspace:${workspaceId}`
+      }
+      return screen?.startsWith('workspace:') ? screen : 'sessions'
+    }
+    if (target === 'session') {
+      const context = sessionContext()
+      return context === undefined ? 'sessions' : `session:${context.workspaceId}:${context.sessionId}`
+    }
+    if (target.startsWith('workspace:')) {
+      const entry = sortedWorkspaces()[Number(target.slice('workspace:'.length))]
+      return entry === undefined ? 'sessions' : `workspace:${entry[0]}`
+    }
+    if (target.startsWith('session:')) {
+      const screen = bindings.panelMessage?.screen
+      const workspaceId = screen?.startsWith('workspace:') ? screen.slice('workspace:'.length) : undefined
+      const found = workspaceId === undefined ? undefined : sortedSessions(workspaceId)[Number(target.slice('session:'.length))]
+      return found === undefined || workspaceId === undefined ? 'sessions' : `session:${workspaceId}:${found[1].sessionId}`
+    }
+    return undefined
   }
 
   const homeCard = (): CardView => {
@@ -4269,10 +4297,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   const postCard = async (chatId: number, target: string): Promise<boolean> => {
     const view = await cardView(target)
     if (view === undefined) return false
-    if (widgetsBlocked()) {
-      await postDashboardCard(chatId, 0, 'control', controlCardText())
-      return false
-    }
+    if (widgetsBlocked()) return postRichCard(chatId, target)
     try {
       await botPool.takeMain(chatId)
       const previous = bindings.panelMessage
@@ -4285,21 +4310,266 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         caption: view.caption,
         allowQueries: true,
       })
-      bindings.panelMessage = { chatId, messageId: sent.message_id, screen: target }
+      bindings.panelMessage = { chatId, messageId: sent.message_id, screen: target, kind: 'card' }
       await persist()
       return true
     } catch (error) {
       if (isWidgetUnavailable(error)) {
         widgetsBlockedUntil = Date.now() + 10 * 60_000
-        logger.warn('dsh-telegram-connector: widgets are disabled by Telegram; using the text menu')
-        await postDashboardCard(chatId, 0, 'control', controlCardText())
-        return false
+        logger.warn('dsh-telegram-connector: widgets are disabled by Telegram; using rich cards')
+        return postRichCard(chatId, target)
       }
       logger.warn(`dsh-telegram-connector: cannot post the ${target} card: ${String(error)}`)
       await client.sendMessage(chatId, 'the card needs a Telegram client that supports widgets — the menu card is below.').catch(() => undefined)
       await postDashboardCard(chatId, 0, 'control', controlCardText())
       return false
     }
+  }
+
+  /**
+   * Post the same card as a rich message. This is the carrier used while
+   * Telegram has HTML widgets disabled: content is rich HTML, the buttons are
+   * an inline keyboard, and navigation edits the message in place.
+   */
+  const postRichCard = async (chatId: number, target: string): Promise<boolean> => {
+    const view = await cardView(target)
+    if (view === undefined) return false
+    const rich = renderRichCard(view)
+    try {
+      await botPool.takeMain(chatId)
+      const previous = bindings.panelMessage
+      if (previous !== undefined && previous.chatId === chatId) {
+        bindings.panelMessage = undefined
+        await persist()
+        await deleteMessage(previous.chatId, previous.messageId).catch(() => undefined)
+      }
+      const sent = await client.sendRichHtml(chatId, rich.html, { replyMarkup: rich.keyboard })
+      bindings.panelMessage = { chatId, messageId: sent.message_id, screen: target, kind: 'rich' }
+      await persist()
+      return true
+    } catch (error) {
+      logger.warn(`dsh-telegram-connector: cannot post the ${target} rich card: ${String(error)}`)
+      await postDashboardCard(chatId, 0, 'control', controlCardText())
+      return false
+    }
+  }
+
+  /** Replace a rich card's content without changing the screen context. */
+  const editRichView = async (chatId: number, messageId: number, view: CardView): Promise<boolean> => {
+    const rich = renderRichCard(view)
+    try {
+      await client.editRichHtml(chatId, messageId, rich.html, { replyMarkup: rich.keyboard })
+      return true
+    } catch (error) {
+      logger.warn(`dsh-telegram-connector: cannot edit the rich card: ${String(error)}`)
+      return false
+    }
+  }
+
+  /** Edit a rich card to another screen and remember it. */
+  const editRichCard = async (chatId: number, messageId: number, target: string): Promise<boolean> => {
+    const view = await cardView(target)
+    if (view === undefined) return false
+    const edited = await editRichView(chatId, messageId, view)
+    if (edited && bindings.panelMessage?.messageId === messageId) {
+      bindings.panelMessage.screen = target
+      bindings.panelMessage.kind = 'rich'
+      await persist()
+    }
+    return edited
+  }
+
+  const richNotice = (title: string, note: string, back: string): CardView => ({
+    screen: 'system',
+    title,
+    version: connectorVersion(),
+    back,
+    note,
+    caption: 'control',
+  })
+
+  /** Callback handler for the rich cards (`rc:` data). */
+  const handleRichCallback = async (query: TgCallbackQuery): Promise<void> => {
+    const message = query.message
+    if (message === undefined) {
+      await client.answerCallbackQuery(query.id, 'this card is too old').catch(() => undefined)
+      return
+    }
+    const chatId = message.chat.id
+    const messageId = message.message_id
+    const answer = (text: string): Promise<void> => client.answerCallbackQuery(query.id, text).then(() => undefined, () => undefined)
+    if (!isAllowed(query.from?.id)) {
+      await answer('not authorized')
+      return
+    }
+    const data = (query.data ?? '').slice('rc:'.length)
+    const screen = bindings.panelMessage?.messageId === messageId ? bindings.panelMessage.screen : undefined
+    const back = screen === 'home' || screen === 'system' || screen === 'sessions' ? screen : 'home'
+
+    if (data.startsWith('n:')) {
+      const target = data.slice(2)
+      await answer('…')
+      if (target === 'panel') {
+        await postPanel(chatId)
+        return
+      }
+      const resolved = resolveCardTarget(target) ?? 'home'
+      if (!await editRichCard(chatId, messageId, resolved)) {
+        await postRichCard(chatId, resolved)
+      }
+      return
+    }
+
+    if (!data.startsWith('a:')) {
+      await answer('unknown action')
+      return
+    }
+    const action = data.slice(2)
+
+    if (action === 'back') {
+      await answer('…')
+      await editRichCard(chatId, messageId, screen ?? 'home')
+      return
+    }
+
+    if (action === 'web') {
+      await answer('…')
+      const link = webLink()
+      if (link.signed === undefined) {
+        await editRichView(chatId, messageId, richNotice('Web UI', 'no signed web link on this runtime — use /web', back))
+        return
+      }
+      await editRichView(chatId, messageId, {
+        screen: 'system',
+        title: 'Web UI',
+        version: connectorVersion(),
+        back,
+        note: 'this link signs you in — treat it like a password.',
+        actions: [{ label: 'Open web UI', href: link.signed }],
+        caption: 'control · web ui',
+      })
+      return
+    }
+
+    if (action === 'restart' || action === 'restart!') {
+      if (!isAdmin(query.from?.id)) {
+        await answer('only the admin can restart')
+        await editRichView(chatId, messageId, richNotice('Restart', 'only the admin can restart', back))
+        return
+      }
+      if (supervisor === undefined) {
+        await answer('no supervisor')
+        await editRichView(chatId, messageId, richNotice('Restart', 'this runtime has no supervisor — restart it from the host', back))
+        return
+      }
+      if (action === 'restart') {
+        await answer('…')
+        await editRichView(chatId, messageId, {
+          screen: 'system',
+          title: 'Restart dsh?',
+          version: connectorVersion(),
+          back,
+          lines: [
+            { k: 'effect', v: 'every running turn stops' },
+            { k: 'after', v: 'a trial opens; commit or roll back' },
+          ],
+          actions: [
+            { label: 'Restart', act: 'restart!', tone: 'bad' },
+            { label: 'Cancel', act: 'back' },
+          ],
+          caption: 'control · restart',
+        })
+        return
+      }
+      await answer('restarting…')
+      await editRichView(chatId, messageId, richNotice('Restarting', 'the bot reconnects in a moment — /start when it is back', 'home'))
+      try {
+        await flushOffset()
+        await supervisor.restart(true)
+      } catch (error) {
+        logger.warn(`dsh-telegram-connector: rich restart failed: ${String(error)}`)
+      }
+      return
+    }
+
+    if (action.startsWith('model:')) {
+      if (!isAdmin(query.from?.id)) {
+        await answer('only the admin can change models')
+        return
+      }
+      const route = action.slice('model:'.length)
+      const [provider, model] = route.split('/')
+      const context = sessionContext()
+      if (provider === undefined || model === undefined || context === undefined) {
+        await answer('unknown model')
+        return
+      }
+      const workspace = bindings.workspaces[context.workspaceId]
+      if (workspace === undefined || workspace.chatId === 0) {
+        await answer('unknown workspace')
+        return
+      }
+      const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === context.sessionId)
+      if (found === undefined) {
+        await answer('unknown session')
+        return
+      }
+      const catalog = await modelCatalog()
+      if (catalog.length > 0 && !catalog.some((entry) => entry.provider === provider && entry.model === model)) {
+        await answer('not in the catalog')
+        return
+      }
+      found[1].model = { provider, model }
+      await persist()
+      await answer('model set')
+      await editRichCard(chatId, messageId, `session:${context.workspaceId}:${context.sessionId}`)
+      return
+    }
+
+    if (action === 'forget' || action === 'forget!') {
+      if (!isAdmin(query.from?.id)) {
+        await answer('only the admin can forget sessions')
+        return
+      }
+      const context = sessionContext()
+      if (context === undefined) {
+        await answer('stale card')
+        return
+      }
+      if (action === 'forget') {
+        await answer('…')
+        await editRichView(chatId, messageId, {
+          screen: 'session',
+          title: 'Forget this session?',
+          version: connectorVersion(),
+          back,
+          note: 'the message becomes untraceable here; the topic and the session stay.',
+          actions: [
+            { label: 'Forget', act: 'forget!', tone: 'bad' },
+            { label: 'Cancel', act: 'back' },
+          ],
+          caption: 'control · forget',
+        })
+        return
+      }
+      const workspace = bindings.workspaces[context.workspaceId]
+      if (workspace === undefined || workspace.chatId === 0) {
+        await answer('unknown workspace')
+        return
+      }
+      const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === context.sessionId)
+      if (found === undefined) {
+        await answer('unknown session')
+        return
+      }
+      removeSession(bindings, workspace.chatId, found[0])
+      await persist()
+      await answer('forgotten')
+      await editRichCard(chatId, messageId, `workspace:${context.workspaceId}`)
+      return
+    }
+
+    await answer('unknown action')
   }
 
   /**
@@ -4353,47 +4623,12 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       const chatId = query.chat?.id ?? bindings.controlChatId
       if (chatId === undefined) return answer(panelError('no chat'))
       await answer(panelOk('opening…'))
-      const post = async (screen: string): Promise<void> => {
-        if (!await postCard(chatId, screen)) logger.warn(`dsh-telegram-connector: no card for ${screen}`)
-      }
       if (target === 'panel') {
         await postPanel(chatId)
         return
       }
-      if (target === 'home' || target === 'system' || target === 'sessions') {
-        await post(target)
-        return
-      }
-      if (target === 'workspace') {
-        const screen = bindings.panelMessage?.screen
-        if (screen?.startsWith('session:')) {
-          const [, workspaceId] = screen.split(':')
-          if (workspaceId !== undefined) {
-            await post(`workspace:${workspaceId}`)
-            return
-          }
-        }
-        await post(screen?.startsWith('workspace:') ? screen : 'sessions')
-        return
-      }
-      if (target === 'session') {
-        const context = sessionContext()
-        await post(context === undefined ? 'sessions' : `session:${context.workspaceId}:${context.sessionId}`)
-        return
-      }
-      if (target.startsWith('workspace:')) {
-        const entry = sortedWorkspaces()[Number(target.slice('workspace:'.length))]
-        await post(entry === undefined ? 'sessions' : `workspace:${entry[0]}`)
-        return
-      }
-      if (target.startsWith('session:')) {
-        const screen = bindings.panelMessage?.screen
-        const workspaceId = screen?.startsWith('workspace:') ? screen.slice('workspace:'.length) : undefined
-        const found = workspaceId === undefined ? undefined : sortedSessions(workspaceId)[Number(target.slice('session:'.length))]
-        await post(found === undefined || workspaceId === undefined ? 'sessions' : `session:${workspaceId}:${found[1].sessionId}`)
-        return
-      }
-      await post('home')
+      const resolved = resolveCardTarget(target) ?? 'home'
+      if (!await postCard(chatId, resolved)) logger.warn(`dsh-telegram-connector: no card for ${resolved}`)
       return
     }
 
@@ -6493,6 +6728,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
           if (message === undefined) {
             const query = update.callback_query
             if (query === undefined) continue
+            if (query.data?.startsWith('rc:')) {
+              await handleRichCallback(query)
+              continue
+            }
             if (query.data?.startsWith('upd:start:')) {
               await startUpdate(query)
               continue
