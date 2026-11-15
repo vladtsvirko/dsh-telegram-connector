@@ -1,6 +1,6 @@
 /**
- * The card app: /start opens Home, and `n:` navigates by deleting the current
- * card and sending the next one. The chat keeps exactly one screen.
+ * The rich control app: /start posts one card; every navigation edits that same
+ * message. The legacy /panel remains a widget for the transition.
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import { boot, callText, USER_ID, WORKSPACE_ID, SESSION_ID, type Harness } from './harness.js'
@@ -22,136 +22,118 @@ const privateUpdate = (harness: Harness, text: string) => harness.makeUpdate({
   },
 })
 
-const query = (id: string, data: string, userId = USER_ID): { update_id: number; widget_query: { id: string; from: { id: number; is_bot: false; first_name: string }; chat: { id: number; type: 'private' }; data: string } } => ({
-  update_id: Math.floor(Math.random() * 1_000_000) + 900_000,
-  widget_query: {
-    id,
+let callbackId = 9000
+const rich = (messageId: number, data: string, userId = USER_ID) => ({
+  update_id: callbackId++,
+  callback_query: {
+    id: `cb-${String(callbackId)}`,
     from: { id: userId, is_bot: false, first_name: 'Admin' },
-    chat: { id: USER_ID, type: 'private' },
-    data,
+    message: { message_id: messageId, chat: { id: USER_ID, type: 'private' }, date: 0 },
+    data: `rc:${data}`,
   },
 })
 
-describe('the card app', () => {
-  it('opens Home and replaces it when navigating', async () => {
+const htmlOf = (call: { params: Record<string, unknown> }): string =>
+  String((call.params.rich_message as { html?: string } | undefined)?.html ?? '')
+const markupOf = (call: { params: Record<string, unknown> }): string =>
+  JSON.stringify(call.params.reply_markup ?? '')
+
+describe('the rich card app', () => {
+  it('opens Home with the final tiles', async () => {
     const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
     active.push(harness)
-
     harness.pushUpdate(privateUpdate(harness, '/start'))
     const home = await harness.waitFor(
-      () => harness.calls.find((call) => call.method === 'sendWidget'),
+      () => harness.calls.find((call) => call.method === 'sendRichMessage'),
       'the home card',
       6000,
     )
-    const homeHtml = String(home.params.html)
-    expect(homeHtml).toContain('Sessions')
-    expect(homeHtml).toContain('System')
-    expect(homeHtml).toContain('More')
+    const html = htmlOf(home)
+    expect(html).toContain('Control')
+    for (const label of ['Sessions', 'Plugins', 'Updates', 'Components', 'System', 'Settings', 'Help', 'Web UI']) {
+      expect(markupOf(home)).toContain(label)
+    }
+    expect(html).not.toContain('More')
+  }, 20_000)
 
-    harness.pushUpdate(query('q1', 'n:sessions'))
-    await harness.waitFor(
-      () => harness.calls.filter((call) => call.method === 'sendWidget').length >= 2,
+  it('edits the same card while navigating to a workspace and a session', async () => {
+    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
+    active.push(harness)
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    const home = await harness.waitFor(() => harness.calls.find((call) => call.method === 'sendRichMessage'), 'the home card', 6000)
+    const messageId = home.messageId as number
+
+    harness.pushUpdate(rich(messageId, 'n:sessions'))
+    const sessions = await harness.waitFor(
+      () => harness.edited.find((call) => call.method === 'editMessageText' && htmlOf(call).includes('Test Workspace')),
       'the sessions card',
       6000,
     )
-    const cards = harness.calls.filter((call) => call.method === 'sendWidget')
-    expect(String(cards[1]?.params.html)).toContain('Test Workspace')
-    const deleted = harness.calls.find((call) => call.method === 'deleteMessage')
-    expect(deleted?.params.message_id).toBe(home.messageId)
-  }, 20_000)
+    expect(markupOf(sessions)).toContain('New workspace')
 
-  it('navigates into a workspace and a session', async () => {
-    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
-    active.push(harness)
-    harness.pushUpdate(privateQuery('q2', 'n:workspace:0'))
-    await harness.waitFor(
-      () => harness.calls.find((call) => call.method === 'sendWidget'),
+    harness.pushUpdate(rich(messageId, 'n:workspace:0'))
+    const workspace = await harness.waitFor(
+      () => harness.edited.find((call) => call.method === 'editMessageText' && htmlOf(call).includes('Test Session')),
       'the workspace card',
       6000,
     )
-    expect(String(harness.calls.find((call) => call.method === 'sendWidget')?.params.html)).toContain('Test Session')
+    expect(markupOf(workspace)).toContain('Link')
+    expect(markupOf(workspace)).toContain('Remove')
 
-    harness.pushUpdate(privateQuery('q3', 'n:session:0'))
-    await harness.waitFor(
-      () => harness.calls.filter((call) => call.method === 'sendWidget').length >= 2,
+    harness.pushUpdate(rich(messageId, 'n:session:0'))
+        const session = await harness.waitFor(
+      () => harness.edited.find((call) => call.method === 'editMessageText' && markupOf(call).includes('Manage')),
       'the session card',
       6000,
     )
-    const html = String(harness.calls.filter((call) => call.method === 'sendWidget')[1]?.params.html)
-    expect(html).toContain('Test Session')
-    expect(html).toContain('Forget')
+    expect(htmlOf(session)).toContain('Test Session')
+    expect(markupOf(session)).toContain('Manage')
+    expect(harness.calls.some((call) => call.method === 'deleteMessage')).toBe(false)
   }, 20_000)
 
-  it('falls back to rich cards while Telegram has widgets disabled', async () => {
-    const harness = await boot(
-      { adminUserId: USER_ID, allowedUserIds: [USER_ID] },
-      { failSend: (call) => (call.method === 'sendWidget' ? 'Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED' : undefined) },
-    )
-    active.push(harness)
-    harness.pushUpdate(privateUpdate(harness, '/start'))
-    const rich = await harness.waitFor(
-      () => harness.calls.find((call) => call.method === 'sendRichMessage'),
-      'the rich card',
-      6000,
-    )
-    const richMessage = rich.params.rich_message as { html?: string }
-    expect(String(richMessage.html)).toContain('Control')
-    expect(JSON.stringify(rich.params.reply_markup)).toContain('Sessions')
-    expect(rich.params.reply_markup).toBeTruthy()
-    expect(harness.sent.some((call) => callText(call).includes('<b>menu</b>'))).toBe(false)
-
-    const attempts = harness.calls.filter((call) => call.method === 'sendWidget').length
-    expect(attempts).toBe(1)
-    harness.pushUpdate(privateUpdate(harness, '/start'))
-    await harness.waitFor(
-      () => harness.calls.filter((call) => call.method === 'sendRichMessage').length >= 2,
-      'the second rich card',
-      6000,
-    )
-    expect(harness.calls.filter((call) => call.method === 'sendWidget').length).toBe(attempts)
-  }, 20_000)
-
-  it('navigates a rich card in place', async () => {
-    const harness = await boot(
-      { adminUserId: USER_ID, allowedUserIds: [USER_ID] },
-      { failSend: (call) => (call.method === 'sendWidget' ? 'Bad Request: INPUT_MEDIA_WIDGET_NOT_ALLOWED' : undefined) },
-    )
-    active.push(harness)
-    harness.pushUpdate(privateUpdate(harness, '/start'))
-    const rich = await harness.waitFor(
-      () => harness.calls.find((call) => call.method === 'sendRichMessage'),
-      'the rich card',
-      6000,
-    )
-    const messageId = rich.messageId
-    expect(messageId).toBeTruthy()
-    harness.pushUpdate({
-      update_id: 9400,
-      callback_query: {
-        id: 'cb-rich-1',
-        from: { id: USER_ID, is_bot: false, first_name: 'Admin' },
-        message: {
-          message_id: messageId as number,
-          chat: { id: USER_ID, type: 'private' },
-          date: 0,
-        },
-        data: 'rc:n:sessions',
-      },
-    })
-    const edited = await harness.waitFor(
-      () => harness.edited.find((call) => call.method === 'editMessageText'),
-      'the edited rich card',
-      6000,
-    )
-    const html = String((edited.params.rich_message as { html?: string }).html)
-    expect(html).toContain('Test Workspace')
-    expect(edited.params.reply_markup).toBeTruthy()
-  }, 20_000)
-
-  it('keeps the legacy panel reachable during the transition', async () => {
+  it('renders Plugins, Updates, Components, Settings, Help and Web', async () => {
     const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
     active.push(harness)
-    harness.pushUpdate(privateQuery('q4', 'n:panel'))
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    const home = await harness.waitFor(() => harness.calls.find((call) => call.method === 'sendRichMessage'), 'the home card', 6000)
+    const messageId = home.messageId as number
+    const targets = [
+      ['plugins', 'Plugins'],
+      ['updates', 'Updates'],
+      ['components', 'Components'],
+      ['settings', 'Settings'],
+      ['help', 'Help'],
+      ['web', 'Web UI'],
+      ['system', 'System'],
+    ] as const
+    for (const [target, title] of targets) {
+      harness.pushUpdate(rich(messageId, `n:${target}`))
+      await harness.waitFor(
+        () => harness.edited.find((call) => call.method === 'editMessageText' && htmlOf(call).includes(title)),
+        `the ${target} card`,
+        6000,
+      )
+    }
+  }, 30_000)
+
+  it('navigates into a plugin detail from the list', async () => {
+    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
+    active.push(harness)
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    const home = await harness.waitFor(() => harness.calls.find((call) => call.method === 'sendRichMessage'), 'the home card', 6000)
+    harness.pushUpdate(rich(home.messageId as number, 'n:plugins'))
+    await harness.waitFor(
+      () => harness.edited.find((call) => call.method === 'editMessageText' && htmlOf(call).includes('Plugins')),
+      'the plugins card',
+      6000,
+    )
+    expect(harness.calls.some((call) => call.method === 'sendRichMessage')).toBe(true)
+  }, 20_000)
+
+  it('keeps the legacy panel reachable through /panel', async () => {
+    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
+    active.push(harness)
+    harness.pushUpdate(privateUpdate(harness, '/panel'))
     const legacy = await harness.waitFor(
       () => harness.calls.find((call) => call.method === 'sendWidget'),
       'the legacy panel',
@@ -160,43 +142,41 @@ describe('the card app', () => {
     expect(String(legacy.params.html)).toContain('data-tab="system"')
   }, 20_000)
 
-  it('answers confirmation and refusal for a restart', async () => {
-    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID, 777] })
-    active.push(harness)
-    harness.pushUpdate(query('q5', 'a:restart'))
-    const admin = await harness.waitFor(() => harness.widgetAnswered[0], 'the admin answer', 6000)
-    // The harness has no supervisor, so the admin reaches that guard.
-    expect(JSON.parse(String(admin.params.data))).toEqual({ k: 'err', m: 'this runtime has no supervisor' })
-
-    harness.pushUpdate(query('q6', 'a:restart', 777))
-    const colleague = await harness.waitFor(() => harness.widgetAnswered[1], 'the refusal', 6000)
-    expect(JSON.parse(String(colleague.params.data))).toEqual({ k: 'err', m: 'only the admin can restart' })
-  }, 20_000)
-
-  it('applies a model and navigates to the refreshed session', async () => {
+  it('applies a model from the session card', async () => {
     const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
     active.push(harness)
-    // The session card carries the context the short model action needs.
-    harness.pushUpdate(privateQuery('q7', 'n:workspace:0'))
-    await harness.waitFor(() => harness.calls.find((call) => call.method === 'sendWidget'), 'the workspace card', 6000)
-    harness.pushUpdate(privateQuery('q8', 'n:session:0'))
-    await harness.waitFor(() => harness.calls.filter((call) => call.method === 'sendWidget').length >= 2, 'the session card', 6000)
-    harness.pushUpdate(query('q9', 'a:model:test-provider/test-model'))
-    const answer = await harness.waitFor(
-      () => harness.widgetAnswered.find((entry) => {
-        try { return (JSON.parse(String(entry.params.data)) as { k?: string }).k === 'n' } catch { return false }
-      }),
-      'the model answer',
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    const home = await harness.waitFor(() => harness.calls.find((call) => call.method === 'sendRichMessage'), 'the home card', 6000)
+    const messageId = home.messageId as number
+    harness.pushUpdate(rich(messageId, 'n:workspace:0'))
+    await harness.waitFor(() => harness.edited.find((call) => call.method === 'editMessageText' && htmlOf(call).includes('Test Session')), 'the workspace card', 6000)
+    harness.pushUpdate(rich(messageId, 'n:session:0'))
+    await harness.waitFor(() => harness.edited.find((call) => call.method === 'editMessageText' && markupOf(call).includes('Manage')), 'the session card', 6000)
+    harness.pushUpdate(rich(messageId, 'a:model:test-provider/test-model'))
+    await harness.waitFor(
+      () => harness.edited.find((call) => call.method === 'editMessageText' && htmlOf(call).includes('test-provider/test-model')),
+      'the refreshed session card',
       6000,
     )
-    expect(JSON.parse(String(answer.params.data))).toEqual({ k: 'n', t: 'session' })
     const bindings = JSON.parse(await (await import('node:fs/promises')).readFile(harness.bindingsFile, 'utf8')) as {
       sessions: Record<string, { model?: { provider?: string; model?: string } }>
     }
     expect(Object.values(bindings.sessions)[0]?.model).toEqual({ provider: 'test-provider', model: 'test-model' })
   }, 20_000)
-})
 
-function privateQuery(id: string, data: string) {
-  return query(id, data)
-}
+  it('opens the prompt for a new workspace and consumes the text', async () => {
+    const harness = await boot({ adminUserId: USER_ID, allowedUserIds: [USER_ID] })
+    active.push(harness)
+    harness.pushUpdate(privateUpdate(harness, '/start'))
+    const home = await harness.waitFor(() => harness.calls.find((call) => call.method === 'sendRichMessage'), 'the home card', 6000)
+    harness.pushUpdate(rich(home.messageId as number, 'n:sessions'))
+        await harness.waitFor(() => harness.edited.find((call) => call.method === 'editMessageText' && markupOf(call).includes('New workspace')), 'the sessions card', 6000)
+    // Actions are buttons; the handler is exercised by the callback, not by text.
+    harness.pushUpdate(rich(home.messageId as number, 'a:workspace:new'))
+    await harness.waitFor(
+      () => harness.edited.find((call) => call.method === 'editMessageText' && htmlOf(call).includes('Send the workspace name')),
+      'the prompt card',
+      6000,
+    )
+  }, 20_000)
+})

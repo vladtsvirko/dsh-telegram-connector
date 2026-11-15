@@ -49,13 +49,13 @@ describe('the live panel', () => {
     active.push(harness)
     harness.pushUpdate(privateUpdate(harness, '/start'))
     const call = await harness.waitFor(
-      () => harness.calls.find((entry) => entry.method === 'sendWidget'),
+      () => harness.calls.find((entry) => entry.method === 'sendRichMessage'),
       'the card home',
       6000,
     )
-    const html = String(call.params.html)
-    expect(html).toContain('Sessions')
-    expect(html).toContain('System')
+    const html = String((call.params.rich_message as { html?: string }).html)
+    expect(html).toContain('Control')
+    expect(JSON.stringify(call.params.reply_markup)).toContain('Sessions')
     expect(html).not.toContain('data-tab')
   }, 20_000)
 
@@ -103,14 +103,14 @@ describe('the live panel', () => {
     active.push(harness)
     harness.pushUpdate(privateUpdate(harness, '/start'))
     const first = await harness.waitFor(
-      () => harness.calls.find((entry) => entry.method === 'sendWidget'),
-      'the first control center',
+      () => harness.calls.find((entry) => entry.method === 'sendRichMessage'),
+      'the first control card',
       6000,
     )
     harness.pushUpdate(privateUpdate(harness, '/start'))
     await harness.waitFor(
-      () => harness.calls.filter((entry) => entry.method === 'sendWidget').length >= 2,
-      'the second control center',
+      () => harness.calls.filter((entry) => entry.method === 'sendRichMessage').length >= 2,
+      'the second control card',
       6000,
     )
     const deleted = harness.calls.find((entry) => entry.method === 'deleteMessage')

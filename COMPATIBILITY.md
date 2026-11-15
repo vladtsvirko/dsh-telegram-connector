@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.22.0 | `0.2.1-rc.5` | needs UAT | rich-first control app: Plugins, Updates, Components, System, Settings, Help, Web, Sessions/Workspaces management; text-entry actions use chat prompts; `/panel` remains legacy |
 | 0.21.2 | `0.2.1-rc.5` | needs UAT | target-aware restart fallback (no plugin spec as connector ref); failed manager ops abort; updater 0.2.1 boot upgrade; non-connector updates refused on the older updater |
 | 0.21.1 | `0.2.1-rc.5` | needs UAT | updater-only update path; no in-command updater upgrade (fixes `HMR transactions cannot be nested`); supervisor restart fallback; 0.1.x updater card fallback |
 | 0.21.0 | `0.2.1-rc.5` | needs UAT | every plugin update routes through `pluginUpdater`; non-connector targets get one updater card, connector targets keep the reloaded connector's card; updater 0.2.0 upgrades itself from the connector package |

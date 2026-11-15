@@ -66,7 +66,8 @@ import {
 } from './plugins.js'
 import { SupervisorClient, deadlineText, parseTrialCallback, trialCallbackData, type SupervisorStatus } from './supervisor.js'
 import { compareVersions, parseUpdateArgs, resolveRelease } from './updates.js'
-import { commandMenu, hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag, unknownHelp, type Surface } from './help.js'
+import { COMMANDS, commandMenu, hasHelpFlag, indexText, lookupText, manualText, stripHelpFlag, unknownHelp, type Surface } from './help.js'
+import { componentDetail, componentsList, controlHome, helpDoc, helpGroup, helpRoot, noticeScreen, pluginDetail, pluginsList, pluginUpdates, promptScreen, settings as settingsScreen, updatePreview, updates as updatesScreen, webScreen, type ComponentSummary, type HelpEntry, type HomeAlerts, type PluginSummary, type UpdateSlot, type UpdateSnapshot } from './control.js'
 import { resolveTimeZone, validTimeZone } from './time.js'
 import { connectorVersion, runtimeVersion, supportedRange } from './about.js'
 import { BotPool, type BotHandle } from './bots.js'
@@ -4403,7 +4404,30 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   /** Resolve a short card target against the current screen. */
   const resolveCardTarget = (target: string): string | undefined => {
-    if (target === 'home' || target === 'system' || target === 'sessions') return target
+    if (target === 'home' || target === 'system' || target === 'sessions' || target === 'plugins'
+      || target === 'components' || target === 'updates' || target === 'settings' || target === 'help' || target === 'web') return target
+    if (target.startsWith('plugin:')) {
+      const key = target.slice('plugin:'.length)
+      if (/^\d+$/.test(key)) {
+        const name = pluginOrder[Number(key)]
+        return name === undefined ? 'plugins' : `plugin:${name}`
+      }
+      return `plugin:${key}`
+    }
+    if (target.startsWith('component:')) {
+      const key = target.slice('component:'.length)
+      const name = componentOrder[Number(key)] ?? key
+      return componentCache?.some((component) => component.name === name) === true ? `component:${name}` : 'components'
+    }
+    if (target === 'update:connector' || target === 'update:penpot' || target === 'update:setup' || target === 'update:plugins') {
+      return target
+    }
+    if (target === 'update:start' || target === 'update:back') return 'updates'
+    if (target.startsWith('helpgroup:')) return CONTROL_GROUPS[target.slice('helpgroup:'.length)] === undefined ? 'help' : target
+    if (target.startsWith('helpdoc:')) {
+      const index = Number(target.slice('helpdoc:'.length))
+      return controlDocs[index] === undefined ? 'help' : target
+    }
     if (target === 'workspace') {
       const screen = bindings.panelMessage?.screen
       if (screen?.startsWith('session:')) {
@@ -4429,26 +4453,181 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     return undefined
   }
 
-  const homeCard = (): CardView => {
-    const state = panelState()
-    const workspaces = state.totalWorkspaces
-    const sessions = state.sessions
-    return {
-      screen: 'home',
-      title: 'Control',
-      version: connectorVersion(),
-      hero: {
-        big: `${String(workspaces)} workspace${workspaces === 1 ? '' : 's'} · ${String(sessions)} session${sessions === 1 ? '' : 's'}`,
-        meta: `${String(state.live)} live · polling ${state.polling ? 'running' : 'stopped'} · up ${upText(state.uptimeSeconds)}`,
-      },
-      tiles: [
-        { title: 'Sessions', meta: 'workspaces & topics', go: 'sessions' },
-        { title: 'System', meta: 'health & restart', go: 'system' },
-        { title: 'Web UI', meta: 'open or copy link', act: 'web' },
-        { title: 'More', meta: 'update, plugins, components', go: 'panel' },
-      ],
-      caption: `control · ${String(workspaces)} workspaces · ${String(state.live)} live`,
+  // --- control-plane data -------------------------------------------------
+  let pluginCache: PluginSummary[] | undefined
+  let pluginOrder: string[] = []
+  let componentCache: ComponentSummary[] | undefined
+  let componentOrder: string[] = []
+  let updateSnapshot: UpdateSnapshot | undefined
+  let updateChecking: Promise<UpdateSnapshot> | undefined
+
+  type CardPromptKind = 'workspace-new' | 'session-new' | 'session-rename' | 'plugin-add' | 'component-port' | 'timezone' | 'firewall-port'
+  interface CardPrompt {
+    chatId: number
+    userId: number | undefined
+    kind: CardPromptKind
+    context?: string
+    returnTarget: string
+    messageId: number
+    at: number
+  }
+  let cardPrompt: CardPrompt | undefined
+
+  const bundleSummary = (bundle: BundleInfo): PluginSummary => ({
+    name: bundle.name,
+    version: bundle.version,
+    enabled: bundle.enabled,
+    installed: bundle.installed,
+    removable: bundle.removable,
+    source: bundle.source,
+    description: localized(bundle.meta?.description) ?? bundle.description,
+    error: bundle.error === undefined ? undefined : (bundle.error.diagnostic ?? bundle.error.code),
+    rows: bundle.rows?.map((row) => row.entryId ?? row.moduleName),
+  })
+
+  const loadPlugins = async (): Promise<PluginSummary[]> => {
+    const bundles = (await pluginBundles()) ?? []
+    pluginOrder = bundles.map((bundle) => bundle.name)
+    pluginCache = bundles.map(bundleSummary)
+    return pluginCache
+  }
+
+  const loadComponents = async (): Promise<ComponentSummary[] | undefined> => {
+    try {
+      const list = await fetchComponents()
+      componentOrder = list.map((component) => component.name)
+      componentCache = list.map((component) => ({
+        name: component.name,
+        label: component.label,
+        description: component.description,
+        enabled: component.enabled,
+        port: component.port,
+      }))
+      return componentCache
+    } catch {
+      return undefined
     }
+  }
+
+  const CONTROL_GROUPS: Record<string, string> = {
+    start: 'Start',
+    workspace: 'Workspaces',
+    sessions: 'Sessions',
+    plugins: 'Plugins',
+    system: 'System',
+    runtime: 'Runtime',
+    time: 'Time',
+  }
+  const controlDocs = COMMANDS.filter((command) => command.surfaces.includes('control')) as HelpEntry[]
+  const helpGroupRows = (): Array<{ key: string; label: string; count: number }> => {
+    const groups: Array<{ key: string; label: string; count: number }> = []
+    for (const [key, label] of Object.entries(CONTROL_GROUPS)) {
+      const count = controlDocs.filter((command) => command.group === key).length
+      if (count > 0) groups.push({ key, label, count })
+    }
+    return groups
+  }
+  const helpDocsFor = (group: string): HelpEntry[] => controlDocs.filter((command) => command.group === group)
+  const helpDocStart = (group: string): number => {
+    const first = controlDocs.find((command) => command.group === group)
+    return first === undefined ? 0 : controlDocs.indexOf(first)
+  }
+
+  const settingsReactions = (): string => {
+    const current = resolveReactions(bindings.reactions, undefined)
+    return `${current.enabled ? 'on' : 'off'} · ${current.read} ${current.streaming} ${current.staged}`
+  }
+
+  const resolveUpdateSlot = async (source: string | undefined, current: string | undefined): Promise<UpdateSlot> => {
+    if (source === undefined || source.startsWith('link:')) return { current, source }
+    try {
+      const lookup = await resolveRelease(source)
+      if (lookup.release === undefined) return { current, source, problem: lookup.problem ?? 'no release found' }
+      const available = current === undefined || compareVersions(lookup.release.version, current) > 0
+        ? lookup.release.version
+        : current
+      return { current, available, source }
+    } catch (error) {
+      return { current, source, problem: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  const refreshUpdates = async (): Promise<UpdateSnapshot> => {
+    if (updateChecking !== undefined) return updateChecking
+    updateChecking = (async () => {
+      const bundles = (await pluginBundles()) ?? []
+      const find = (name: string): BundleInfo | undefined => bundles.find((bundle) => bundle.name === name)
+      const connector = find('dsh-telegram-connector')
+      const penpot = find('dsh-penpot-plugin')
+      const connectorSlot = await resolveUpdateSlot(
+        connector?.source ?? 'github:vladtsvirko/dsh-telegram-connector',
+        connector?.version ?? connectorVersion(),
+      )
+      const penpotSlot = await resolveUpdateSlot(
+        penpot?.source ?? 'github:vladtsvirko/dsh-penpot-plugin',
+        penpot?.version,
+      )
+      const plugins: UpdateSnapshot['plugins'] = []
+      for (const bundle of bundles) {
+        if (bundle.name === 'dsh-telegram-connector' || bundle.name === 'dsh-penpot-plugin') continue
+        if (bundle.source === undefined || bundle.source.startsWith('link:')) continue
+        if (plugins.length >= 5) break
+        const slot = await resolveUpdateSlot(bundle.source, bundle.version)
+        if (slot.available !== undefined && slot.available !== slot.current) {
+          plugins.push({ name: bundle.name, current: slot.current, available: slot.available, spec: slot.source })
+        }
+      }
+      return {
+        at: Date.now(),
+        connector: connectorSlot,
+        penpot: penpotSlot,
+        plugins,
+        setup: { current: process.env.DSH_SETUP_VERSION ?? 'unknown' },
+      }
+    })()
+    try {
+      updateSnapshot = await updateChecking
+      return updateSnapshot
+    } finally {
+      updateChecking = undefined
+    }
+  }
+
+  const pluginSummary = async (name: string): Promise<PluginSummary | undefined> => {
+    if (pluginCache === undefined) await loadPlugins()
+    return pluginCache?.find((plugin) => plugin.name === name)
+  }
+
+  const homeCard = async (): Promise<CardView> => {
+    if (pluginCache === undefined) {
+      try {
+        await loadPlugins()
+      } catch {
+        // Home must render even when the plugin manager is unavailable.
+      }
+    }
+    const state = panelState()
+    const alerts: HomeAlerts = {}
+    if (bindings.trialMessage !== undefined) alerts.trial = true
+    const pluginErrors = pluginCache?.filter((plugin) => plugin.error !== undefined).length ?? 0
+    if (pluginErrors > 0) alerts.pluginErrors = pluginErrors
+    if (updateSnapshot !== undefined) {
+      const count = (updateSnapshot.connector.available !== undefined && updateSnapshot.connector.available !== updateSnapshot.connector.current ? 1 : 0)
+        + (updateSnapshot.penpot.available !== undefined && updateSnapshot.penpot.available !== updateSnapshot.penpot.current ? 1 : 0)
+        + updateSnapshot.plugins.length
+      if (count > 0) alerts.updates = count
+    }
+    return controlHome(
+      connectorVersion(),
+      {
+        workspaces: state.totalWorkspaces,
+        sessions: state.sessions,
+        live: state.live,
+        polling: state.polling,
+        uptime: upText(state.uptimeSeconds),
+      },
+      alerts,
+    )
   }
 
   const systemCard = async (): Promise<CardView> => {
@@ -4479,7 +4658,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       version: connectorVersion(),
       back: 'home',
       lines,
-      actions: [{ label: 'Restart', act: 'restart', tone: 'bad' }],
+      actions: [
+        { label: 'Restart', act: 'restart', tone: 'bad' },
+        { label: 'Restart now', act: 'system:restartnow', tone: 'bad' },
+        { label: 'Updates', act: 'system:updates' },
+        ...(bindings.update === undefined ? [] : [{ label: 'Cancel update', act: 'system:cancel' }]),
+        { label: 'Take control chat', act: 'system:takechat' },
+      ],
       caption: `control · system · ${connectorVersion()}`,
     }
   }
@@ -4501,7 +4686,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       version: connectorVersion(),
       back: 'home',
       rows,
-      ...(rows.length === 0 ? { note: 'No workspaces yet — /workspace new <title>.' } : {}),
+      ...(rows.length === 0 ? { note: 'No workspaces yet.' } : {}),
+      actions: [{ label: 'New workspace', act: 'workspace:new' }],
       caption: `control · ${String(rows.length)} workspace${rows.length === 1 ? '' : 's'}`,
     }
   }
@@ -4526,8 +4712,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       version: connectorVersion(),
       back: 'sessions',
       rows,
-      ...(rows.length === 0 ? { note: 'No sessions yet — create one in the group with /new.' } : {}),
-      ...(link === undefined ? {} : { actions: [{ label: 'Open group', href: link }] }),
+      ...(rows.length === 0 ? { note: 'No sessions yet — open the group to create one.' } : {}),
+      actions: [
+        ...(link === undefined ? [] : [{ label: 'Open group', href: link }]),
+        { label: 'New session', act: 'workspace:session' },
+        { label: 'Link', act: 'workspace:link' },
+        { label: 'Remove', act: 'workspace:remove', tone: 'bad' as const },
+      ],
       caption: `control · ${workspace.title}`,
     }
   }
@@ -4564,16 +4755,101 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         : { chips: { label: 'model', items: chips, apply: 'model' } }),
       actions: [
         ...(topic === undefined ? [] : [{ label: 'Open topic', href: topic }]),
-        { label: 'Forget', act: 'forget', tone: 'bad' as const },
+        { label: 'Manage', act: 'session:manage' },
       ],
       caption: `control · ${workspace.title}`,
     }
   }
 
+  const pluginsScreen = async (): Promise<CardView> => {
+    const plugins = await loadPlugins()
+    return pluginsList(plugins, updateSnapshot?.plugins.length ?? 0)
+  }
+
+  const pluginScreen = async (name: string): Promise<CardView | undefined> => {
+    const plugin = await pluginSummary(name)
+    if (plugin === undefined) return undefined
+    return pluginDetail(plugin, webLink().signed)
+  }
+
+  const componentsScreen = async (): Promise<CardView> => {
+    const components = await loadComponents()
+    if (components === undefined) {
+      return noticeScreen('Components', 'the updater is unavailable — components cannot be read from here.', 'home')
+    }
+    return componentsList(components)
+  }
+
+  const componentScreen = async (name: string): Promise<CardView | undefined> => {
+    if (componentCache === undefined) await loadComponents()
+    const component = componentCache?.find((entry) => entry.name === name)
+    if (component === undefined) return undefined
+    return componentDetail(component, webLink().signed)
+  }
+
+  const updateScreen = async (target: string): Promise<CardView | undefined> => {
+    if (target === 'plugins') {
+      if (updateSnapshot === undefined) {
+        return noticeScreen('Plugin updates', 'tap Check for updates on the Updates screen first.', 'updates')
+      }
+      return pluginUpdates(updateSnapshot.plugins)
+    }
+    if (target === 'connector') {
+      const slot: UpdateSlot = updateSnapshot === undefined
+        ? { current: connectorVersion() }
+        : updateSnapshot.connector
+      return updatePreview('connector', slot, 'reloads only the Telegram connector; the bot reconnects in a few seconds. commit or roll back after it is back.')
+    }
+    if (target === 'penpot') {
+      const slot: UpdateSlot = updateSnapshot === undefined
+        ? { current: (await pluginSummary('dsh-penpot-plugin'))?.version }
+        : updateSnapshot.penpot
+      return updatePreview('penpot', slot, 'reloads the plugin; running agent turns keep going.')
+    }
+    if (target === 'setup') {
+      const slot: UpdateSlot = { current: updateSnapshot?.setup.current ?? process.env.DSH_SETUP_VERSION ?? 'unknown' }
+      return updatePreview('setup', slot, 'drains sessions and restarts dsh; the updater reports the result.')
+    }
+    return undefined
+  }
+
+  const settingsCard = (): CardView => settingsScreen(timeZone(), settingsReactions())
+
+  const helpScreen = (): CardView => helpRoot(helpGroupRows())
+
+  const helpGroupScreen = (group: string): CardView | undefined => {
+    const label = CONTROL_GROUPS[group]
+    if (label === undefined) return undefined
+    return { ...helpGroup(label, helpDocsFor(group), helpDocStart(group)), back: 'help' }
+  }
+
+  const helpDocScreen = (index: number): CardView | undefined => {
+    const doc = controlDocs[index]
+    if (doc === undefined) return undefined
+    const view = helpDoc(doc)
+    return { ...view, back: `helpgroup:${doc.group}` }
+  }
+
+  const webCard = (): CardView => {
+    const link = webLink()
+    return webScreen(link.root, link.signed)
+  }
+
   const cardView = async (target: string): Promise<CardView | undefined> => {
-    if (target === 'home') return homeCard()
+    if (target === 'home') return await homeCard()
     if (target === 'system') return systemCard()
     if (target === 'sessions') return sessionsCard()
+    if (target === 'plugins') return pluginsScreen()
+    if (target === 'components') return componentsScreen()
+    if (target === 'updates') return updatesScreen(updateSnapshot)
+    if (target === 'settings') return settingsCard()
+    if (target === 'help') return helpScreen()
+    if (target === 'web') return webCard()
+    if (target.startsWith('plugin:')) return pluginScreen(target.slice('plugin:'.length))
+    if (target.startsWith('component:')) return componentScreen(target.slice('component:'.length))
+    if (target.startsWith('update:')) return updateScreen(target.slice('update:'.length))
+    if (target.startsWith('helpgroup:')) return helpGroupScreen(target.slice('helpgroup:'.length))
+    if (target.startsWith('helpdoc:')) return helpDocScreen(Number(target.slice('helpdoc:'.length)))
     if (target.startsWith('workspace:')) return workspaceCard(target.slice('workspace:'.length))
     if (target.startsWith('session:')) {
       const [, workspaceId, sessionId] = target.split(':')
@@ -4587,35 +4863,9 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * navigation is delete + send: the chat always holds one current screen.
    */
   const postCard = async (chatId: number, target: string): Promise<boolean> => {
-    const view = await cardView(target)
-    if (view === undefined) return false
-    if (widgetsBlocked()) return postRichCard(chatId, target)
-    try {
-      await botPool.takeMain(chatId)
-      const previous = bindings.panelMessage
-      if (previous !== undefined && previous.chatId === chatId) {
-        bindings.panelMessage = undefined
-        await persist()
-        await deleteMessage(previous.chatId, previous.messageId).catch(() => undefined)
-      }
-      const sent = await client.sendWidget(chatId, renderCard(view), {
-        caption: view.caption,
-        allowQueries: true,
-      })
-      bindings.panelMessage = { chatId, messageId: sent.message_id, screen: target, kind: 'card' }
-      await persist()
-      return true
-    } catch (error) {
-      if (isWidgetUnavailable(error)) {
-        widgetsBlockedUntil = Date.now() + 10 * 60_000
-        logger.warn('dsh-telegram-connector: widgets are disabled by Telegram; using rich cards')
-        return postRichCard(chatId, target)
-      }
-      logger.warn(`dsh-telegram-connector: cannot post the ${target} card: ${String(error)}`)
-      await client.sendMessage(chatId, 'the card needs a Telegram client that supports widgets — the menu card is below.').catch(() => undefined)
-      await postDashboardCard(chatId, 0, 'control', controlCardText())
-      return false
-    }
+    // The control app is rich-message first: Telegram has HTML widgets
+    // disabled, and the full screen set must stay usable on that carrier.
+    return postRichCard(chatId, target)
   }
 
   /**
@@ -4681,6 +4931,163 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
   })
 
   /** Callback handler for the rich cards (`rc:` data). */
+  const currentPlugin = async (): Promise<PluginSummary | undefined> => {
+    const screen = bindings.panelMessage?.screen
+    if (screen === undefined || !screen.startsWith('plugin:')) return undefined
+    return pluginSummary(screen.slice('plugin:'.length))
+  }
+
+  const currentComponent = (): ComponentSummary | undefined => {
+    const screen = bindings.panelMessage?.screen
+    if (screen === undefined || !screen.startsWith('component:')) return undefined
+    return componentCache?.find((component) => component.name === screen.slice('component:'.length))
+  }
+
+  const startCardPrompt = async (
+    chatId: number,
+    messageId: number,
+    userId: number | undefined,
+    kind: CardPromptKind,
+    context: string | undefined,
+    title: string,
+    note: string,
+  ): Promise<void> => {
+    const screen = bindings.panelMessage?.screen
+    const returnTarget = screen === undefined || screen === 'prompt' ? 'home' : screen
+    cardPrompt = { chatId, userId, kind, context, returnTarget, messageId, at: Date.now() }
+    await editRichView(chatId, messageId, promptScreen(title, note, returnTarget))
+  }
+
+  const runDelegatedCommand = async (
+    message: TgMessage,
+    query: TgCallbackQuery,
+    command: string,
+    title: string,
+    returnTarget: string,
+  ): Promise<void> => {
+    await editRichView(message.chat.id, message.message_id, noticeScreen(title, `sent: ${command}`, returnTarget))
+    void handleControl({ ...message, from: query.from, text: command }, command).catch((error: unknown) => {
+      logger.warn(`dsh-telegram-connector: card command ${command} failed: ${String(error)}`)
+    })
+  }
+
+  const runGroupCommand = async (chatId: number, threadId: number, text: string, userId: number | undefined): Promise<void> => {
+    const synthetic = {
+      message_id: 0,
+      chat: { id: chatId, type: 'supergroup' },
+      from: { id: userId ?? 0, is_bot: false, first_name: 'Admin' },
+      is_topic_message: threadId !== 0,
+      ...(threadId === 0 ? {} : { message_thread_id: threadId }),
+      text,
+    } as TgMessage
+    await handleMessage(synthetic)
+  }
+
+  const richSession = (): { workspaceId: string; sessionId: string; threadId: number } | undefined => {
+    const context = sessionContext()
+    if (context === undefined) return undefined
+    const workspace = bindings.workspaces[context.workspaceId]
+    if (workspace === undefined || workspace.chatId === 0) return undefined
+    const found = sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === context.sessionId)
+    if (found === undefined) return undefined
+    return { ...context, threadId: found[0] }
+  }
+
+  const consumeCardPrompt = async (message: TgMessage, text: string): Promise<boolean> => {
+    const prompt = cardPrompt
+    if (prompt === undefined || prompt.chatId !== message.chat.id) return false
+    if (prompt.userId !== undefined && message.from?.id !== prompt.userId) return false
+    if (Date.now() - prompt.at > 5 * 60_000) {
+      cardPrompt = undefined
+      return false
+    }
+    if (text.trim().startsWith('/')) {
+      cardPrompt = undefined
+      return false
+    }
+    const value = text.trim()
+    if (value.length === 0) return false
+    cardPrompt = undefined
+    const finish = async (target: string): Promise<void> => {
+      if (!await editRichCard(prompt.chatId, prompt.messageId, target)) {
+        await postRichCard(prompt.chatId, target)
+      }
+    }
+    if (prompt.kind === 'plugin-add') {
+      await editRichView(
+        prompt.chatId,
+        prompt.messageId,
+        noticeScreen('Plugins', 'inspecting the package; the confirmation card follows.', 'plugins'),
+      )
+      void beginPluginInstall(message, value)
+      return true
+    }
+    if (prompt.kind === 'workspace-new') {
+      await handleControl({ ...message, text: `/workspace new ${value}` }, `/workspace new ${value}`)
+      await finish('sessions')
+      return true
+    }
+    if (prompt.kind === 'session-new') {
+      const workspaceId = prompt.context
+      const workspace = workspaceId === undefined ? undefined : bindings.workspaces[workspaceId]
+      if (workspace !== undefined && workspace.chatId !== 0) {
+        await runGroupCommand(workspace.chatId, 0, `/new ${value}`, prompt.userId)
+        await finish(`workspace:${workspaceId}`)
+      } else {
+        await editRichView(prompt.chatId, prompt.messageId, noticeScreen('New session', 'this workspace has no group yet — link one first.', 'sessions'))
+      }
+      return true
+    }
+    if (prompt.kind === 'session-rename') {
+      const [workspaceId, sessionId] = (prompt.context ?? '').split(':')
+      const workspace = workspaceId === undefined ? undefined : bindings.workspaces[workspaceId]
+      const found = workspace === undefined || sessionId === undefined || workspace.chatId === 0
+        ? undefined
+        : sessionsOfChat(bindings, workspace.chatId).find(([, bound]) => bound.sessionId === sessionId)
+      if (workspace !== undefined && workspace.chatId !== 0 && sessionId !== undefined && found !== undefined) {
+        await runGroupCommand(workspace.chatId, found[0], `/rename ${sessionId} ${value}`, prompt.userId)
+        await finish(`session:${workspaceId}:${sessionId}`)
+      } else {
+        await editRichView(prompt.chatId, prompt.messageId, noticeScreen('Rename session', 'the session is no longer available.', 'sessions'))
+      }
+      return true
+    }
+    if (prompt.kind === 'component-port') {
+      const port = Number(value)
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+        await editRichView(prompt.chatId, prompt.messageId, noticeScreen('Port', 'send a port between 1024 and 65535.', prompt.returnTarget))
+        return true
+      }
+      const name = prompt.context
+      if (name === undefined) return true
+      const result = await postComponent(name, 'configure', port)
+      await editRichView(prompt.chatId, prompt.messageId, noticeScreen('Components', result, `component:${name}`))
+      return true
+    }
+    if (prompt.kind === 'timezone') {
+      try {
+        new Intl.DateTimeFormat(undefined, { timeZone: value })
+      } catch {
+        await editRichView(prompt.chatId, prompt.messageId, noticeScreen('Timezone', 'that is not a known IANA time zone.', 'settings'))
+        return true
+      }
+      await handleControl({ ...message, text: `/timezone ${value}` }, `/timezone ${value}`)
+      await finish('settings')
+      return true
+    }
+    if (prompt.kind === 'firewall-port') {
+      const port = Number(value)
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        await editRichView(prompt.chatId, prompt.messageId, noticeScreen('Firewall', 'send a port between 1 and 65535.', 'settings'))
+        return true
+      }
+      await handleControl({ ...message, text: `/firewall allow ${String(port)}` }, '/firewall allow')
+      await finish('settings')
+      return true
+    }
+    return true
+  }
+
   const handleRichCallback = async (query: TgCallbackQuery): Promise<void> => {
     const message = query.message
     if (message === undefined) {
@@ -4699,6 +5106,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     const back = screen === 'home' || screen === 'system' || screen === 'sessions' ? screen : 'home'
 
     if (data.startsWith('n:')) {
+      cardPrompt = undefined
       const target = data.slice(2)
       await answer('…')
       if (target === 'panel') {
@@ -4858,6 +5266,381 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await persist()
       await answer('forgotten')
       await editRichCard(chatId, messageId, `workspace:${context.workspaceId}`)
+      return
+    }
+
+    if (action === 'prompt:cancel') {
+      const target = cardPrompt?.returnTarget ?? screen ?? 'home'
+      cardPrompt = undefined
+      await answer('cancelled')
+      await editRichCard(chatId, messageId, target)
+      return
+    }
+
+    if (action === 'plugins:refresh') {
+      await answer('…')
+      await editRichCard(chatId, messageId, 'plugins')
+      return
+    }
+
+    if (action === 'plugin:add') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can install plugins')
+      await answer('…')
+      await startCardPrompt(
+        chatId, messageId, query.from?.id, 'plugin-add', undefined,
+        'Add plugin',
+        'Send a package spec in this chat: an npm name, GitHub URL, tarball, or path.',
+      )
+      return
+    }
+
+    if (action === 'plugin:toggle') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can change plugins')
+      const plugin = await currentPlugin()
+      if (plugin === undefined) return answer('stale card — open Plugins again')
+      if (plugin.name === SELF_BUNDLE) return answer('that bundle serves this chat — change it from the host')
+      await runDelegatedCommand(
+        message, query,
+        `/plugins ${plugin.enabled ? 'disable' : 'enable'} ${plugin.name}`,
+        'Plugins',
+        `plugin:${plugin.name}`,
+      )
+      return
+    }
+
+    if (action === 'plugin:update') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can update plugins')
+      const plugin = await currentPlugin()
+      if (plugin === undefined) return answer('stale card — open Plugins again')
+      await runDelegatedCommand(
+        message, query,
+        `/system update plugin ${plugin.name}`,
+        'Plugins',
+        `plugin:${plugin.name}`,
+      )
+      return
+    }
+
+    if (action === 'plugin:remove') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can remove plugins')
+      const plugin = await currentPlugin()
+      if (plugin === undefined) return answer('stale card — open Plugins again')
+      if (plugin.name === SELF_BUNDLE) return answer('that bundle serves this chat — remove it from the host')
+      await answer('…')
+      await editRichView(chatId, messageId, {
+        screen: 'plugin:remove',
+        title: 'Remove plugin?',
+        version: '',
+        back: `plugin:${plugin.name}`,
+        note: `${plugin.name} leaves the profile. Its rows stop; files and configuration it wrote stay.`,
+        actions: [
+          { label: 'Remove', act: 'plugin:remove!', tone: 'bad' },
+          { label: 'Cancel', act: 'back' },
+        ],
+        caption: 'control · plugins',
+      })
+      return
+    }
+
+    if (action === 'plugin:remove!') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can remove plugins')
+      const plugin = await currentPlugin()
+      if (plugin === undefined) return answer('stale card — open Plugins again')
+      await runDelegatedCommand(
+        message, query,
+        `/plugins remove ${plugin.name}`,
+        'Plugins',
+        `plugin:${plugin.name}`,
+      )
+      return
+    }
+
+    if (action === 'plugin:approve') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can approve build scripts')
+      await runDelegatedCommand(message, query, '/plugins approve', 'Plugins', 'plugins')
+      return
+    }
+
+    if (action === 'component:toggle' || action === 'component:refresh' || action === 'component:port') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can change components')
+      const component = currentComponent()
+      if (component === undefined) return answer('stale card — open Components again')
+      if (action === 'component:port') {
+        await answer('…')
+        await startCardPrompt(
+          chatId, messageId, query.from?.id, 'component-port', component.name,
+          'Change port',
+          'Send a port between 1024 and 65535 in this chat.',
+        )
+        return
+      }
+      if (action === 'component:refresh') {
+        await answer('…')
+        await editRichCard(chatId, messageId, `component:${component.name}`)
+        return
+      }
+      await answer('…')
+      const result = await postComponent(component.name, component.enabled ? 'disable' : 'enable')
+      await editRichView(chatId, messageId, noticeScreen('Components', result, `component:${component.name}`))
+      return
+    }
+
+    if (action === 'updates' || action === 'update:connector' || action === 'update:penpot'
+      || action === 'update:setup' || action === 'update:plugins') {
+      await answer('…')
+      const target = action === 'updates' ? 'updates' : action
+      if (!await editRichCard(chatId, messageId, target)) {
+        await postRichCard(chatId, target)
+      }
+      return
+    }
+
+    if (action === 'updates:check') {
+      await answer('checking…')
+      await editRichView(chatId, messageId, noticeScreen('Updates', 'checking the newest releases — this can take a minute on a slow link.', 'updates'))
+      try {
+        const snapshot = await refreshUpdates()
+        await editRichView(chatId, messageId, updatesScreen(snapshot))
+      } catch (error) {
+        await editRichView(chatId, messageId, noticeScreen('Updates', `check failed: ${String(error)}`, 'updates'))
+      }
+      return
+    }
+
+    if (action === 'update:start') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can update')
+      const current = screen?.startsWith('update:') ? screen.slice('update:'.length) : undefined
+      if (current === undefined) return answer('stale card — open Updates again')
+      const command = current === 'connector'
+        ? '/system update connector'
+        : current === 'penpot'
+          ? '/system update penpot'
+          : current === 'setup'
+            ? '/system update setup'
+            : undefined
+      if (command === undefined) return answer('unknown update target')
+      await runDelegatedCommand(message, query, command, 'Updates', 'updates')
+      return
+    }
+
+    if (action === 'system:updates') {
+      await answer('…')
+      await editRichCard(chatId, messageId, 'updates')
+      return
+    }
+
+    if (action === 'system:restartnow') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can restart')
+      if (supervisor === undefined) return answer('no supervisor')
+      await answer('…')
+      await editRichView(chatId, messageId, {
+        screen: 'system',
+        title: 'Restart now?',
+        version: connectorVersion(),
+        back: 'system',
+        note: 'no trial: the current state becomes the rollback point and every running turn stops.',
+        actions: [
+          { label: 'Restart now', act: 'system:restartnow!', tone: 'bad' },
+          { label: 'Cancel', act: 'back' },
+        ],
+        caption: 'control · restart',
+      })
+      return
+    }
+
+    if (action === 'system:restartnow!') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can restart')
+      if (supervisor === undefined) return answer('no supervisor')
+      await answer('restarting…')
+      await editRichView(chatId, messageId, noticeScreen('Restarting', 'the bot reconnects in a moment.', 'home'))
+      try {
+        await flushOffset()
+        await supervisor.restart(false)
+      } catch (error) {
+        logger.warn(`dsh-telegram-connector: card restart now failed: ${String(error)}`)
+      }
+      return
+    }
+
+    if (action === 'system:cancel') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can cancel an update')
+      await answer('…')
+      try {
+        const response = await updaterFetch('/cancel', {})
+        await editRichView(
+          chatId, messageId,
+          noticeScreen('Update', response.status === 202 ? 'cancel requested; the updater reports the result.' : `the updater answered ${String(response.status)}.`, 'system'),
+        )
+      } catch (error) {
+        await editRichView(chatId, messageId, noticeScreen('Update', `cannot reach the updater: ${String(error)}`, 'system'))
+      }
+      return
+    }
+
+    if (action === 'system:takechat') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can move the control chat')
+      await runDelegatedCommand(message, query, '/system takechat', 'System', 'system')
+      return
+    }
+
+    if (action === 'setting:timezone') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can change the timezone')
+      await answer('…')
+      await startCardPrompt(
+        chatId, messageId, query.from?.id, 'timezone', undefined,
+        'Timezone',
+        'Send an IANA time zone in this chat, for example Europe/Minsk.',
+      )
+      return
+    }
+
+    if (action === 'setting:reactions') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can change reactions')
+      await runDelegatedCommand(message, query, '/reactions', 'Settings', 'settings')
+      return
+    }
+
+    if (action === 'setting:firewallport') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can change the firewall')
+      await answer('…')
+      await startCardPrompt(
+        chatId, messageId, query.from?.id, 'firewall-port', undefined,
+        'Allow web port',
+        'Send the port to allow through ufw in this chat.',
+      )
+      return
+    }
+
+    if (action === 'setting:firewall') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can change the firewall')
+      await runDelegatedCommand(message, query, '/firewall', 'Settings', 'settings')
+      return
+    }
+
+    if (action === 'setting:takechat') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can move the control chat')
+      await runDelegatedCommand(message, query, '/system takechat', 'Settings', 'settings')
+      return
+    }
+
+    if (action === 'workspace:new') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can create workspaces')
+      await answer('…')
+      await startCardPrompt(
+        chatId, messageId, query.from?.id, 'workspace-new', undefined,
+        'New workspace',
+        'Send the workspace name in this chat, for example design-system.',
+      )
+      return
+    }
+
+    if (action === 'workspace:session') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can create sessions')
+      const workspaceId = screen?.startsWith('workspace:') ? screen.slice('workspace:'.length) : undefined
+      if (workspaceId === undefined || bindings.workspaces[workspaceId] === undefined) return answer('stale card — open Sessions again')
+      await answer('…')
+      await startCardPrompt(
+        chatId, messageId, query.from?.id, 'session-new', workspaceId,
+        'New session',
+        'Send the session title in this chat; the topic is created in the workspace group.',
+      )
+      return
+    }
+
+    if (action === 'session:manage' || action === 'session:rename' || action === 'session:close' || action === 'session:close!') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can manage sessions')
+      const current = richSession()
+      if (current === undefined) return answer('stale card — open Sessions again')
+      if (action === 'session:manage') {
+        await answer('…')
+        await editRichView(chatId, messageId, {
+          screen: 'session:manage',
+          title: 'Manage session',
+          version: '',
+          back: 'session',
+          lines: [
+            { k: 'workspace', v: bindings.workspaces[current.workspaceId]?.title ?? current.workspaceId },
+            { k: 'topic', v: current.threadId === 0 ? 'General' : `#${String(current.threadId)}` },
+          ],
+          actions: [
+            { label: 'Rename', act: 'session:rename' },
+            { label: 'Close', act: 'session:close', tone: 'bad' },
+            { label: 'Forget', act: 'forget', tone: 'bad' },
+          ],
+          caption: 'control · session',
+        })
+        return
+      }
+      if (action === 'session:rename') {
+        await answer('…')
+        await startCardPrompt(
+          chatId, messageId, query.from?.id, 'session-rename',
+          `${current.workspaceId}:${current.sessionId}`,
+          'Rename session',
+          'Send the new title in this chat; the topic name follows.',
+        )
+        return
+      }
+      if (action === 'session:close') {
+        await answer('…')
+        await editRichView(chatId, messageId, {
+          screen: 'session:close',
+          title: 'Close session?',
+          version: '',
+          back: 'session',
+          note: 'the session is archived and its topic is closed. Reopen from the topic or the group.',
+          actions: [
+            { label: 'Close session', act: 'session:close!', tone: 'bad' },
+            { label: 'Cancel', act: 'back' },
+          ],
+          caption: 'control · session',
+        })
+        return
+      }
+      const workspace = bindings.workspaces[current.workspaceId]
+      if (workspace === undefined || workspace.chatId === 0) return answer('no group for this workspace')
+      await answer('closing…')
+      await runGroupCommand(workspace.chatId, current.threadId, `/close ${current.sessionId}`, query.from?.id)
+      await editRichCard(chatId, messageId, `workspace:${current.workspaceId}`)
+      return
+    }
+
+    if (action === 'workspace:link' || action === 'workspace:remove' || action === 'workspace:remove!') {
+      if (!isAdmin(query.from?.id)) return answer('only the admin can change workspaces')
+      const workspaceId = screen?.startsWith('workspace:') ? screen.slice('workspace:'.length) : undefined
+      const workspace = workspaceId === undefined ? undefined : bindings.workspaces[workspaceId]
+      if (workspace === undefined) return answer('stale card — open Sessions again')
+      if (action === 'workspace:link') {
+        await runDelegatedCommand(message, query, `/workspace link ${workspace.title}`, 'Workspaces', `workspace:${workspaceId}`)
+        return
+      }
+      if (action === 'workspace:remove') {
+        await answer('…')
+        await editRichView(chatId, messageId, {
+          screen: 'workspace:remove',
+          title: 'Remove workspace?',
+          version: '',
+          back: `workspace:${workspaceId}`,
+          note: `${workspace.title} is unregistered and its group is cleared. The group and its sessions stay.`,
+          actions: [
+            { label: 'Remove', act: 'workspace:remove!', tone: 'bad' },
+            { label: 'Cancel', act: 'back' },
+          ],
+          caption: 'control · workspaces',
+        })
+        return
+      }
+      await runDelegatedCommand(message, query, `/workspace remove ${workspace.title}`, 'Workspaces', 'sessions')
+      return
+    }
+
+    if (action === 'web:send') {
+      await answer('…')
+      const sent = await sendWebLink(chatId)
+      await editRichView(
+        chatId, messageId,
+        noticeScreen('Web UI', sent ? 'the signed link was sent below.' : 'no signed link is available on this runtime.', 'web'),
+      )
       return
     }
 
@@ -6783,6 +7566,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         return reply(message, 'attachments are supported in session topics, not in this control chat.')
       }
       if (text === undefined) return
+      if (!text.trim().startsWith('/') && await consumeCardPrompt(message, text)) return
+      if (text.trim().startsWith('/') && cardPrompt !== undefined) cardPrompt = undefined
       return handleControl(message, text)
     }
 

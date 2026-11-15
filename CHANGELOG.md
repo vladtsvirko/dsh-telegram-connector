@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.22.0
+
+- **The full control app.** Home now has eight destinations: Sessions, Plugins,
+  Updates, Components, System, Settings, Help and Web UI. The rich card is the
+  carrier, so the same screens work while Telegram has HTML widgets disabled.
+- **Plugins.** List with status and errors; detail with update, enable/disable,
+  remove confirmation, configure-in-Web-UI and approve-build-scripts actions;
+  add via a one-line spec prompt and the existing inspection/confirmation.
+- **Updates.** Connector, Penpot, plugin and setup entries; explicit Check for
+  updates; previews; Start delegates to the stable updater, whose progress and
+  trial card follow. Plugin updates list.
+- **Sessions/Workspaces.** New workspace, link and remove; workspace → New
+  session; session → Manage with Rename, Close and Forget. Text prompts use the
+  chat and return to the card.
+- **Components, Settings, Help, Web.** Component enable/disable, port prompt,
+  refresh; timezone/firewall prompts, reactions and control-chat handoff;
+  category help browser; signed Web UI open/send.
+- **Confirmations, prompts and empty states** are card screens; text-entry
+  actions open a one-line chat prompt and return to the same card.
+- `/panel` remains the legacy tabbed widget for the transition.
+
 ## 0.21.2
 
 - **A failed plugin update no longer restarts into the wrong state.** The

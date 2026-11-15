@@ -22,7 +22,7 @@ import type { TgInlineButton, TgInlineKeyboard } from './telegram.js'
 export const CARD_HTML_BYTES = 32768
 export const CARD_COMPRESSED_BYTES = 4096
 
-export type CardScreen = 'home' | 'system' | 'sessions' | 'workspace' | 'session'
+export type CardScreen = string
 
 export interface CardTile {
   title: string
