@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.19.3
+
+- **The commit card waits for a healthy runtime.** The connector starts before
+  the web surface is ready; the trial is now armed and the Commit/Roll back card
+  is posted only after the web answers. Until then an early press is refused
+  with a toast instead of committing a half-started state. The update notice
+  says the card appears when healthy, not “a few minutes”.
+- **Commit always reports back.** The card edit is bounded, and if Telegram
+  cannot edit the trial message the outcome is sent as a new message; the card
+  becomes “✅ committed — this state is the rollback point.”
+- The trial card names the connector version and states that the web answers.
+
 ## 0.19.2
 
 - **Rich-message card fallback.** While Telegram has HTML widgets disabled

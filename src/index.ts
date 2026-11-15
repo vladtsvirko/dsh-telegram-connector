@@ -1989,6 +1989,41 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
+  /**
+   * The connector boots before the runtime finishes loading its web surface.
+   * The trial card must not offer Commit until the runtime actually answers:
+   * an early press commits a half-started state and looks like a dead button.
+   */
+  const waitForWebReady = async (timeoutMs: number): Promise<boolean> => {
+    const port = (process.env.DSH_PORT ?? '4310').trim() || '4310'
+    const link = webLink()
+    if (link.root.length === 0 && link.reason?.includes('no web UI') === true) return true
+    const urls: string[] = []
+    if (link.root.length > 0) {
+      try {
+        const origin = new URL(link.root).origin
+        if (origin.length > 0) urls.push(`${origin}/`)
+      } catch {
+        // An unparseable advertised URL falls back to loopback.
+      }
+    }
+    const loopback = `http://127.0.0.1:${port}/`
+    if (!urls.includes(loopback)) urls.push(loopback)
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      for (const url of urls) {
+        try {
+          const response = await fetch(url, { signal: AbortSignal.timeout(2000) })
+          if (response.status === 200 || response.status === 401 || response.status === 403) return true
+        } catch {
+          // Not up at this address yet; try the next one.
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+    return false
+  }
+
   /** `/web`: the second surface, reachable from the device the user actually has. */
   /** `/web` and the panel's Web row: a signed link, sent as its own message. */
   const sendWebLink = async (chatId: number): Promise<boolean> => {
@@ -2315,7 +2350,7 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         message,
         noTrial
           ? `updating the connector ${current} → ${release.version} — no trial; this restarted state becomes the rollback point.`
-          : `updating the connector ${current} → ${release.version} — the bot will be away for a few minutes. The new version comes up in a trial: commit it, or it rolls back automatically.`,
+          : `updating the connector ${current} → ${release.version} — dsh is restarting now.\n\nThe commit card appears when the new version is healthy (usually under a minute); if it does not come up, the supervisor restores the previous state.`,
       )
       await supervisor.update(!noTrial, release.spec)
     } catch (error) {
@@ -2363,31 +2398,52 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
   }
 
+  /** Bound a Telegram edit so a lossy link cannot stall the whole handler. */
+  const editWithin = async (promise: Promise<unknown>, ms: number): Promise<boolean> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        promise.then(() => true, () => false),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), ms)
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+
   /** Replace the stored trial message and drop its keyboard. */
   const retireStoredTrialMessage = async (text: string): Promise<boolean> => {
     const stored = bindings.trialMessage
     if (stored === undefined) return false
     bindings.trialMessage = undefined
     await persist()
-    await client.editMessageText(stored.chatId, stored.messageId, text, {
-      replyMarkup: { inline_keyboard: [] },
-    }).catch(() => undefined)
-    return true
+    return editWithin(
+      client.editMessageText(stored.chatId, stored.messageId, text, {
+        replyMarkup: { inline_keyboard: [] },
+      }),
+      8000,
+    )
   }
 
-  /** Replace the trial message a button belongs to, and forget it. */
+  /**
+   * Replace the trial message a button belongs to, and forget it. The card is
+   * the feedback: if Telegram refuses or stalls the edit, send the outcome as
+   * a separate message rather than leaving the button looking dead.
+   */
   const retireCallbackMessage = async (query: TgCallbackQuery, text: string): Promise<void> => {
     const message = query.message
     if (message === undefined) return
-    try {
-      await client.editMessageText(message.chat.id, message.message_id, text, {
+    const edited = await editWithin(
+      client.editMessageText(message.chat.id, message.message_id, text, {
         replyMarkup: { inline_keyboard: [] },
-      })
-    } catch {
-      // the message may be too old to edit; the answer toast already said what happened
-    }
+      }),
+      8000,
+    )
     bindings.trialMessage = undefined
     await persist()
+    if (!edited) await sendTo(message.chat.id, 0, text)
   }
 
   // --- consequential-action confirmation --------------------------------
@@ -2526,6 +2582,13 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       await retireCallbackMessage(query, '⌛ this trial is no longer active.')
       return
     }
+    if (status.trial.armed !== true) {
+      // The connector is up but the runtime has not answered yet. The card is
+      // not supposed to exist this early; refuse out loud instead of committing
+      // a half-started state.
+      await client.answerCallbackQuery(query.id, 'the new version is still starting — wait for the commit card').catch(() => undefined)
+      return
+    }
 
     if (parsed.action === 'commit') {
       // The toast and the card edit are Telegram calls: on a lossy link one of
@@ -2536,10 +2599,10 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       try {
         await supervisor.commit()
       } catch (error) {
-        void retireCallbackMessage(query, `commit failed: ${error instanceof Error ? error.message : String(error)}`)
+        await retireCallbackMessage(query, `commit failed: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
-      void retireCallbackMessage(query, 'committed — this state is the rollback point.')
+      await retireCallbackMessage(query, '✅ committed — this state is the rollback point.')
       return
     }
 
@@ -2578,10 +2641,30 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
         }
         return
       }
-      const armed = await supervisor.arm()
-      if (armed.firstArm !== true) {
+      if (status.trial.armed === true) {
         // A service restart inside the window: remind once, without pretending
         // a new trial just started.
+        const armed = await supervisor.arm()
+        if (typeof armed.deadline === 'number') {
+          const label = status.lastEvent?.kind === 'update' ? '**update trial**' : 'trial'
+          await sendTrialMessage(
+            bindings.controlChatId,
+            `${label} still open — rollback ${deadlineText(armed.deadline)}. Commit or roll back below.`,
+            status.trial.id,
+          )
+        }
+        return
+      }
+      // The connector starts before the runtime finishes loading. Arming is the
+      // health signal, and the commit card is the user's cue that the new state
+      // is actually ready; both wait for the web to answer.
+      const ready = await waitForWebReady(90_000)
+      if (!ready) {
+        stderr('the web did not answer within 90s — leaving the trial to the supervisor')
+        return
+      }
+      const armed = await supervisor.arm()
+      if (armed.firstArm !== true) {
         if (typeof armed.deadline === 'number') {
           const label = status.lastEvent?.kind === 'update' ? '**update trial**' : 'trial'
           await sendTrialMessage(
@@ -2594,8 +2677,8 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
       }
       const lines = [
         status.lastEvent?.kind === 'update'
-          ? '**update trial** — the connector is running the new version.'
-          : '**trial running** — the new state is live.',
+          ? `**update trial** — connector ${connectorVersion()} is up and the web answers.`
+          : `**trial running** — ${connectorVersion()} is up and the web answers.`,
         'commit it with the buttons below (or `/system confirm`), or put the previous state back with `/system rollback`.',
       ]
       if (typeof armed.deadline === 'number') {

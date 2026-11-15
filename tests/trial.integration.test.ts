@@ -8,7 +8,7 @@
  */
 import { createServer, type Server } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
-import { boot, USER_ID, type Harness } from './harness.js'
+import { boot, callText, USER_ID, type Harness } from './harness.js'
 
 const active: Harness[] = []
 const servers: Server[] = []
@@ -22,9 +22,9 @@ afterEach(async () => {
 })
 
 /** A loopback supervisor that knows one trial and records the commit. */
-async function fakeSupervisor(): Promise<{ url: string; committed: () => boolean }> {
+async function fakeSupervisor(armed = true): Promise<{ url: string; committed: () => boolean }> {
   let committed = false
-  const trial = { id: 'trial-1', armed: true, startedAt: Date.now(), deadline: Date.now() + 120_000 }
+  const trial = { id: 'trial-1', armed, startedAt: Date.now(), deadline: Date.now() + 120_000 }
   const server = createServer((request, response) => {
     const send = (status: number, body: unknown): void => {
       response.writeHead(status, { 'content-type': 'application/json' })
@@ -84,5 +84,73 @@ describe('trial commit', () => {
 
     await harness.waitFor(() => supervisor.committed(), 'the supervisor commit', 3000)
     expect(supervisor.committed()).toBe(true)
+  }, 20_000)
+})
+
+describe('trial feedback', () => {
+  it('answers a commit that lands before the runtime is armed', async () => {
+    const supervisor = await fakeSupervisor(false)
+    const realFetch = globalThis.fetch
+    const harness = await boot(
+      { adminUserId: USER_ID, allowedUserIds: [USER_ID] },
+      { env: { DSH_SUPERVISOR_URL: supervisor.url, DSH_SUPERVISOR_TOKEN: 'test-token' } },
+    )
+    active.push(harness)
+    const telegramFetch = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith(supervisor.url)) return realFetch(input, init)
+      return telegramFetch(input, init)
+    }) as typeof fetch
+
+    harness.pushUpdate({
+      update_id: 9200,
+      callback_query: {
+        id: 'cb-early',
+        from: { id: USER_ID, is_bot: false, first_name: 'Admin' },
+        data: 'trial:commit:trial-1',
+      },
+    })
+
+    const answer = await harness.waitFor(() => harness.answered[0], 'the refusal toast', 3000)
+    expect(String(answer.params.text)).toContain('still starting')
+    expect(supervisor.committed()).toBe(false)
+  }, 20_000)
+
+  it('sends the outcome when the trial card cannot be edited', async () => {
+    const supervisor = await fakeSupervisor()
+    const realFetch = globalThis.fetch
+    const harness = await boot(
+      { adminUserId: USER_ID, allowedUserIds: [USER_ID] },
+      {
+        env: { DSH_SUPERVISOR_URL: supervisor.url, DSH_SUPERVISOR_TOKEN: 'test-token' },
+        failSend: (call) => (call.method === 'editMessageText' ? 'Bad Request: message cannot be edited' : undefined),
+      },
+    )
+    active.push(harness)
+    const telegramFetch = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith(supervisor.url)) return realFetch(input, init)
+      return telegramFetch(input, init)
+    }) as typeof fetch
+
+    harness.pushUpdate({
+      update_id: 9300,
+      callback_query: {
+        id: 'cb-feedback',
+        from: { id: USER_ID, is_bot: false, first_name: 'Admin' },
+        message: { message_id: 777, chat: { id: USER_ID, type: 'private' }, date: 0 },
+        data: 'trial:commit:trial-1',
+      },
+    })
+
+    await harness.waitFor(() => supervisor.committed(), 'the supervisor commit', 3000)
+    const notice = await harness.waitFor(
+      () => harness.sent.find((call) => callText(call).includes('committed')),
+      'the fallback confirmation',
+      5000,
+    )
+    expect(callText(notice)).toContain('committed')
   }, 20_000)
 })

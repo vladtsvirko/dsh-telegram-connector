@@ -6,6 +6,7 @@ every release.
 
 | Connector | DSH | Status | Notes |
 |---|---|---|---|
+| 0.19.3 | `0.2.1-rc.5` | needs UAT | trial card only after the web answers; early Commit refused; commit feedback falls back to a message |
 | 0.19.2 | `0.2.1-rc.5` | needs UAT | rich-message card fallback (Home/Sessions/System, model, Forget, Restart) while Telegram has widgets disabled; widgets return automatically with a ten-minute probe |
 | 0.19.1 | `0.2.1-rc.5` | needs UAT | `INPUT_MEDIA_WIDGET_NOT_ALLOWED` from Telegram's 2026-11-13 widget shutdown falls back to the text menu quietly, with a ten-minute probe interval |
 | 0.19.0 | `0.2.1-rc.5` | needs UAT | private-chat card app: Home ↔ Sessions/workspace/session/System cards replace in place; model chips, topic links, inline Forget/Restart; legacy `/panel` during the update/plugins transition |
