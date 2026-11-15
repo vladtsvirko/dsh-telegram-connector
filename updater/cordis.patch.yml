@@ -1,0 +1,5 @@
+# The updater is its own bundle: updating dsh-telegram-connector must not
+# unload the component that is performing the update.
+- insert:
+    - id: dsh-plugin-updater
+      name: dsh-plugin-updater

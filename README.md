@@ -80,6 +80,13 @@ versions are in [`COMPATIBILITY.md`](COMPATIBILITY.md).
   `[via Telegram]` marker, so the answer can use chat steps instead of host
   commands. Web UI prompts are unmarked; the marker is in the session, not in
   the Telegram message.
+- **Live plugin updates.** The connector ships a separate `dsh-plugin-updater`
+  bundle. The first connector update installs it into the profile once; after
+  that, `/system update connector` removes and reinstalls the connector through
+  the updater while the rest of DSH stays up. HMR applies the reload; a
+  `restart-required` response falls back to the supervisor restart. The updater
+  is a separate bundle, so it is never unloaded by the connector update it is
+  running.
 - **Card app.** `/start` (and `/menu`) opens a Home card with live counters and
   four jobs: Sessions, System, Web UI and More. A tap deletes the current card
   and sends the next, so the chat holds one screen at a time. While Telegram has
@@ -161,7 +168,7 @@ install without the setup.
 The connector is published to npm as an exact version:
 
 ```sh
-dsh plugin --profile web add dsh-telegram-connector@0.19.3
+dsh plugin --profile web add dsh-telegram-connector@0.20.0
 ```
 
 The registry tarball already contains the built `lib/`, so there is no
@@ -192,7 +199,7 @@ cat >> "$DSH_HOME/profiles/web/pnpm-workspace.yaml" <<'YAML'
 allowBuilds:
   dsh-telegram-connector@https://github.com/vladtsvirko/dsh-telegram-connector.git: true
 YAML
-dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.19.3
+dsh plugin --profile web add github:vladtsvirko/dsh-telegram-connector#v0.20.0
 ```
 
 That path runs the package's `prepare` build; pnpm ≥ 10 refuses it until the

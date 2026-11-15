@@ -14,9 +14,10 @@
 import type { Context, Volatile } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
-import { mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises'
-import { basename, isAbsolute, join, resolve } from 'node:path'
+import { cp, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
@@ -2308,6 +2309,77 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
    * setup release: the setup pin is only the install floor, so the two products
    * can move independently.
    */
+  /**
+   * Reload the connector through the plugin manager's HMR path: remove the
+   * bundle, reinstall the target, and let the new connector adopt the trial.
+   * The old code is disposed mid-flight, but the manager calls are host-side
+   * and their continuation survives; the test VM showed the new plugin loaded
+   * in about three seconds with the DSH pid unchanged.
+   *
+   * Returns false when the live path cannot be used, so the caller can fall
+   * back to the supervisor restart.
+   */
+  const startLiveConnectorUpdate = async (
+    chatId: number | undefined,
+    spec: string,
+    version: string,
+  ): Promise<boolean> => {
+    const manager = pluginManager()
+    if (manager === undefined || supervisor === undefined) return false
+    if (serviceOf<unknown>(ctx, 'hmr') === undefined) return false
+    // openTrial arms the window; the reloaded connector adopts it and posts
+    // the Commit card. A trial is mandatory: the live path has no snapshot.
+    await supervisor.openTrial()
+    if (chatId !== undefined) {
+      await sendTo(
+        chatId,
+        0,
+        `reloading the connector ${connectorVersion()} → ${version} live — no restart. The bot is back in a few seconds; the commit card follows.`,
+      ).catch(() => undefined)
+    }
+    // HMR tolerates one module change per process; the second update is refused
+    // as restart-required. Fall back to the supervisor restart so the update
+    // still lands, just with the old downtime.
+    const restartInstead = async (reason: string): Promise<void> => {
+      await supervisor.abandonTrial().catch(() => undefined)
+      if (chatId !== undefined) {
+        await sendTo(chatId, 0, `${reason} — restarting dsh to apply the update instead.`).catch(() => undefined)
+      }
+      try {
+        await supervisor.update(true, spec)
+      } catch (error) {
+        stderr(`restart after refused live update failed: ${String(error)}`)
+      }
+    }
+
+    void (async () => {
+      let removed = false
+      try {
+        const result = await manager.removeBundle(SELF_BUNDLE)
+        if (result.application !== 'applied') {
+          await restartInstead(`the live reload was refused (${result.application})`)
+          return
+        }
+        removed = true
+        // Give HMR a beat to publish the removal before the install event.
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        const installed = await manager.installBundle(spec, { enabled: true, saveExact: true })
+        if (installed.application !== 'applied') {
+          await restartInstead(`the connector needs a restart to load (${installed.application})`)
+        }
+      } catch (error) {
+        stderr(`live connector update failed: ${String(error)}`)
+        try {
+          if (removed) await supervisor.rollback(`live connector update failed: ${String(error)}`)
+          else await supervisor.abandonTrial()
+        } catch {
+          // The trial deadline is the last resort.
+        }
+      }
+    })()
+    return true
+  }
+
   const updateConnector = async (
     message: TgMessage,
     noTrial: boolean,
@@ -2343,6 +2415,22 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
     }
     if (order === 0 && explicit === undefined) {
       return reply(message, `the connector is current (${current}); ${release.tag} is the newest version.`)
+    }
+    if (!noTrial) {
+      await flushOffset()
+      const updater = await ensurePluginUpdater()
+      if (updater !== undefined && updater.update({
+        name: SELF_BUNDLE,
+        spec: release.spec,
+        chatId: message.chat.id,
+        label: `the connector ${current} → ${release.version}`,
+      })) return
+      const live = await startLiveConnectorUpdate(message.chat.id, release.spec, release.version)
+        .catch((error: unknown) => {
+          stderr(`cannot start the live connector update: ${String(error)}`)
+          return false
+        })
+      if (live) return
     }
     try {
       await flushOffset()
@@ -2720,6 +2808,45 @@ export function apply(ctx: Context, config: ConnectorConfig): void {
 
   const pluginManager = (): PluginManagerService | undefined =>
     serviceOf<PluginManagerService>(ctx, 'pluginManager')
+
+  interface PluginUpdaterService {
+    update(request: { name: string; spec: string; chatId?: number; label?: string }): boolean
+    busy(): boolean
+  }
+
+  /**
+   * The stable updater is a separate bundle shipped inside this package. Install
+   * it once into the profile (a path outside node_modules and outside this
+   * package) so updating the connector never unloads the updater.
+   */
+  const ensurePluginUpdater = async (): Promise<PluginUpdaterService | undefined> => {
+    const existing = serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
+    if (existing !== undefined) return existing
+    const manager = pluginManager()
+    if (manager === undefined) return undefined
+    try {
+      const source = join(dirname(fileURLToPath(import.meta.url)), '..', 'updater')
+      const home = (process.env.DSH_HOME ?? '').trim()
+      if (home.length === 0) return undefined
+      const target = join(home, 'plugins', 'dsh-plugin-updater')
+      await cp(source, target, { recursive: true, force: true })
+      const result = await manager.installBundle(target, { enabled: true, saveExact: true })
+      if (result.application === 'failed' || result.application === 'cancelled') {
+        stderr(`plugin updater install: ${result.application}`)
+        return undefined
+      }
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const service = serviceOf<PluginUpdaterService>(ctx, 'pluginUpdater')
+        if (service !== undefined) return service
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+      stderr('plugin updater did not register its service')
+      return undefined
+    } catch (error) {
+      stderr(`cannot install the plugin updater: ${String(error)}`)
+      return undefined
+    }
+  }
 
   const pluginBundles = async (): Promise<BundleInfo[] | undefined> => {
     const manager = pluginManager()

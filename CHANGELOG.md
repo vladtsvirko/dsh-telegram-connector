@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.20.0
+
+- **A stable plugin updater ships with the connector.** `dsh-plugin-updater` is a
+  separate DSH bundle installed once into `$DSH_HOME/plugins/dsh-plugin-updater`.
+  Connector updates now go through it: open an HMR trial, remove the connector,
+  install the target, and let the reloaded connector adopt the trial. The
+  updater is never the target, so the connector no longer performs its own
+  replacement. VM test: updater installed and connector reloaded in ~2.4 s with
+  the DSH pid unchanged, and the trial committed without a restart.
+- **Live first, restart only when the platform says so.** If HMR refuses a
+  change (`restart-required`), the updater automatically falls back to the
+  supervisor's reset + restart and the update still lands.
+- The connector remains the Telegram transport; the updater owns plugin
+  orchestration. The web UI can update both independently.
+
 ## 0.19.3
 
 - **The commit card waits for a healthy runtime.** The connector starts before
